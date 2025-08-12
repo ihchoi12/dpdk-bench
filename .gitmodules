@@ -1,3 +1,7 @@
 [submodule "dpdk"]
 	path = dpdk
 	url = https://github.com/DPDK/dpdk
+[submodule "Pktgen-DPDK"]
+	path = Pktgen-DPDK
+	url = https://github.com/pktgen/Pktgen-DPDK.git
+	branch = main
