@@ -37,3 +37,13 @@ dpdk-version:
 .PHONY: run-l3fwd
 run-l3fwd:
 	@./scripts/run-l3fwd.sh
+
+.PHONY: dpdk-patch-all
+dpdk-patch-all:
+	@bash -euo pipefail -c '\
+	  test -d dpdk || { echo "dpdk submodule missing"; exit 1; }; \
+	  cd dpdk; \
+	  git add -N $$(git ls-files -o --exclude-standard) >/dev/null 2>&1 || true; \
+	  git diff > ../build/dpdk.patch; \
+	  echo "Wrote build/dpdk.patch" \
+	'

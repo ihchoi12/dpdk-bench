@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 trap 'echo "!! ERROR: ${BASH_SOURCE[0]}:${LINENO}: \"$BASH_COMMAND\" failed" >&2' ERR
+
+# repo root (this script lives in build/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # ---- settings ----
 DPDK_DIR="${DPDK_DIR:-dpdk}"
@@ -13,8 +16,10 @@ DPDK_MESON_FLAGS="${DPDK_MESON_FLAGS:--Dtests=false -Denable_kmods=false -Dexamp
 # Disable most drivers to keep build small; keep mlx5
 DISABLE_DRIVERS="${DISABLE_DRIVERS:-crypto/*,raw/*,baseband/*,dma/*,net/af_packet,net/af_xdp,net/ark,net/atlantic,net/avp,net/axgbe,net/bnx2x,net/bnxt,net/bonding,net/cnxk,net/cxgbe,net/dpaa,net/dpaa2,net/e1000,net/ena,net/enetc,net/enetfec,net/enic,net/fm10k,net/hinic,net/hns3,net/iavf,net/ice,net/igc,net/ionic,net/ipn3ke,net/kni,net/liquidio,net/memif,net/mlx4,net/mvneta,net/mvpp2,net/nfb,net/nfp,net/ngbe,net/octeontx,net/octeontx_ep,net/pcap,net/pfe,net/qede,net/sfc,net/softnic,net/thunderx,net/txgbe,net/vdev_netvsc,net/vhost,net/virtio,net/vmxnet3}"
 
-DPDK_PATCH_SERIES="${DPDK_PATCH_SERIES:-build/patches/dpdk}"
-DPDK_PATCH_SINGLE="${DPDK_PATCH_SINGLE:-build/dpdk.patch}"
+# make these absolute by default
+DPDK_PATCH_SERIES="${DPDK_PATCH_SERIES:-${REPO_ROOT}/build/patches/dpdk}"
+DPDK_PATCH_SINGLE="${DPDK_PATCH_SINGLE:-${REPO_ROOT}/build/dpdk.patch}"
+
 
 CORES="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 8)"
 CMD="${1:-build}"
@@ -32,16 +37,23 @@ reset_submodule() {
 }
 
 apply_patches() {
-  if [ -d "$DPDK_PATCH_SERIES" ] && ls "$DPDK_PATCH_SERIES"/*.patch >/dev/null 2>&1; then
-    echo ">> applying patch series: $DPDK_PATCH_SERIES/*.patch"
-    git -C "$DPDK_DIR" -c user.name="x" -c user.email="x" am --3way $(ls "$DPDK_PATCH_SERIES"/*.patch | sort)
-  elif [ -f "$DPDK_PATCH_SINGLE" ]; then
-    echo ">> applying single patch: $DPDK_PATCH_SINGLE"
-    git -C "$DPDK_DIR" apply "$DPDK_PATCH_SINGLE"
+  # normalize to absolute paths if inputs are relative
+  local SERIES="$DPDK_PATCH_SERIES"
+  local SINGLE="$DPDK_PATCH_SINGLE"
+  [[ "$SERIES" = /* ]] || SERIES="${REPO_ROOT}/${SERIES}"
+  [[ "$SINGLE" = /* ]] || SINGLE="${REPO_ROOT}/${SINGLE}"
+
+  if [ -d "$SERIES" ] && ls "$SERIES"/*.patch >/dev/null 2>&1; then
+    echo ">> applying patch series: $SERIES/*.patch"
+    git -C "$DPDK_DIR" -c user.name="x" -c user.email="x" am --3way --whitespace=fix $(ls "$SERIES"/*.patch | sort)
+  elif [ -f "$SINGLE" ]; then
+    echo ">> applying single patch: $SINGLE"
+    git -C "$DPDK_DIR" apply --whitespace=fix "$SINGLE"
   else
     echo ">> no dpdk patches found (building vanilla submodule)"
   fi
 }
+
 
 meson_build() {
   echo ">> meson setup (prefix=$DPDK_PREFIX, examples=l3fwd)"

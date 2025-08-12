@@ -9,10 +9,10 @@ DPDK_PREFIX="${REPO_ROOT}/dpdk/build"
 L3FWD_BIN="${DPDK_PREFIX}/examples/dpdk-l3fwd"
 
 # EAL & app params (override via env)
-EAL_LCORES="${EAL_LCORES:--l 0}"
+EAL_LCORES="${EAL_LCORES:--l 0-2}"
 EAL_MEMCH="${EAL_MEMCH:--n 4}"
 PCI_ADDR="${PCI_ADDR:-0000:31:00.1}"
-APP_ARGS='-p 0x1 --config="(0,0,0)" --eth-dest=0,08:c0:eb:b6:cd:5d'
+APP_ARGS='-p 0x1 --config="(0,0,0),(0,1,1),(0,2,2)" --eth-dest=0,08:c0:eb:b6:cd:5d'
 
 # Ensure dpdk+l3fwd are built
 if [ ! -x "$L3FWD_BIN" ]; then

@@ -1,0 +1,41 @@
+diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
+index fec0aeb79c..c3c5dd00a5 100644
+--- a/examples/l3fwd/l3fwd_lpm.c
++++ b/examples/l3fwd/l3fwd_lpm.c
+@@ -163,8 +163,22 @@ lpm_main_loop(__rte_unused void *dummy)
+ 		return 0;
+ 	}
+ 
+-	RTE_LOG(INFO, L3FWD, "entering main loop on lcore %u\n", lcore_id);
++	RTE_LOG(INFO, L3FWD, "[lpm] entering main loop on lcore %u\n", lcore_id);
++	for (i = 0; i < n_rx_q; i++) {
++		portid = qconf->rx_queue_list[i].port_id;
++		queueid = qconf->rx_queue_list[i].queue_id;
++		RTE_LOG(INFO, L3FWD,
++			" [RX] lcoreid=%u, port=%u rxq=%hhu\n",
++			lcore_id, portid, queueid);
++	}
+ 
++	for (i = 0; i < n_tx_p; i++) {
++		portid = qconf->tx_port_id[i];
++		RTE_LOG(INFO, L3FWD,
++			" [TX] lcoreid=%u, portid=%u, txq=%hhu\n",
++			lcore_id, portid, qconf->tx_queue_id[portid]);
++	}
++	
+ 	for (i = 0; i < n_rx_q; i++) {
+ 
+ 		portid = qconf->rx_queue_list[i].port_id;
+diff --git a/examples/l3fwd/main.c b/examples/l3fwd/main.c
+index ae3b4f6439..df6fffbbe2 100644
+--- a/examples/l3fwd/main.c
++++ b/examples/l3fwd/main.c
+@@ -1448,7 +1448,7 @@ l3fwd_poll_resource_setup(void)
+ 			else
+ 				socketid = 0;
+ 
+-			printf("txq=%u,%d,%d ", lcore_id, queueid, socketid);
++			printf("TXQ=%u,%d,%d ", lcore_id, queueid, socketid);
+ 			fflush(stdout);
+ 
+ 			txconf = &dev_info.default_txconf;
