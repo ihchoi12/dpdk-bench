@@ -17,7 +17,7 @@ APP_ARGS='-p 0x1 --config="(0,0,0),(0,1,1),(0,2,2)" --eth-dest=0,08:c0:eb:b6:cd:
 # Ensure dpdk+l3fwd are built
 if [ ! -x "$L3FWD_BIN" ]; then
   echo ">> l3fwd binary not found, building..."
-  make -C "$REPO_ROOT" submodules
+  make -C "$REPO_ROOT" l3fwd
 fi
 [ -x "$L3FWD_BIN" ] || { echo "l3fwd not found after build: $L3FWD_BIN"; exit 1; }
 

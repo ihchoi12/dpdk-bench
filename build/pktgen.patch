@@ -1,0 +1,13 @@
+diff --git a/app/meson.build b/app/meson.build
+index eb0682f..67b0cbe 100644
+--- a/app/meson.build
++++ b/app/meson.build
+@@ -48,7 +48,7 @@ deps += [cc.find_library('rte_net_ice', dirs: [dpdk_libs_path], required: false)
+ deps += [cc.find_library('rte_bus_vdev', dirs: [dpdk_libs_path], required: false)]
+ 
+ deps += [dependency('threads')]
+-deps += [dependency('numa', required: true)]
++deps += [dependency('numa', required: false)]
+ deps += [dependency('pcap', required: true)]
+ deps += [cc.find_library('dl', required: false)]
+ deps += [cc.find_library('m', required: false)]

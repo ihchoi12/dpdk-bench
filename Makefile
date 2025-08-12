@@ -14,13 +14,6 @@ submodules:
 submodules-clean:
 	@bash $(BUILD_DIR)/init_submodules.sh clean
 
-# Convenience target to only (re)build l3fwd after dpdk is set up
-l3fwd:
-	@bash -euo pipefail -c '\
-	  test -d dpdk/build || { echo "DPDK is not built. Run: make submodules"; exit 1; } ;\
-	  ninja -C dpdk/build examples/dpdk-l3fwd \
-	'
-
 dpdk-version:
 	@echo ">> checking submodule dir:"
 	@test -d "$(DPDK_DIR)" || { echo "ERROR: DPDK_DIR not found: $(DPDK_DIR)"; exit 1; }
@@ -33,10 +26,29 @@ dpdk-version:
 	@echo ">> exact tag (if any):"
 	-@git -C "$(DPDK_DIR)" describe --tags --exact-match || true
 
+PHONY: l3fwd l3fwd-clean run-l3fwd
 
-.PHONY: run-l3fwd
+l3fwd:
+	@bash build/init_submodules.sh l3fwd
+
+l3fwd-clean:
+	@rm -f dpdk/build/examples/dpdk-l3fwd
+
 run-l3fwd:
 	@./scripts/run-l3fwd.sh
+
+
+.PHONY: pktgen pktgen-clean run-pktgen
+
+pktgen:
+	@bash build/init_submodules.sh pktgen
+
+pktgen-clean:
+	@bash build/init_submodules.sh pktgen-clean
+
+run-pktgen:
+	@./scripts/run-pktgen.sh
+
 
 .PHONY: dpdk-patch-all
 dpdk-patch-all:
@@ -47,3 +59,16 @@ dpdk-patch-all:
 	  git diff > ../build/dpdk.patch; \
 	  echo "Wrote build/dpdk.patch" \
 	'
+
+.PHONY: pktgen-patch-all
+pktgen-patch-all:
+	@bash -euo pipefail -c '\
+	  test -d Pktgen-DPDK || { echo "pktgen submodule missing"; exit 1; }; \
+	  cd Pktgen-DPDK; \
+	  git add -N $$(git ls-files -o --exclude-standard) >/dev/null 2>&1 || true; \
+	  git diff > ../build/pktgen.patch; \
+	  echo "Wrote build/pktgen.patch" \
+	'
+
+.PHONY: patch-all
+patch-all: dpdk-patch-all pktgen-patch-all
