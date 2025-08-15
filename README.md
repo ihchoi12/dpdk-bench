@@ -26,8 +26,11 @@ make submodules
 4) Run benchmarks
 
 ```bash
-# Run pktgen (packet generator)
+# Run pktgen
 make run-pktgen
+
+# Run pktgen with lua script (automated)
+make run-pktgen-with-lua-script
 
 # Run l3fwd (layer 3 forwarding)
 make run-l3fwd

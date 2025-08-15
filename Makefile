@@ -49,6 +49,9 @@ pktgen-clean:
 run-pktgen:
 	@./scripts/run-pktgen.sh
 
+run-pktgen-with-lua-script:
+	@./scripts/run-pktgen-with-lua-script.sh
+
 
 .PHONY: dpdk-patch-all
 dpdk-patch-all:
