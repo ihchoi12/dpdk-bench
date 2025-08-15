@@ -52,6 +52,9 @@ run-pktgen:
 run-pktgen-with-lua-script:
 	@./scripts/run-pktgen-with-lua-script.sh
 
+benchmark-multi-core-tx-rate:
+	@./scripts/benchmark-multi-core-tx-rate.sh
+
 
 .PHONY: dpdk-patch-all
 dpdk-patch-all:

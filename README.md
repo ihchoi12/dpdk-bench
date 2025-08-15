@@ -32,9 +32,18 @@ make run-pktgen
 # Run pktgen with lua script (automated)
 make run-pktgen-with-lua-script
 
+# Run multi-core TX rate benchmark (1-15 cores)
+make benchmark-multi-core-tx-rate
+
 # Run l3fwd (layer 3 forwarding)
 make run-l3fwd
 ```
+
+**Multi-core TX Rate Benchmark:**
+- Tests TX rate performance across 1-15 CPU cores
+- Results saved to `results/YYMMDD-HHMMSS-multi-core-tx.txt`
+- Format: `setup|TX_rate_in_Mpps`
+- Typical runtime: ~5 minutes (15 tests × ~20 seconds each)
 
 5) Configuration (optional)
 
