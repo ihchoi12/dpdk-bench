@@ -23,8 +23,28 @@ sudo ./setup_machines
 make submodules
 ```
 
-4) Run l3fwd
+4) Run benchmarks
 
+```bash
+# Run pktgen (packet generator)
+make run-pktgen
+
+# Run l3fwd (layer 3 forwarding)
+make run-l3fwd
 ```
-./scripts/run-l3fwd.sh
+
+5) Configuration (optional)
+
+Edit `pktgen.config` to customize parameters like CPU cores, memory channels, and PCI addresses:
+
+```bash
+# Example configuration
+PKTGEN_LCORES=-l 0-14          # CPU cores for pktgen
+PKTGEN_PCI_ADDR=0000:31:00.1   # Network interface
+L3FWD_LCORES=-l 0-2            # CPU cores for l3fwd
 ```
+
+
+References:
+- https://developer.arm.com/documentation/109701/1-0/Example-for-Multi-core-scenario
+- https://fast.dpdk.org/doc/perf/DPDK_20_11_Mellanox_NIC_performance_report.pdf
