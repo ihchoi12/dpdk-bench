@@ -45,6 +45,15 @@ make generate-performance-graph  # Create PNG bar chart comparison
 
 # Run l3fwd (layer 3 forwarding)
 make run-l3fwd
+
+# Run l3fwd on node8 for exactly 5 seconds and auto-terminate (remote execution)
+make run-l3fwd-timed
+
+# Run l3fwd on node8 for custom duration (set L3FWD_DURATION environment variable)
+L3FWD_DURATION=10 make run-l3fwd-timed  # Run for 10 seconds on node8
+
+# Run l3fwd on different node (set L3FWD_NODE environment variable)
+L3FWD_NODE=node9 make run-l3fwd-timed   # Run on node9 instead of node8
 ```
 
 **Multi-core TX Rate Benchmark:**
