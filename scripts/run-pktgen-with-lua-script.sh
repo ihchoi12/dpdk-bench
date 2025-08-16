@@ -32,8 +32,17 @@ check_binary "$PKTGEN_BIN" "pktgen"
 echo ">> running pktgen with script:"
 echo "   bin     : ${PKTGEN_BIN}"
 echo "   script  : ${SCRIPT_FILE}"
+echo "   script_rel: ${SCRIPT_REL_PATH}"
 echo "   EAL     : ${LCORES} ${MEMCH} ${PROC_TYPE} --file-prefix ${FILE_PREFIX} --allow=${PCI_ADDR}"
 echo "   args    : ${APP_ARGS} -m ${PORTMAP} -f ${SCRIPT_REL_PATH}"
+
+# Debug: Check if files exist before execution
+echo ""
+echo ">> Pre-execution checks:"
+echo "   Binary exists: $([ -f "${PKTGEN_BIN}" ] && echo "YES" || echo "NO")"
+echo "   Script exists: $([ -f "${SCRIPT_FILE}" ] && echo "YES" || echo "NO")"
+echo "   Pktgen.lua exists: $([ -f "${REPO_ROOT}/Pktgen-DPDK/Pktgen.lua" ] && echo "YES" || echo "NO")"
+echo "   Working directory will be: ${REPO_ROOT}/Pktgen-DPDK"
 
 # Build the complete command for debugging
 FULL_COMMAND="'${PKTGEN_BIN}' ${LCORES} ${MEMCH} ${PROC_TYPE} --file-prefix '${FILE_PREFIX}' --allow='${PCI_ADDR}' -- ${APP_ARGS} -m '${PORTMAP}' -f '${SCRIPT_REL_PATH}'"
