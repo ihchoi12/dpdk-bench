@@ -23,6 +23,18 @@ sudo ./setup_machines
 make submodules
 ```
 
+**Building specific components:**
+```bash
+# Build only l3fwd (without rebuilding DPDK)
+make l3fwd
+
+# Clean and rebuild l3fwd
+make l3fwd-clean && make l3fwd
+
+# Build only pktgen
+make pktgen
+```
+
 4) Run benchmarks
 
 ```bash
