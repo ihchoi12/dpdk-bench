@@ -55,6 +55,18 @@ run-pktgen-with-lua-script:
 benchmark-multi-core-tx-rate:
 	@./scripts/benchmark-multi-core-tx-rate.sh
 
+benchmark-combined:
+	@./scripts/benchmark-multi-core-tx-rate.sh combined
+
+benchmark-split:
+	@./scripts/benchmark-multi-core-tx-rate.sh split
+
+compare-port-mappings:
+	@./scripts/compare-port-mappings.sh
+
+generate-performance-graph:
+	@python3 scripts/generate_performance_graph.py
+
 
 .PHONY: dpdk-patch-all
 dpdk-patch-all:

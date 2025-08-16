@@ -35,15 +35,34 @@ make run-pktgen-with-lua-script
 # Run multi-core TX rate benchmark (1-15 cores)
 make benchmark-multi-core-tx-rate
 
+# Run benchmarks with different port mapping modes
+make benchmark-combined      # [1-N].0 - All cores handle RX/TX
+make benchmark-split         # [1-N/2:N/2+1-N].0 - Split RX/TX (even cores only)
+
+# Compare port mapping modes and generate performance graph
+make compare-port-mappings   # Run both modes and show summary table
+make generate-performance-graph  # Create PNG bar chart comparison
+
 # Run l3fwd (layer 3 forwarding)
 make run-l3fwd
 ```
 
 **Multi-core TX Rate Benchmark:**
-- Tests TX rate performance across 1-15 CPU cores
-- Results saved to `results/YYMMDD-HHMMSS-multi-core-tx.txt`
+- Tests TX rate performance across 1-15 CPU cores with retry logic
+- Results saved to `results/YYMMDD-HHMMSS-multi-core-tx-[mode].txt`
 - Format: `setup|TX_rate_in_Mpps`
-- Typical runtime: ~5 minutes (15 tests × ~20 seconds each)
+- Automatic handling of intermittent SEGFAULT errors (up to 3 retries)
+- Performance graph generation in PNG format
+
+**Port Mapping Modes:**
+- **combined**: `[1-N].0` - All cores handle both RX and TX processing
+- **split**: `[1-N/2:N/2+1-N].0` - Dedicated RX and TX cores (even cores only)
+
+**Performance Results (Example):**
+- Combined mode peak: ~144 Mpps at 8 cores
+- Split mode peak: ~132 Mpps at 14 cores  
+- Split efficiency: ~92% of combined mode at peak
+- **round_robin**: Load balancing `[1].0, [1,2].0, [1,2,3].0, ...`
 
 5) Configuration (optional)
 

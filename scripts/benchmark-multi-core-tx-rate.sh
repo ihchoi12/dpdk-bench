@@ -2,11 +2,24 @@
 # Multi-core TX Rate Benchmark Script with Retry Logic
 # This script runs pktgen with different core configurations (1-15 cores)
 # and measures TX rate for each setup. It includes retry logic for SEGFAULT errors.
+#
+# Usage: 
+#   ./benchmark-multi-core-tx-rate.sh [PORT_MAPPING_MODE]
+#   
+# Port Mapping Modes:
+#   combined   : [1-N].0 - cores 1-N handle port 0 rx/tx (default)
+#   split      : [1-N/2:N/2+1-N].0 - first half rx, second half tx (even cores only)
+#
+# Environment Variables:
+#   PORT_MAPPING_MODE : Override port mapping mode (combined|split)
 
 # Source common header for DPDK scripts
 source "$(dirname "${BASH_SOURCE[0]}")/common-header.sh"
 
 PKTGEN_BIN="${PKTGEN_BIN:-${REPO_ROOT}/Pktgen-DPDK/build/app/pktgen}"
+
+# Port mapping mode configuration
+PORT_MAPPING_MODE="${PORT_MAPPING_MODE:-${1:-combined}}"
 
 # Original config values from pktgen.config as template
 MEMCH="${PKTGEN_MEMCH:--n 4}"
@@ -18,9 +31,9 @@ APP_ARGS="${PKTGEN_APP_ARGS:--P -T}"
 # Script file to execute  
 SCRIPT_FILE="${REPO_ROOT}/scripts/measure-tx-rate.lua"
 
-# Generate timestamp and output file name
+# Generate timestamp and output file name with port mapping mode
 TIMESTAMP=$(date +"%y%m%d-%H%M%S")
-EXPERIMENT_DESC="multi-core-tx"
+EXPERIMENT_DESC="multi-core-tx-${PORT_MAPPING_MODE}"
 OUTPUT_FILE="${REPO_ROOT}/results/${TIMESTAMP}-${EXPERIMENT_DESC}.txt"
 
 # Ensure results directory exists
@@ -35,13 +48,58 @@ fi
 # Ensure pktgen is built
 check_binary "$PKTGEN_BIN" "pktgen"
 
+# Function to generate port mapping based on mode and core count
+generate_port_mapping() {
+    local cores=$1
+    local mode="$2"
+    
+    case "$mode" in
+        "combined")
+            # [1-N].0 - cores 1-N handle port 0 rx/tx
+            if [ $cores -eq 1 ]; then
+                echo "[1].0"
+            else
+                echo "[1-$cores].0"
+            fi
+            ;;
+        "split")
+            # [1-N/2:N/2+1-N].0 - first half rx, second half tx (even cores only)
+            if [ $cores -eq 1 ]; then
+                echo "Error: split mode requires at least 2 cores" >&2
+                return 1
+            elif [ $((cores % 2)) -ne 0 ]; then
+                echo "Error: split mode requires even number of cores, got $cores" >&2
+                return 1
+            else
+                local half=$((cores / 2))
+                local rx_end=$half
+                local tx_start=$((half + 1))
+                local tx_end=$cores
+                
+                if [ $half -eq 1 ]; then
+                    echo "[1:$tx_start].0"
+                else
+                    echo "[1-$rx_end:$tx_start-$tx_end].0"
+                fi
+            fi
+            ;;
+        *)
+            echo "Error: Unknown port mapping mode: $mode" >&2
+            echo "Available modes: combined, split" >&2
+            return 1
+            ;;
+    esac
+}
+
 echo ">> Starting multi-core TX rate benchmark with retry logic (1-15 cores)"
+echo "   Port mapping mode: ${PORT_MAPPING_MODE}"
 echo "   Output file: ${OUTPUT_FILE}"
 echo ""
 
 # Initialize output file
 echo "# Multi-core TX Rate Benchmark Results with Retry Logic" > "$OUTPUT_FILE"
 echo "# Format: setup|TX_rate_in_Mpps" >> "$OUTPUT_FILE"
+echo "# Port Mapping Mode: ${PORT_MAPPING_MODE}" >> "$OUTPUT_FILE"
 echo "# Experiment: ${EXPERIMENT_DESC}" >> "$OUTPUT_FILE"
 echo "# Generated on: $(date)" >> "$OUTPUT_FILE"
 echo "# Timestamp: ${TIMESTAMP}" >> "$OUTPUT_FILE"
@@ -52,14 +110,18 @@ run_core_test() {
     local cores=$1
     local attempt=$2
     
+    # Temporarily disable exit on error for this function
+    set +e
+    local original_set_e=$(set +o | grep 'set +o errexit' > /dev/null && echo "false" || echo "true")
+    
     # Configure core range and port mapping
+    LCORES="-l 0-$cores"
     if [ $cores -eq 1 ]; then
-        LCORES="-l 0-1"
-        PORTMAP="[1].0"
-    else
-        LCORES="-l 0-$cores"
-        PORTMAP="[1-$cores].0"
+        LCORES="-l 0-1"  # Special case: need at least 2 cores (main + worker)
     fi
+    
+    # Generate port mapping based on selected mode
+    PORTMAP=$(generate_port_mapping $cores "$PORT_MAPPING_MODE")
     
     # Build the setup string for output
     SETUP_STRING="$LCORES $MEMCH $PROC_TYPE --file-prefix '$FILE_PREFIX' --allow='$PCI_ADDR' -- $APP_ARGS -m '$PORTMAP' -f 'scripts/measure-tx-rate.lua'"
@@ -133,13 +195,19 @@ run_core_test() {
     # Extract TX rate if no major errors
     TX_RATE=""
     if [ "$has_segfault" = false ] && [ "$has_error" = false ] && [ -f "$TEMP_OUTPUT" ] && [ -s "$TEMP_OUTPUT" ]; then
-        set +e
         TX_RATE=$(grep "Average TX Rate:" "$TEMP_OUTPUT" 2>/dev/null | sed -n 's/.*Average TX Rate: \([0-9.]*\) Mpps.*/\1/p' 2>/dev/null || echo "")
-        set -e
     fi
     
     # Clean up temp file
     rm -f "$TEMP_OUTPUT"
+    
+    # Change back to original directory
+    cd "${REPO_ROOT}"
+    
+    # Restore original set -e state
+    if [ "$original_set_e" = "true" ]; then
+        set -e
+    fi
     
     # Return status: 0=success, 1=segfault/retry, 2=permanent error
     if [ "$has_segfault" = true ]; then
@@ -158,8 +226,18 @@ run_core_test() {
     fi
 }
 
-# Loop through core configurations: 13 to 15 cores with retry logic (testing problematic cores)
-for cores in {13..15}; do
+# Loop through core configurations: 1 to 15 cores with retry logic
+for cores in {1..15}; do
+    # Skip configurations not supported by split mode
+    if [ "$PORT_MAPPING_MODE" = "split" ] && [ $cores -eq 1 ]; then
+        echo "=== Skipping $cores core(s) (split mode requires at least 2 cores) ==="
+        continue
+    fi
+    if [ "$PORT_MAPPING_MODE" = "split" ] && [ $cores -gt 1 ] && [ $((cores % 2)) -ne 0 ]; then
+        echo "=== Skipping $cores core(s) (split mode requires even number of cores) ==="
+        continue
+    fi
+    
     echo "=== Testing with $cores core(s) ==="
     
     # Retry logic: up to 3 attempts for each configuration
@@ -177,9 +255,11 @@ for cores in {13..15}; do
         sudo rm -f /tmp/.rte_config 2>/dev/null || true
         sleep 2
         
-        # Run the test (handle return code manually to avoid set -e exit)
-        result=0
-        run_core_test $cores $attempt || result=$?
+        # Run the test (disable set -e temporarily to handle return codes manually)
+        set +e
+        run_core_test $cores $attempt
+        result=$?
+        set -e
         
         case $result in
             0)  # Success
@@ -196,13 +276,11 @@ for cores in {13..15}; do
             2)  # Permanent error, don't retry
                 echo "   Permanent error detected, skipping retries"
                 # Build setup string for error logging
+                LCORES="-l 0-$cores"
                 if [ $cores -eq 1 ]; then
                     LCORES="-l 0-1"
-                    PORTMAP="[1].0"
-                else
-                    LCORES="-l 0-$cores"
-                    PORTMAP="[1-$cores].0"
                 fi
+                PORTMAP=$(generate_port_mapping $cores "$PORT_MAPPING_MODE")
                 SETUP_STRING="$LCORES $MEMCH $PROC_TYPE --file-prefix '$FILE_PREFIX' --allow='$PCI_ADDR' -- $APP_ARGS -m '$PORTMAP' -f 'scripts/measure-tx-rate.lua'"
                 echo "$SETUP_STRING|PERMANENT_ERROR" >> "$OUTPUT_FILE"
                 success=true  # Stop retrying
@@ -211,17 +289,15 @@ for cores in {13..15}; do
     done
     
     if [ "$success" = false ]; then
-        echo "   Failed after $max_retries attempts, marking as failed"
+        echo "   Failed after $max_retries attempts (likely persistent SEGFAULT)"
         # Build setup string for failure logging
+        LCORES="-l 0-$cores"
         if [ $cores -eq 1 ]; then
             LCORES="-l 0-1"
-            PORTMAP="[1].0"
-        else
-            LCORES="-l 0-$cores"
-            PORTMAP="[1-$cores].0"
         fi
+        PORTMAP=$(generate_port_mapping $cores "$PORT_MAPPING_MODE")
         SETUP_STRING="$LCORES $MEMCH $PROC_TYPE --file-prefix '$FILE_PREFIX' --allow='$PCI_ADDR' -- $APP_ARGS -m '$PORTMAP' -f 'scripts/measure-tx-rate.lua'"
-        echo "$SETUP_STRING|FAILED_AFTER_RETRIES" >> "$OUTPUT_FILE"
+        echo "$SETUP_STRING|SEGFAULT" >> "$OUTPUT_FILE"
     fi
     
     echo ""
