@@ -61,6 +61,15 @@ make run-l3fwd
 # Run l3fwd on node8 for exactly 5 seconds and auto-terminate (remote execution)
 make run-l3fwd-timed
 
+# Run l3fwd multi-core benchmark (1-16 cores) on node8
+make benchmark-l3fwd-multi-core
+
+# Custom l3fwd multi-core testing with environment variables
+L3FWD_DURATION=10 L3FWD_START_CORES=1 L3FWD_END_CORES=8 ./scripts/benchmark-l3fwd-multi-core.sh
+
+# Quick l3fwd test with specific core count
+L3FWD_DURATION=5 L3FWD_START_CORES=4 L3FWD_END_CORES=4 ./scripts/benchmark-l3fwd-multi-core.sh
+
 # Run l3fwd on node8 for custom duration (set L3FWD_DURATION environment variable)
 L3FWD_DURATION=10 make run-l3fwd-timed  # Run for 10 seconds on node8
 
@@ -74,6 +83,15 @@ L3FWD_NODE=node9 make run-l3fwd-timed   # Run on node9 instead of node8
 - Format: `setup|TX_rate_in_Mpps`
 - Automatic handling of intermittent SEGFAULT errors (up to 3 retries)
 - Performance graph generation in PNG format
+
+**L3FWD Multi-core Benchmark:**
+- Tests Layer 3 forwarding performance across 1-16 CPU cores
+- Results saved to `results/YYMMDD-HHMMSS-l3fwd-multi-core.txt`
+- Format: `cores|status` (completed/failed)
+- Automatic multi-queue configuration: `(0,0,0),(0,1,1),...,(0,N,N)`
+- Remote execution on configurable target node (default: node8)
+- Retry logic with 3 attempts per core count
+- Environment variables: `L3FWD_DURATION`, `L3FWD_START_CORES`, `L3FWD_END_CORES`, `L3FWD_NODE`
 
 **Port Mapping Modes:**
 - **combined**: `[1-N].0` - All cores handle both RX and TX processing

@@ -1,5 +1,5 @@
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..46f38f25ed 100644
+index fec0aeb79c..bd520dabab 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -163,7 +163,21 @@ lpm_main_loop(__rte_unused void *dummy)
@@ -19,7 +19,7 @@ index fec0aeb79c..46f38f25ed 100644
 +	for (i = 0; i < n_tx_p; i++) {
 +		portid = qconf->tx_port_id[i];
 +		RTE_LOG(INFO, L3FWD,
-+			" [TX] lcoreid=%u, portid=%u, txq=%hhu\n",
++			" [TX] lcoreid=%u, port=%u, txq=%hhu\n",
 +			lcore_id, portid, qconf->tx_queue_id[portid]);
 +	}
  

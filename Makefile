@@ -26,7 +26,7 @@ dpdk-version:
 	@echo ">> exact tag (if any):"
 	-@git -C "$(DPDK_DIR)" describe --tags --exact-match || true
 
-PHONY: l3fwd l3fwd-clean run-l3fwd run-l3fwd-timed
+PHONY: l3fwd l3fwd-clean run-l3fwd run-l3fwd-timed benchmark-l3fwd-multi-core
 
 l3fwd:
 	@bash build/init_submodules.sh l3fwd
@@ -39,6 +39,9 @@ run-l3fwd:
 
 run-l3fwd-timed:
 	@./scripts/run-l3fwd-timed.sh
+
+benchmark-l3fwd-multi-core:
+	@./scripts/benchmark-l3fwd-multi-core.sh
 
 
 .PHONY: pktgen pktgen-clean run-pktgen
