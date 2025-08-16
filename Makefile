@@ -43,6 +43,9 @@ run-l3fwd-timed:
 benchmark-l3fwd-multi-core:
 	@./scripts/benchmark-l3fwd-multi-core.sh
 
+benchmark-l3fwd-vs-pktgen:
+	@./scripts/benchmark-l3fwd-vs-pktgen.sh
+
 
 .PHONY: pktgen pktgen-clean run-pktgen
 

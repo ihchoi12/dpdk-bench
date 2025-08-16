@@ -64,6 +64,12 @@ make run-l3fwd-timed
 # Run l3fwd multi-core benchmark (1-16 cores) on node8
 make benchmark-l3fwd-multi-core
 
+# Run integrated l3fwd vs pktgen RX/TX rate benchmark  
+make benchmark-l3fwd-vs-pktgen
+
+# Custom l3fwd vs pktgen testing with environment variables
+L3FWD_START_CORES=1 L3FWD_END_CORES=4 PKTGEN_DURATION=5 ./scripts/benchmark-l3fwd-vs-pktgen.sh
+
 # Custom l3fwd multi-core testing with environment variables
 L3FWD_DURATION=10 L3FWD_START_CORES=1 L3FWD_END_CORES=8 ./scripts/benchmark-l3fwd-multi-core.sh
 
@@ -92,6 +98,14 @@ L3FWD_NODE=node9 make run-l3fwd-timed   # Run on node9 instead of node8
 - Remote execution on configurable target node (default: node8)
 - Retry logic with 3 attempts per core count
 - Environment variables: `L3FWD_DURATION`, `L3FWD_START_CORES`, `L3FWD_END_CORES`, `L3FWD_NODE`
+
+**L3FWD vs Pktgen RX/TX Rate Benchmark:**
+- Tests L3FWD forwarding performance with pktgen as traffic generator
+- Results saved to `results/YYMMDD-HHMMSS-l3fwd-vs-pktgen.txt`
+- Format: `pktgen_setup|l3fwd_setup|RX_rate|TX_rate`
+- Pktgen uses 4-core combined mode for stability
+- L3FWD runs on configurable target node (default: node8)
+- Environment variables: `L3FWD_START_CORES`, `L3FWD_END_CORES`, `PKTGEN_DURATION`, `L3FWD_NODE`
 
 **Port Mapping Modes:**
 - **combined**: `[1-N].0` - All cores handle both RX and TX processing
