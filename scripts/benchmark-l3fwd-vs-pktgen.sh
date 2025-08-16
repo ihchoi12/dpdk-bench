@@ -10,13 +10,7 @@ L3FWD_START_CORES="${L3FWD_START_CORES:-1}"
 L3FWD_END_CORES="${L3FWD_END_CORES:-16}"
 L3FWD_NODE="${L3FWD_NODE:-node8}"
 PKTGEN_DURATION="${PKTGEN_DURATION:-10}"  # lua script duration in seconds
-L3FWD_EXTRA_TIME="${L3FWD_EXTRA_TIME:-5}"  # extra seconds for l3fwd to run before/after pktgen test
-
-# Pktgen configuration (2-core combined mode for stability)
-PKTGEN_LCORES="-l 0-1"
-PKTGEN_PORTMAP="[1-2].0"  # Combined RX/TX mode
-PKTGEN_PCI_ADDR="0000:31:00.1"
-PKTGEN_FILE_PREFIX="pktgen_l3fwd_test"
+L3FWD_EXTRA_TIME="${L3FWD_EXTRA_TIME:-2}"  # extra seconds for l3fwd to run before/after pktgen test
 
 # L3FWD configuration
 L3FWD_PCI_ADDR="0000:31:00.1"
@@ -97,6 +91,7 @@ start_l3fwd() {
     echo ">> Starting l3fwd with $cores cores on ${L3FWD_NODE}..."
     echo "   EAL lcores: $lcores_arg"
     echo "   Config: $config_str"
+    echo "   Final l3fwd command: sudo -E ${REMOTE_L3FWD_BIN} ${lcores_arg} -n 4 -a ${L3FWD_PCI_ADDR} -- ${app_args}"
     
     # Start l3fwd in background on remote node
     ssh ${L3FWD_NODE} << EOF &
@@ -133,7 +128,7 @@ stop_l3fwd() {
 echo ">> L3FWD vs Pktgen RX/TX Rate Benchmark"
 echo "   L3FWD cores range: ${L3FWD_START_CORES}-${L3FWD_END_CORES}"
 echo "   L3FWD target node: ${L3FWD_NODE}"
-echo "   Pktgen setup: 2-core combined mode (${PKTGEN_PORTMAP})"
+echo "   Pktgen setup: Using pktgen.config settings"
 echo "   Pktgen duration: ${PKTGEN_DURATION} seconds"
 echo "   Results file: ${RESULTS_FILE}"
 echo ""
@@ -153,7 +148,7 @@ cat > "$RESULTS_FILE" << EOF
 # L3FWD vs Pktgen RX/TX Rate Benchmark Results
 # Generated: $(date)
 # Format: pktgen_setup|l3fwd_setup|RX_rate|TX_rate
-# Pktgen: 4-core combined mode (${PKTGEN_PORTMAP})
+# Pktgen: Using pktgen.config settings
 # L3FWD: Variable cores (${L3FWD_START_CORES}-${L3FWD_END_CORES}) on ${L3FWD_NODE}
 # Test duration: ${PKTGEN_DURATION} seconds per test
 
@@ -168,7 +163,7 @@ for cores in $(seq $L3FWD_START_CORES $L3FWD_END_CORES); do
     # Start l3fwd with current core count
     if ! start_l3fwd $cores; then
         echo ">> Skipping test for $cores cores due to l3fwd startup failure"
-        echo "pktgen_4core_combined|l3fwd_${cores}core|failed|failed" >> "$RESULTS_FILE"
+        echo "pktgen_config|l3fwd_${cores}core|failed|failed" >> "$RESULTS_FILE"
         continue
     fi
     
@@ -180,31 +175,34 @@ for cores in $(seq $L3FWD_START_CORES $L3FWD_END_CORES); do
     echo ">> Running pktgen test against l3fwd ($cores cores)..."
     
     # Set environment variables for pktgen
-    export LCORES="$PKTGEN_LCORES"
-    export PORTMAP="$PKTGEN_PORTMAP"
-    export PCI_ADDR="$PKTGEN_PCI_ADDR"
-    export FILE_PREFIX="$PKTGEN_FILE_PREFIX"
     export SCRIPT_FILE="${REPO_ROOT}/Pktgen-DPDK/scripts/measure-rx-tx-rate.lua"
     export PKTGEN_DURATION="$PKTGEN_DURATION"
     
     # Run pktgen with lua script and capture output
     output_file="/tmp/pktgen_output_${cores}cores.txt"
-    ${REPO_ROOT}/scripts/run-pktgen-with-lua-script.sh > "$output_file" 2>&1
+    echo "   Executing: ${REPO_ROOT}/scripts/run-pktgen-with-lua-script.sh"
+    
+    "${REPO_ROOT}/scripts/run-pktgen-with-lua-script.sh" > "$output_file" 2>&1
     pktgen_exit_code=$?
     
     if [ $pktgen_exit_code -eq 0 ]; then
         # Extract RX and TX rates from output
-        tx_rate=$(grep "RESULT_TX_RATE_MPPS:" "$output_file" | cut -d':' -f2 || echo "0.000")
-        rx_rate=$(grep "RESULT_RX_RATE_MPPS:" "$output_file" | cut -d':' -f2 || echo "0.000")
+        tx_rate=$(grep "RESULT_TX_RATE_MPPS:" "$output_file" 2>/dev/null | cut -d':' -f2 | sed 's/^[[:space:]]*//' || echo "0.000")
+        rx_rate=$(grep "RESULT_RX_RATE_MPPS:" "$output_file" 2>/dev/null | cut -d':' -f2 | sed 's/^[[:space:]]*//' || echo "0.000")
         
         echo ">> Pktgen test completed successfully"
         echo "   TX Rate: ${tx_rate} Mpps"
         echo "   RX Rate: ${rx_rate} Mpps"
         
+        # Debug: Show the relevant lines from output file
+        echo "   Debug - found result lines:"
+        grep "RESULT_.*_RATE_MPPS:" "$output_file" 2>/dev/null || echo "   No result lines found"
+        
         # Clean up output file
         rm -f "$output_file"
     else
         echo ">> ERROR: Pktgen test failed (exit code: $pktgen_exit_code)"
+        echo "   Debug - last 20 lines of output:"
         cat "$output_file" | tail -20  # Show last 20 lines for debugging
         rm -f "$output_file"
         tx_rate="0.000"
@@ -212,7 +210,7 @@ for cores in $(seq $L3FWD_START_CORES $L3FWD_END_CORES); do
     fi
     
     # Save results
-    echo "pktgen_4core_combined|l3fwd_${cores}core|${rx_rate}|${tx_rate}" >> "$RESULTS_FILE"
+    echo "pktgen_config|l3fwd_${cores}core|${rx_rate}|${tx_rate}" >> "$RESULTS_FILE"
     
     # Stop l3fwd
     stop_l3fwd
