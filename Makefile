@@ -29,7 +29,7 @@ dpdk-version:
 PHONY: l3fwd l3fwd-clean run-l3fwd run-l3fwd-timed benchmark-l3fwd-multi-core
 
 l3fwd:
-	@bash build/init_submodules.sh l3fwd
+	cd dpdk && ninja -C build examples/dpdk-l3fwd
 
 l3fwd-clean:
 	@rm -f dpdk/build/examples/dpdk-l3fwd
@@ -50,7 +50,7 @@ benchmark-l3fwd-vs-pktgen:
 .PHONY: pktgen pktgen-clean run-pktgen
 
 pktgen:
-	@bash build/init_submodules.sh pktgen
+	cd Pktgen-DPDK && ninja -C build
 
 pktgen-clean:
 	@bash build/init_submodules.sh pktgen-clean
