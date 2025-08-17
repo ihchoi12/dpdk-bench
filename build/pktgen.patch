@@ -12,7 +12,7 @@ index eb0682f..67b0cbe 100644
  deps += [cc.find_library('dl', required: false)]
  deps += [cc.find_library('m', required: false)]
 diff --git a/app/pktgen-port-cfg.c b/app/pktgen-port-cfg.c
-index 1e4042a..2414ab2 100644
+index 1e4042a..f472bf8 100644
 --- a/app/pktgen-port-cfg.c
 +++ b/app/pktgen-port-cfg.c
 @@ -180,12 +180,26 @@ allocate_port_info(uint16_t pid)
@@ -33,7 +33,7 @@ index 1e4042a..2414ab2 100644
 +            goto leave;
 +        }
 +    }
-+    
++
      pinfo->tx_pkts = rte_calloc_socket("TxMbufs", MAX_PKT_TX_BURST, sizeof(struct rte_mbuf *),
                                         RTE_CACHE_LINE_SIZE, sid);
 -    if (pinfo->rx_pkts == NULL || pinfo->tx_pkts == NULL) {

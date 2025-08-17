@@ -124,7 +124,252 @@ stop_l3fwd() {
     sleep 2
 }
 
-# Main execution
+# Function to run complete test (L3FWD + pktgen) with retry logic
+run_complete_test_with_retry() {
+    local cores=$1
+    local max_retries=3
+    local attempt=1
+    local success=false
+    local tx_rate="FAILED"
+    local rx_rate="FAILED"
+    local pktgen_setup=""
+    local l3fwd_setup=""
+    
+    # Generate L3FWD parameters for this test
+    local l3fwd_lcores="-l 0-$((cores-1))"
+    local l3fwd_config=$(generate_l3fwd_config $cores)
+    
+    # Get pktgen parameters from config
+    local pktgen_lcores="${PKTGEN_LCORES:--l 0-8}"
+    local pktgen_portmap="${PKTGEN_PORTMAP:-[1-8].0}"
+    
+    # Create setup strings for results
+    pktgen_setup="${pktgen_lcores} -m ${pktgen_portmap}"
+    l3fwd_setup="${l3fwd_lcores}"
+    
+    while [ $attempt -le $max_retries ] && [ "$success" = false ]; do
+        if [ $attempt -gt 1 ]; then
+            echo "   Attempt $attempt for $cores core(s)"
+            # Clean up any lingering processes and shared memory
+            sudo pkill -f pktgen 2>/dev/null || true
+            sudo pkill -f dpdk 2>/dev/null || true
+            sudo rm -f /dev/hugepages/rtemap_* 2>/dev/null || true
+            sudo rm -f /var/run/dpdk/rte/config 2>/dev/null || true
+            sudo rm -rf /var/run/dpdk/pktgen1/* 2>/dev/null || true
+            sudo rm -f /tmp/.rte_config 2>/dev/null || true
+            
+            # Also clean up remote l3fwd processes
+            stop_l3fwd
+            sleep 3
+        fi
+        
+        # Start l3fwd with current core count
+        echo ">> Starting l3fwd with $cores cores on ${L3FWD_NODE}... (attempt $attempt)"
+        if ! start_l3fwd $cores; then
+            echo "   L3FWD startup failed, will retry..."
+            attempt=$((attempt + 1))
+            if [ $attempt -le $max_retries ]; then
+                echo "   Waiting 5 seconds before retry..."
+                sleep 5
+            fi
+            continue
+        fi
+        
+        # Wait extra time for l3fwd to stabilize
+        echo ">> Waiting ${L3FWD_EXTRA_TIME} seconds for l3fwd to stabilize..."
+        sleep $L3FWD_EXTRA_TIME
+        
+        # Run pktgen test
+        echo ">> Running pktgen test against l3fwd ($cores cores)..."
+        
+        # Set environment variables for pktgen
+        export SCRIPT_FILE="${REPO_ROOT}/Pktgen-DPDK/scripts/measure-rx-tx-rate.lua"
+        export PKTGEN_DURATION="$PKTGEN_DURATION"
+        
+        # Run pktgen with lua script and capture output
+        output_file="/tmp/pktgen_output_${cores}cores_attempt${attempt}.txt"
+        echo "   Executing: make run-pktgen-with-lua-script > "$output_file" 2>&1"
+        
+        # Temporarily disable exit on error for this function
+        set +e
+        local original_set_e=$(set +o | grep 'set +o errexit' > /dev/null && echo "false" || echo "true")
+        
+        cd "${REPO_ROOT}" && make run-pktgen-with-lua-script > "$output_file" 2>&1
+        pktgen_exit_code=$?
+        
+        # Restore original set -e state
+        if [ "$original_set_e" = "true" ]; then
+            set -e
+        fi
+        
+        # Check for segfault or other errors
+        local has_segfault=false
+        local has_error=false
+        
+        if [ -f "$output_file" ]; then
+            if grep -q "Segment Fault\|Segmentation fault\|segfault" "$output_file" 2>/dev/null; then
+                has_segfault=true
+            fi
+        fi
+        
+        if [ $pktgen_exit_code -ne 0 ] && [ "$has_segfault" = false ]; then
+            has_error=true
+        fi
+        
+        # Extract rates if no major errors
+        if [ "$has_segfault" = false ] && [ "$has_error" = false ] && [ -f "$output_file" ] && [ -s "$output_file" ]; then
+            tx_rate=$(grep "RESULT_TX_RATE_MPPS:" "$output_file" 2>/dev/null | cut -d':' -f2 | sed 's/^[[:space:]]*//' || echo "0.000")
+            rx_rate=$(grep "RESULT_RX_RATE_MPPS:" "$output_file" 2>/dev/null | cut -d':' -f2 | sed 's/^[[:space:]]*//' || echo "0.000")
+            
+            # Consider test successful if we got meaningful rates (either TX or RX should be non-zero)
+            if [ "$tx_rate" != "0.000" ] || [ "$rx_rate" != "0.000" ]; then
+                echo ">> Complete test (L3FWD + pktgen) completed successfully"
+                echo "   TX Rate: ${tx_rate} Mpps"
+                echo "   RX Rate: ${rx_rate} Mpps"
+                success=true
+            else
+                echo "   Could not extract meaningful rates, will retry complete test..."
+            fi
+        elif [ "$has_segfault" = true ]; then
+            echo "   Segmentation fault detected, will retry complete test..."
+        elif [ "$has_error" = true ]; then
+            echo "   Error detected (exit code: $pktgen_exit_code), will retry complete test..."
+        else
+            echo "   No output or empty output, will retry complete test..."
+        fi
+        
+        # Clean up output file
+        rm -f "$output_file"
+        
+        # Stop l3fwd before next attempt or exit
+        stop_l3fwd
+        
+        if [ "$success" = false ]; then
+            attempt=$((attempt + 1))
+            if [ $attempt -le $max_retries ]; then
+                echo "   Waiting 5 seconds before retry..."
+                sleep 5
+            fi
+        fi
+    done
+    
+    if [ "$success" = false ]; then
+        echo ">> ERROR: Complete test (L3FWD + pktgen) failed after $max_retries attempts"
+        tx_rate="FAILED"
+        rx_rate="FAILED"
+    fi
+    
+    # Export results for caller
+    export COMPLETE_TEST_TX_RATE="$tx_rate"
+    export COMPLETE_TEST_RX_RATE="$rx_rate"
+    export COMPLETE_TEST_PKTGEN_SETUP="$pktgen_setup"
+    export COMPLETE_TEST_L3FWD_SETUP="$l3fwd_setup"
+    
+    return $([ "$success" = true ] && echo 0 || echo 1)
+}
+
+# Function to run pktgen test with retry logic (keeping for compatibility, but now unused)
+run_pktgen_test_with_retry() {
+    local cores=$1
+    local max_retries=3
+    local attempt=1
+    local success=false
+    local tx_rate="0.000"
+    local rx_rate="0.000"
+    
+    while [ $attempt -le $max_retries ] && [ "$success" = false ]; do
+        if [ $attempt -gt 1 ]; then
+            echo "   Attempt $attempt for $cores core(s)"
+            # Clean up any lingering processes and shared memory
+            sudo pkill -f pktgen 2>/dev/null || true
+            sudo pkill -f dpdk 2>/dev/null || true
+            sudo rm -f /dev/hugepages/rtemap_* 2>/dev/null || true
+            sudo rm -f /var/run/dpdk/rte/config 2>/dev/null || true
+            sudo rm -rf /var/run/dpdk/pktgen1/* 2>/dev/null || true
+            sudo rm -f /tmp/.rte_config 2>/dev/null || true
+            sleep 3
+        fi
+        
+        # Set environment variables for pktgen
+        export SCRIPT_FILE="${REPO_ROOT}/Pktgen-DPDK/scripts/measure-rx-tx-rate.lua"
+        export PKTGEN_DURATION="$PKTGEN_DURATION"
+        
+        # Run pktgen with lua script and capture output
+        output_file="/tmp/pktgen_output_${cores}cores_attempt${attempt}.txt"
+        echo "   Executing: make run-pktgen-with-lua-script > "$output_file" 2>&1"
+        
+        # Temporarily disable exit on error for this function
+        set +e
+        local original_set_e=$(set +o | grep 'set +o errexit' > /dev/null && echo "false" || echo "true")
+        
+        cd "${REPO_ROOT}" && make run-pktgen-with-lua-script > "$output_file" 2>&1
+        pktgen_exit_code=$?
+        
+        # Restore original set -e state
+        if [ "$original_set_e" = "true" ]; then
+            set -e
+        fi
+        
+        # Check for segfault or other errors
+        local has_segfault=false
+        local has_error=false
+        
+        if [ -f "$output_file" ]; then
+            if grep -q "Segment Fault\|Segmentation fault\|segfault" "$output_file" 2>/dev/null; then
+                has_segfault=true
+            fi
+        fi
+        
+        if [ $pktgen_exit_code -ne 0 ] && [ "$has_segfault" = false ]; then
+            has_error=true
+        fi
+        
+        # Extract rates if no major errors
+        if [ "$has_segfault" = false ] && [ "$has_error" = false ] && [ -f "$output_file" ] && [ -s "$output_file" ]; then
+            tx_rate=$(grep "RESULT_TX_RATE_MPPS:" "$output_file" 2>/dev/null | cut -d':' -f2 | sed 's/^[[:space:]]*//' || echo "0.000")
+            rx_rate=$(grep "RESULT_RX_RATE_MPPS:" "$output_file" 2>/dev/null | cut -d':' -f2 | sed 's/^[[:space:]]*//' || echo "0.000")
+            
+            # Consider test successful if we got meaningful rates
+            if [ "$tx_rate" != "0.000" ] || [ "$rx_rate" != "0.000" ]; then
+                echo ">> Pktgen test completed successfully"
+                echo "   TX Rate: ${tx_rate} Mpps"
+                echo "   RX Rate: ${rx_rate} Mpps"
+                success=true
+            else
+                echo "   Could not extract meaningful rates, will retry..."
+            fi
+        elif [ "$has_segfault" = true ]; then
+            echo "   Segmentation fault detected, will retry..."
+        elif [ "$has_error" = true ]; then
+            echo "   Error detected (exit code: $pktgen_exit_code), will retry..."
+        else
+            echo "   No output or empty output, will retry..."
+        fi
+        
+        # Clean up output file
+        rm -f "$output_file"
+        
+        if [ "$success" = false ]; then
+            attempt=$((attempt + 1))
+            if [ $attempt -le $max_retries ]; then
+                echo "   Waiting 5 seconds before retry..."
+                sleep 5
+            fi
+        fi
+    done
+    
+    if [ "$success" = false ]; then
+        echo ">> ERROR: Pktgen test failed after $max_retries attempts"
+        tx_rate="FAILED"
+        rx_rate="FAILED"
+    fi
+    
+    # Export results for caller
+    export PKTGEN_TX_RATE="$tx_rate"
+    export PKTGEN_RX_RATE="$rx_rate"
+    
+    return $([ "$success" = true ] && echo 0 || echo 1)
+}
 echo ">> L3FWD vs Pktgen RX/TX Rate Benchmark"
 echo "   L3FWD cores range: ${L3FWD_START_CORES}-${L3FWD_END_CORES}"
 echo "   L3FWD target node: ${L3FWD_NODE}"
@@ -160,64 +405,35 @@ for cores in $(seq $L3FWD_START_CORES $L3FWD_END_CORES); do
     echo "Testing L3FWD with $cores core(s)"
     echo "========================================"
     
-    # Start l3fwd with current core count
-    if ! start_l3fwd $cores; then
-        echo ">> Skipping test for $cores cores due to l3fwd startup failure"
-        echo "pktgen_config|l3fwd_${cores}core|failed|failed" >> "$RESULTS_FILE"
-        continue
-    fi
-    
-    # Wait extra time for l3fwd to stabilize
-    echo ">> Waiting ${L3FWD_EXTRA_TIME} seconds for l3fwd to stabilize..."
-    sleep $L3FWD_EXTRA_TIME
-    
-    # Run pktgen test and get rates
-    echo ">> Running pktgen test against l3fwd ($cores cores)..."
-    
-    # Set environment variables for pktgen
-    export SCRIPT_FILE="${REPO_ROOT}/Pktgen-DPDK/scripts/measure-rx-tx-rate.lua"
-    export PKTGEN_DURATION="$PKTGEN_DURATION"
-    
-    # Run pktgen with lua script and capture output
-    output_file="/tmp/pktgen_output_${cores}cores.txt"
-    echo "   Executing: make run-pktgen-with-lua-script > "$output_file" 2>&1"
-    
-    cd "${REPO_ROOT}" && make run-pktgen-with-lua-script > "$output_file" 2>&1
-    pktgen_exit_code=$?
-    
-    if [ $pktgen_exit_code -eq 0 ]; then
-        # Extract RX and TX rates from output
-        tx_rate=$(grep "RESULT_TX_RATE_MPPS:" "$output_file" 2>/dev/null | cut -d':' -f2 | sed 's/^[[:space:]]*//' || echo "0.000")
-        rx_rate=$(grep "RESULT_RX_RATE_MPPS:" "$output_file" 2>/dev/null | cut -d':' -f2 | sed 's/^[[:space:]]*//' || echo "0.000")
-        
-        echo ">> Pktgen test completed successfully"
-        echo "   TX Rate: ${tx_rate} Mpps"
-        echo "   RX Rate: ${rx_rate} Mpps"
-        
-        # Debug: Show the relevant lines from output file
-        echo "   Debug - found result lines:"
-        grep "RESULT_.*_RATE_MPPS:" "$output_file" 2>/dev/null || echo "   No result lines found"
-        
-        # Clean up output file
-        rm -f "$output_file"
+    # Run complete test (L3FWD + pktgen) with retry logic
+    if run_complete_test_with_retry $cores; then
+        tx_rate="$COMPLETE_TEST_TX_RATE"
+        rx_rate="$COMPLETE_TEST_RX_RATE"
+        pktgen_setup="$COMPLETE_TEST_PKTGEN_SETUP"
+        l3fwd_setup="$COMPLETE_TEST_L3FWD_SETUP"
     else
-        echo ">> ERROR: Pktgen test failed (exit code: $pktgen_exit_code)"
-        echo "   Debug - last 20 lines of output:"
-        cat "$output_file" | tail -20  # Show last 20 lines for debugging
-        rm -f "$output_file"
-        tx_rate="0.000"
-        rx_rate="0.000"
+        tx_rate="FAILED"
+        rx_rate="FAILED"
+        # Still save setup info even on failure
+        pktgen_setup="$COMPLETE_TEST_PKTGEN_SETUP"
+        l3fwd_setup="$COMPLETE_TEST_L3FWD_SETUP"
     fi
     
-    # Save results
-    echo "pktgen_config|l3fwd_${cores}core|${rx_rate}|${tx_rate}" >> "$RESULTS_FILE"
-    
-    # Stop l3fwd
-    stop_l3fwd
+    # Save results with actual setup parameters
+    echo "${pktgen_setup}|${l3fwd_setup}|${rx_rate}|${tx_rate}" >> "$RESULTS_FILE"
     
     # Wait between tests to ensure clean state
-    echo ">> Waiting 3 seconds between tests..."
-    sleep 3
+    echo ">> Waiting 5 seconds between tests for thorough cleanup..."
+    
+    # More thorough cleanup between tests
+    sudo pkill -f pktgen 2>/dev/null || true
+    sudo pkill -f dpdk 2>/dev/null || true
+    sudo rm -f /dev/hugepages/rtemap_* 2>/dev/null || true
+    sudo rm -f /var/run/dpdk/rte/config 2>/dev/null || true
+    sudo rm -rf /var/run/dpdk/pktgen1/* 2>/dev/null || true
+    sudo rm -f /tmp/.rte_config 2>/dev/null || true
+    
+    sleep 5
     
     echo ">> Test completed for $cores cores"
     echo ""
@@ -232,6 +448,12 @@ echo ">> Summary:"
 echo "   Format: pktgen_setup|l3fwd_setup|RX_rate|TX_rate"
 grep -v "^#" "$RESULTS_FILE" | while IFS='|' read -r pktgen_setup l3fwd_setup rx_rate tx_rate; do
     if [ -n "$pktgen_setup" ]; then
-        echo "    $l3fwd_setup: RX=${rx_rate} Mpps, TX=${tx_rate} Mpps"
+        if [ "$rx_rate" = "FAILED" ] || [ "$tx_rate" = "FAILED" ]; then
+            echo "    ${l3fwd_setup}: Test FAILED"
+        elif [ "$rx_rate" = "failed" ] || [ "$tx_rate" = "failed" ]; then
+            echo "    ${l3fwd_setup}: L3FWD startup failed"
+        else
+            echo "    ${l3fwd_setup}: RX=${rx_rate} Mpps, TX=${tx_rate} Mpps"
+        fi
     fi
 done
