@@ -180,9 +180,9 @@ for cores in $(seq $L3FWD_START_CORES $L3FWD_END_CORES); do
     
     # Run pktgen with lua script and capture output
     output_file="/tmp/pktgen_output_${cores}cores.txt"
-    echo "   Executing: make run-pktgen-with-lua-script"
+    echo "   Executing: make run-pktgen-with-lua-script > "$output_file" 2>&1"
     
-    cd "${REPO_ROOT}" && make run-pktgen-with-lua-script
+    cd "${REPO_ROOT}" && make run-pktgen-with-lua-script > "$output_file" 2>&1
     pktgen_exit_code=$?
     
     if [ $pktgen_exit_code -eq 0 ]; then
