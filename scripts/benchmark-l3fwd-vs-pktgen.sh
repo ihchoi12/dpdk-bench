@@ -13,7 +13,7 @@ PKTGEN_DURATION="${PKTGEN_DURATION:-10}"  # lua script duration in seconds
 L3FWD_EXTRA_TIME="${L3FWD_EXTRA_TIME:-2}"  # extra seconds for l3fwd to run before/after pktgen test
 
 # L3FWD configuration
-L3FWD_PCI_ADDR="0000:31:00.1"
+L3FWD_PCI_ADDR="0000:31:00.1,txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256"
 L3FWD_PORT_MASK="-p 0x1"
 L3FWD_ETH_DEST="08:c0:eb:b6:cd:5d"
 
@@ -180,9 +180,9 @@ for cores in $(seq $L3FWD_START_CORES $L3FWD_END_CORES); do
     
     # Run pktgen with lua script and capture output
     output_file="/tmp/pktgen_output_${cores}cores.txt"
-    echo "   Executing: ${REPO_ROOT}/scripts/run-pktgen-with-lua-script.sh"
+    echo "   Executing: make run-pktgen-with-lua-script"
     
-    "${REPO_ROOT}/scripts/run-pktgen-with-lua-script.sh" > "$output_file" 2>&1
+    cd "${REPO_ROOT}" && make run-pktgen-with-lua-script
     pktgen_exit_code=$?
     
     if [ $pktgen_exit_code -eq 0 ]; then
