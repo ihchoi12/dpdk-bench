@@ -70,7 +70,7 @@ index d2b54a6..b5c3c2a 100644
  
      rte_atomic64_t port_flags;       /**< Special send flags for ARP and other */
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..851c307 100644
+index 627034d..e8a1935 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -1057,7 +1057,7 @@ static inline void
@@ -82,6 +82,23 @@ index 627034d..851c307 100644
  
      if (unlikely(pktgen_tst_port_flags(pinfo, STOP_RECEIVING_PACKETS)))
          return;
+@@ -1066,6 +1066,7 @@ pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
+ 
+     /* Read packets from RX queues and free the mbufs */
+     if (likely((nb_rx = rte_eth_rx_burst(pid, qid, pkts, nb_pkts)) > 0)) {
++        // printf("Core %d received %u packets\n", rte_lcore_id(), nb_rx);
+         struct rte_eth_stats *qstats = &pinfo->queue_stats;
+ 
+         qstats->q_ipackets[qid] += nb_rx;
+@@ -1280,7 +1281,7 @@ pktgen_main_rx_loop(void)
+ 
+     pinfo  = l2p_get_pinfo_by_lcore(lid);
+     rx_qid = l2p_get_rxqid(lid);
+-
++    printf("DEBUG: RX Core Info: lid %3d, rx_qid %2d, cpu_id %2d, pinfo %p\n", lid, rx_qid, sched_getcpu(), pinfo);
+     printf("RX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, rx_qid,
+            l2p_get_rx_mp(pinfo->pid)->name, l2p_get_rx_mp(pinfo->pid));
+ 
 diff --git a/scripts/measure-rx-tx-rate.lua b/scripts/measure-rx-tx-rate.lua
 new file mode 100644
 index 0000000..6239f76

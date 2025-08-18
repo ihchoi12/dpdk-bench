@@ -1,8 +1,24 @@
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..bd520dabab 100644
+index fec0aeb79c..a81d32a277 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
-@@ -163,7 +163,21 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -33,6 +33,15 @@
+ 
+ #include "lpm_route_parse.c"
+ 
++/* Debug logging control - set to 1 to enable debug logs, 0 to disable */
++#define L3FWD_DEBUG_LOGS 1  /* Change this to 1 for debug mode, 0 for release */
++
++#if L3FWD_DEBUG_LOGS
++#define L3FWD_DEBUG_LOG(fmt, args...) RTE_LOG(INFO, L3FWD, fmt, ##args)
++#else
++#define L3FWD_DEBUG_LOG(fmt, args...) do {} while(0)
++#endif
++
+ #define IPV4_L3FWD_LPM_MAX_RULES         1024
+ #define IPV4_L3FWD_LPM_NUMBER_TBL8S (1 << 8)
+ #define IPV6_L3FWD_LPM_MAX_RULES         1024
+@@ -163,7 +172,21 @@ lpm_main_loop(__rte_unused void *dummy)
  		return 0;
  	}
  
@@ -25,11 +41,55 @@ index fec0aeb79c..bd520dabab 100644
  
  	for (i = 0; i < n_rx_q; i++) {
  
+@@ -189,6 +212,8 @@ lpm_main_loop(__rte_unused void *dummy)
+ 				portid = qconf->tx_port_id[i];
+ 				if (qconf->tx_mbufs[portid].len == 0)
+ 					continue;
++				L3FWD_DEBUG_LOG("lcore %u sending %u packets to port %u queue %u\n", 
++					lcore_id, qconf->tx_mbufs[portid].len, portid, qconf->tx_queue_id[portid]);
+ 				send_burst(qconf,
+ 					qconf->tx_mbufs[portid].len,
+ 					portid);
+@@ -208,7 +233,7 @@ lpm_main_loop(__rte_unused void *dummy)
+ 				nb_pkt_per_burst);
+ 			if (nb_rx == 0)
+ 				continue;
+-
++			L3FWD_DEBUG_LOG("lcore %u received %d packets from port %u queue %u\n", lcore_id, nb_rx, portid, queueid);
+ #if defined RTE_ARCH_X86 || defined __ARM_NEON \
+ 			 || defined RTE_ARCH_PPC_64
+ 			l3fwd_lpm_send_packets(nb_rx, pkts_burst,
 diff --git a/examples/l3fwd/main.c b/examples/l3fwd/main.c
-index ae3b4f6439..df6fffbbe2 100644
+index ae3b4f6439..3ef2aa5151 100644
 --- a/examples/l3fwd/main.c
 +++ b/examples/l3fwd/main.c
-@@ -1448,7 +1448,7 @@ l3fwd_poll_resource_setup(void)
+@@ -131,7 +131,8 @@ static struct rte_eth_conf port_conf = {
+ 	.rx_adv_conf = {
+ 		.rss_conf = {
+ 			.rss_key = NULL,
+-			.rss_hf = RTE_ETH_RSS_IP,
++			// .rss_hf = RTE_ETH_RSS_IP,
++			.rss_hf = RTE_ETH_RSS_IP | RTE_ETH_RSS_TCP | RTE_ETH_RSS_UDP,
+ 		},
+ 	},
+ 	.txmode = {
+@@ -1065,10 +1066,11 @@ parse_args(int argc, char **argv)
+ 	}
+ 
+ 	/* For ACL, update port config rss hash filter */
+-	if (lookup_mode == L3FWD_LOOKUP_ACL) {
+-		port_conf.rx_adv_conf.rss_conf.rss_hf |=
+-				RTE_ETH_RSS_UDP | RTE_ETH_RSS_TCP | RTE_ETH_RSS_SCTP;
+-	}
++	// if (lookup_mode == L3FWD_LOOKUP_ACL) {
++	// 	port_conf.rx_adv_conf.rss_conf.rss_hf |=
++	// 			RTE_ETH_RSS_UDP | RTE_ETH_RSS_TCP | RTE_ETH_RSS_SCTP;
++	// }
++	/* RSS hash filter now includes TCP/UDP ports for all modes */
+ 
+ 	if (optind >= 0)
+ 		argv[optind-1] = prgname;
+@@ -1448,7 +1450,7 @@ l3fwd_poll_resource_setup(void)
  			else
  				socketid = 0;
  
