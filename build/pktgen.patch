@@ -101,7 +101,7 @@ index 627034d..e8a1935 100644
  
 diff --git a/scripts/measure-rx-tx-rate.lua b/scripts/measure-rx-tx-rate.lua
 new file mode 100644
-index 0000000..6239f76
+index 0000000..351bbc2
 --- /dev/null
 +++ b/scripts/measure-rx-tx-rate.lua
 @@ -0,0 +1,133 @@
@@ -155,8 +155,8 @@ index 0000000..6239f76
 +-- Set source TCP port (20000-20255, increment by 1, same as measure-tx-rate.lua)
 +pktgen.range.src_port(port, "start", 20000)
 +pktgen.range.src_port(port, "inc", 1)
-+pktgen.range.src_port(port, "min", 20000)
-+pktgen.range.src_port(port, "max", 20255)
++pktgen.range.src_port(port, "min", 10000)
++pktgen.range.src_port(port, "max", 60000)
 +
 +-- Set destination TCP port (fixed at 20000, same as measure-tx-rate.lua)
 +pktgen.range.dst_port(port, "start", 20000)
@@ -182,7 +182,7 @@ index 0000000..6239f76
 +print("  Protocol: TCP")
 +print("  Test Duration: " .. sleeptime .. " seconds")
 +print("  Rate: 100% (maximum)")
-+print("  Range Mode: Enabled (Port 20000-20255)")
++print("  Range Mode: Enabled (Port 10000-60000)")
 +print("==========================================")
 +
 +-- Start transmission
@@ -427,3 +427,85 @@ index 0000000..86cde97
 +print("Total Packets Transmitted: " .. total_packets)
 +print("Average TX Rate: " .. string.format("%.3f", avg_tx_rate_mpps) .. " Mpps")
 +print("====================================\n")
+diff --git a/scripts/simple-tx-test.lua b/scripts/simple-tx-test.lua
+new file mode 100644
+index 0000000..6c183bc
+--- /dev/null
++++ b/scripts/simple-tx-test.lua
+@@ -0,0 +1,76 @@
++-- RX/TX Rate Measurement Script (based on measure-tx-rate.lua)
++
++-- Since we run from Pktgen-DPDK directory, just add current directory to path
++package.path = package.path .. ";./?.lua;?.lua;test/?.lua;app/?.lua;"
++
++require "Pktgen"
++
++local port = 0
++local sleeptime = tonumber(os.getenv("PKTGEN_DURATION")) or 10
++
++pktgen.stop(port)
++pktgen.clear(port)
++pktgen.clr()
++pktgen.delay(100)
++
++-- Configuration (same as measure-tx-rate.lua)
++pktgen.set(port, "size", 64)
++pktgen.set(port, "rate", 100)  -- Maximum rate
++pktgen.set(port, "count", 0)   -- Continuous transmission
++
++-- Set MAC addresses (same as measure-tx-rate.lua)
++pktgen.set_mac(port, "src", "08:c0:eb:b6:cd:5d")
++pktgen.set_mac(port, "dst", "08:c0:eb:b6:e8:05")
++
++-- Set IP addresses (same as measure-tx-rate.lua)
++pktgen.set_ipaddr(port, "src", "10.0.1.7")
++pktgen.set_ipaddr(port, "dst", "10.0.1.8/24")
++
++-- Set up Range configuration for TCP (same as measure-tx-rate.lua)
++pktgen.range.ip_proto("all", "tcp")
++
++-- Set MAC addresses in range (same as measure-tx-rate.lua)
++pktgen.range.src_mac(port, "start", "08:c0:eb:b6:cd:5d")
++pktgen.range.dst_mac(port, "start", "08:c0:eb:b6:e8:05")
++
++-- Set source IP (fixed, same as measure-tx-rate.lua)
++pktgen.range.src_ip(port, "start", "10.0.1.7")
++pktgen.range.src_ip(port, "inc", "0.0.0.0")
++pktgen.range.src_ip(port, "min", "10.0.1.7")
++pktgen.range.src_ip(port, "max", "10.0.1.7")
++
++-- Set destination IP (fixed, same as measure-tx-rate.lua)
++pktgen.range.dst_ip(port, "start", "10.0.1.8")
++pktgen.range.dst_ip(port, "inc", "0.0.0.0")
++pktgen.range.dst_ip(port, "min", "10.0.1.8")
++pktgen.range.dst_ip(port, "max", "10.0.1.8")
++
++-- Set source TCP port (20000-20255, increment by 1, same as measure-tx-rate.lua)
++pktgen.range.src_port(port, "start", 20000)
++pktgen.range.src_port(port, "inc", 1)
++pktgen.range.src_port(port, "min", 10000)
++pktgen.range.src_port(port, "max", 60000)
++
++-- Set destination TCP port (fixed at 20000, same as measure-tx-rate.lua)
++pktgen.range.dst_port(port, "start", 20000)
++pktgen.range.dst_port(port, "inc", 0)
++pktgen.range.dst_port(port, "min", 20000)
++pktgen.range.dst_port(port, "max", 20000)
++
++-- Set TTL (same as measure-tx-rate.lua)
++pktgen.range.ttl(port, "start", 64)
++pktgen.range.ttl(port, "inc", 0)
++pktgen.range.ttl(port, "min", 64)
++pktgen.range.ttl(port, "max", 64)
++
++-- Enable range mode (same as measure-tx-rate.lua)
++pktgen.set_range(port, "on")
++
++pktgen.delay(100)
++
++-- Start transmission
++print("Starting packet transmission for " .. sleeptime .. " seconds...")
++pktgen.start(port)
++
++pktgen.delay(1000)  -- Wait 1 second before quitting
++os.exit(0)
