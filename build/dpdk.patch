@@ -1,21 +1,22 @@
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..7b8b250448 100644
+index fec0aeb79c..f16cbf5a42 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
-@@ -15,6 +15,7 @@
+@@ -15,6 +15,8 @@
  #include <stdbool.h>
  #include <sys/socket.h>
  #include <arpa/inet.h>
 +#include <signal.h>
++#include <netinet/in.h>
  
  #include <rte_debug.h>
  #include <rte_ether.h>
-@@ -33,6 +34,15 @@
+@@ -33,6 +35,15 @@
  
  #include "lpm_route_parse.c"
  
 +/* Debug logging control - set to 1 to enable debug logs, 0 to disable */
-+#define L3FWD_DEBUG_LOGS 0  /* Change this to 1 for debug mode, 0 for release */
++#define L3FWD_DEBUG_LOGS 1  /* Change this to 1 for debug mode, 0 for release */
 +
 +#if L3FWD_DEBUG_LOGS
 +#define L3FWD_DEBUG_LOG(fmt, args...) RTE_LOG(INFO, L3FWD, fmt, ##args)
@@ -26,7 +27,7 @@ index fec0aeb79c..7b8b250448 100644
  #define IPV4_L3FWD_LPM_MAX_RULES         1024
  #define IPV4_L3FWD_LPM_NUMBER_TBL8S (1 << 8)
  #define IPV6_L3FWD_LPM_MAX_RULES         1024
-@@ -41,6 +51,72 @@
+@@ -41,6 +52,135 @@
  static struct rte_lpm *ipv4_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  static struct rte_lpm6 *ipv6_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  
@@ -39,6 +40,61 @@ index fec0aeb79c..7b8b250448 100644
 +
 +static struct lcore_packet_stats lcore_stats[RTE_MAX_LCORE];
 +static volatile bool stats_enabled = true;
++
++/* Analyze and log packet details */
++static void
++analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction)
++{
++	struct rte_ether_hdr *eth_hdr;
++	struct rte_ipv4_hdr *ipv4_hdr;
++	struct rte_tcp_hdr *tcp_hdr;
++	struct rte_udp_hdr *udp_hdr;
++	uint32_t src_ip, dst_ip;
++	uint16_t src_port = 0, dst_port = 0;
++	uint8_t proto;
++	char src_ip_str[INET_ADDRSTRLEN];
++	char dst_ip_str[INET_ADDRSTRLEN];
++
++	eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
++	
++	/* Only analyze IPv4 packets */
++	if (RTE_ETH_IS_IPV4_HDR(pkt->packet_type)) {
++		ipv4_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
++		src_ip = rte_be_to_cpu_32(ipv4_hdr->src_addr);
++		dst_ip = rte_be_to_cpu_32(ipv4_hdr->dst_addr);
++		proto = ipv4_hdr->next_proto_id;
++
++		/* Convert IPs to string format */
++		struct in_addr addr;
++		addr.s_addr = rte_cpu_to_be_32(src_ip);
++		inet_ntop(AF_INET, &addr, src_ip_str, INET_ADDRSTRLEN);
++		addr.s_addr = rte_cpu_to_be_32(dst_ip);
++		inet_ntop(AF_INET, &addr, dst_ip_str, INET_ADDRSTRLEN);
++
++		/* Extract port numbers for TCP/UDP */
++		if (proto == IPPROTO_TCP && rte_pktmbuf_data_len(pkt) >= sizeof(*eth_hdr) + sizeof(*ipv4_hdr) + sizeof(*tcp_hdr)) {
++			tcp_hdr = (struct rte_tcp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
++			src_port = rte_be_to_cpu_16(tcp_hdr->src_port);
++			dst_port = rte_be_to_cpu_16(tcp_hdr->dst_port);
++			L3FWD_DEBUG_LOG("[%s] lcore=%u TCP %s:%u -> %s:%u (RSS=0x%08x)\n", 
++				direction, lcore_id, src_ip_str, src_port, dst_ip_str, dst_port, pkt->hash.rss);
++		} else if (proto == IPPROTO_UDP && rte_pktmbuf_data_len(pkt) >= sizeof(*eth_hdr) + sizeof(*ipv4_hdr) + sizeof(*udp_hdr)) {
++			udp_hdr = (struct rte_udp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
++			src_port = rte_be_to_cpu_16(udp_hdr->src_port);
++			dst_port = rte_be_to_cpu_16(udp_hdr->dst_port);
++			L3FWD_DEBUG_LOG("[%s] lcore=%u UDP %s:%u -> %s:%u (RSS=0x%08x)\n", 
++				direction, lcore_id, src_ip_str, src_port, dst_ip_str, dst_port, pkt->hash.rss);
++		} else {
++			L3FWD_DEBUG_LOG("[%s] lcore=%u IP proto=%u %s -> %s (RSS=0x%08x)\n", 
++				direction, lcore_id, proto, src_ip_str, dst_ip_str, pkt->hash.rss);
++		}
++	} else if (RTE_ETH_IS_IPV6_HDR(pkt->packet_type)) {
++		L3FWD_DEBUG_LOG("[%s] lcore=%u IPv6 packet\n", direction, lcore_id);
++	} else {
++		L3FWD_DEBUG_LOG("[%s] lcore=%u Non-IP packet (type=0x%04x)\n", 
++			direction, lcore_id, rte_be_to_cpu_16(eth_hdr->ether_type));
++	}
++}
 +
 +/* Print packet statistics when exiting */
 +static void
@@ -53,10 +109,10 @@ index fec0aeb79c..7b8b250448 100644
 +	printf("=====================================\n");
 +	printf("L3FWD Packet Statistics Summary\n");
 +	printf("=====================================\n");
-+	printf("%-8s %-12s %-12s %-10s %-10s\n", 
-+		"Lcore", "RX Packets", "TX Packets", "RX Rate", "TX Rate");
-+	printf("%-8s %-12s %-12s %-10s %-10s\n", 
-+		"-----", "----------", "----------", "--------", "--------");
++	printf("%-8s %-12s %-12s %-10s %-10s %-8s\n", 
++		"Lcore", "RX Packets", "TX Packets", "RX Rate", "TX Rate", "Loss%");
++	printf("%-8s %-12s %-12s %-10s %-10s %-8s\n", 
++		"-----", "----------", "----------", "--------", "--------", "------");
 +
 +	RTE_LCORE_FOREACH(lcore_id) {
 +		if (lcore_stats[lcore_id].start_time > 0) {
@@ -64,23 +120,31 @@ index fec0aeb79c..7b8b250448 100644
 +			double elapsed_sec = (double)duration / tsc_hz;
 +			double rx_rate = elapsed_sec > 0 ? lcore_stats[lcore_id].rx_packets / elapsed_sec : 0;
 +			double tx_rate = elapsed_sec > 0 ? lcore_stats[lcore_id].tx_packets / elapsed_sec : 0;
++			double loss_rate = lcore_stats[lcore_id].rx_packets > 0 ? 
++				(double)(lcore_stats[lcore_id].rx_packets - lcore_stats[lcore_id].tx_packets) * 100.0 / lcore_stats[lcore_id].rx_packets : 0.0;
 +			
-+			printf("%-8u %-12" PRIu64 " %-12" PRIu64 " %-10.1f %-10.1f\n",
++			printf("%-8u %-12" PRIu64 " %-12" PRIu64 " %-10.1f %-10.1f %-8.1f\n",
 +				lcore_id,
 +				lcore_stats[lcore_id].rx_packets,
 +				lcore_stats[lcore_id].tx_packets,
 +				rx_rate / 1000000.0,  /* Convert to Mpps */
-+				tx_rate / 1000000.0);
++				tx_rate / 1000000.0,
++				loss_rate);
 +			
 +			total_rx += lcore_stats[lcore_id].rx_packets;
 +			total_tx += lcore_stats[lcore_id].tx_packets;
 +		}
 +	}
 +	
-+	printf("%-8s %-12s %-12s %-10s %-10s\n", 
-+		"-----", "----------", "----------", "--------", "--------");
-+	printf("%-8s %-12" PRIu64 " %-12" PRIu64 "\n", 
-+		"Total", total_rx, total_tx);
++	double total_loss_rate = total_rx > 0 ? (double)(total_rx - total_tx) * 100.0 / total_rx : 0.0;
++	
++	printf("%-8s %-12s %-12s %-10s %-10s %-8s\n", 
++		"-----", "----------", "----------", "--------", "--------", "------");
++	printf("%-8s %-12" PRIu64 " %-12" PRIu64 " %-10s %-10s %-8.1f\n", 
++		"Total", total_rx, total_tx, "", "", total_loss_rate);
++	printf("=====================================\n");
++	printf("ANALYSIS: RX/TX difference = %" PRIu64 " packets (%.1f%% loss)\n", 
++		total_rx - total_tx, total_loss_rate);
 +	printf("=====================================\n");
 +}
 +
@@ -99,7 +163,7 @@ index fec0aeb79c..7b8b250448 100644
  /* Performing LPM-based lookups. 8< */
  static inline uint16_t
  lpm_get_ipv4_dst_port(const struct rte_ipv4_hdr *ipv4_hdr,
-@@ -156,6 +232,17 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -156,6 +296,17 @@ lpm_main_loop(__rte_unused void *dummy)
  	lcore_id = rte_lcore_id();
  	qconf = &lcore_conf[lcore_id];
  
@@ -117,7 +181,7 @@ index fec0aeb79c..7b8b250448 100644
  	const uint16_t n_rx_q = qconf->n_rx_queue;
  	const uint16_t n_tx_p = qconf->n_tx_port;
  	if (n_rx_q == 0) {
-@@ -163,7 +250,21 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -163,7 +314,21 @@ lpm_main_loop(__rte_unused void *dummy)
  		return 0;
  	}
  
@@ -140,7 +204,7 @@ index fec0aeb79c..7b8b250448 100644
  
  	for (i = 0; i < n_rx_q; i++) {
  
-@@ -189,6 +290,14 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -189,6 +354,14 @@ lpm_main_loop(__rte_unused void *dummy)
  				portid = qconf->tx_port_id[i];
  				if (qconf->tx_mbufs[portid].len == 0)
  					continue;
@@ -155,7 +219,7 @@ index fec0aeb79c..7b8b250448 100644
  				send_burst(qconf,
  					qconf->tx_mbufs[portid].len,
  					portid);
-@@ -208,7 +317,13 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -208,7 +381,21 @@ lpm_main_loop(__rte_unused void *dummy)
  				nb_pkt_per_burst);
  			if (nb_rx == 0)
  				continue;
@@ -167,10 +231,18 @@ index fec0aeb79c..7b8b250448 100644
 +			}
 +			
 +			L3FWD_DEBUG_LOG("lcore %u received %d packets from port %u queue %u\n", lcore_id, nb_rx, portid, queueid);
++			
++			/* Analyze first few packets for debugging */
++			if (L3FWD_DEBUG_LOGS) {
++				int analyze_count = nb_rx > 3 ? 3 : nb_rx;  /* Analyze first 3 packets */
++				for (int j = 0; j < analyze_count; j++) {
++					analyze_packet(pkts_burst[j], lcore_id, "RX");
++				}
++			}
  #if defined RTE_ARCH_X86 || defined __ARM_NEON \
  			 || defined RTE_ARCH_PPC_64
  			l3fwd_lpm_send_packets(nb_rx, pkts_burst,
-@@ -222,6 +337,11 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -222,6 +409,11 @@ lpm_main_loop(__rte_unused void *dummy)
  		cur_tsc = rte_rdtsc();
  	}
  
