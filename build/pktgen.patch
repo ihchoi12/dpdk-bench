@@ -12,15 +12,20 @@ index eb0682f..67b0cbe 100644
  deps += [cc.find_library('dl', required: false)]
  deps += [cc.find_library('m', required: false)]
 diff --git a/app/pktgen-port-cfg.c b/app/pktgen-port-cfg.c
-index 1e4042a..f472bf8 100644
+index 1e4042a..894b612 100644
 --- a/app/pktgen-port-cfg.c
 +++ b/app/pktgen-port-cfg.c
-@@ -180,12 +180,26 @@ allocate_port_info(uint16_t pid)
+@@ -180,13 +180,33 @@ allocate_port_info(uint16_t pid)
          goto leave;
      }
  
 -    pinfo->rx_pkts = rte_calloc_socket("RxMbufs", MAX_PKT_RX_BURST, sizeof(struct rte_mbuf *),
 -                                       RTE_CACHE_LINE_SIZE, sid);
+-    pinfo->tx_pkts = rte_calloc_socket("TxMbufs", MAX_PKT_TX_BURST, sizeof(struct rte_mbuf *),
+-                                       RTE_CACHE_LINE_SIZE, sid);
+-    if (pinfo->rx_pkts == NULL || pinfo->tx_pkts == NULL) {
+-        pktgen_log_error("Cannot allocate RX/TX burst for port %u", pid);
+-        goto leave;
 +    /* Allocate RX packet buffers for each queue */
 +    for (int q = 0; q < 16; q++) {
 +        pinfo->rx_pkts[q] = rte_calloc_socket("RxMbufs", MAX_PKT_RX_BURST, sizeof(struct rte_mbuf *),
@@ -34,43 +39,53 @@ index 1e4042a..f472bf8 100644
 +        }
 +    }
 +
-     pinfo->tx_pkts = rte_calloc_socket("TxMbufs", MAX_PKT_TX_BURST, sizeof(struct rte_mbuf *),
-                                        RTE_CACHE_LINE_SIZE, sid);
--    if (pinfo->rx_pkts == NULL || pinfo->tx_pkts == NULL) {
--        pktgen_log_error("Cannot allocate RX/TX burst for port %u", pid);
-+    if (pinfo->tx_pkts == NULL) {
-+        pktgen_log_error("Cannot allocate TX burst for port %u", pid);
-+        /* Free all RX queues */
-+        for (int q = 0; q < 16; q++)
-+            rte_free(pinfo->rx_pkts[q]);
-         goto leave;
++    /* Allocate TX burst for each queue */
++    for (int q = 0; q < 16; q++) {
++        pinfo->tx_pkts[q] = rte_calloc_socket("TxMbufs", MAX_PKT_TX_BURST, sizeof(struct rte_mbuf *),
++                                           RTE_CACHE_LINE_SIZE, sid);
++        if (pinfo->tx_pkts[q] == NULL) {
++            pktgen_log_error("Cannot allocate TX burst for port %u queue %d", pid, q);
++            /* Free all RX queues */
++            for (int i = 0; i < 16; i++)
++                rte_free(pinfo->rx_pkts[i]);
++            /* Free allocated TX queues */
++            for (int i = 0; i < q; i++)
++                rte_free(pinfo->tx_pkts[i]);
++            goto leave;
++        }
      }
  
-@@ -227,7 +241,8 @@ allocate_port_info(uint16_t pid)
+     if (l2p_set_port_pinfo(pid, pinfo)) {
+@@ -227,8 +247,10 @@ allocate_port_info(uint16_t pid)
      return pinfo;
  leave:
      if (pinfo) {
 -        rte_free(pinfo->rx_pkts);
-+        for (int q = 0; q < 16; q++)
+-        rte_free(pinfo->tx_pkts);
++        for (int q = 0; q < 16; q++) {
 +            rte_free(pinfo->rx_pkts[q]);
-         rte_free(pinfo->tx_pkts);
++            rte_free(pinfo->tx_pkts[q]);
++        }
          rte_free(pinfo);
          l2p_set_port_pinfo(pid, NULL);
+     }
 diff --git a/app/pktgen-port-cfg.h b/app/pktgen-port-cfg.h
-index d2b54a6..b5c3c2a 100644
+index d2b54a6..ef6f7d8 100644
 --- a/app/pktgen-port-cfg.h
 +++ b/app/pktgen-port-cfg.h
-@@ -133,7 +133,7 @@ typedef struct {
+@@ -133,8 +133,8 @@ typedef struct {
  typedef struct port_info_s {
      struct rte_eth_dev_info dev_info; /**< Device information */
      struct rte_eth_conf conf;         /**< Configuration settings */
 -    struct rte_mbuf **rx_pkts;        /**< Array of pointers to packet buffers for RX */
+-    struct rte_mbuf **tx_pkts;        /**< Array of pointers to packet buffers for TX */
 +    struct rte_mbuf **rx_pkts[16];    /**< Array of pointers to packet buffers for RX per queue */
-     struct rte_mbuf **tx_pkts;        /**< Array of pointers to packet buffers for TX */
++    struct rte_mbuf **tx_pkts[16];    /**< Array of pointers to packet buffers for TX per queue */
  
      rte_atomic64_t port_flags;       /**< Special send flags for ARP and other */
+     rte_atomic64_t transmit_count;   /**< Packets to transmit loaded into current_tx_count */
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..7d61b00 100644
+index 627034d..cd0038c 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -43,6 +43,9 @@ TXlib */
@@ -83,6 +98,24 @@ index 627034d..7d61b00 100644
  double
  next_poisson_time(double rateParameter)
  {
+@@ -973,7 +976,7 @@ void
+ pktgen_send_pkts(port_info_t *pinfo, uint16_t qid, struct rte_mempool *mp)
+ {
+     uint64_t txCnt;
+-    struct rte_mbuf **pkts = pinfo->tx_pkts;
++    struct rte_mbuf **pkts = pinfo->tx_pkts[qid];
+ 
+     if (!pktgen_tst_port_flags(pinfo, SEND_FOREVER)) {
+         txCnt = pkt_atomic64_tx_count(&pinfo->current_tx_count, pinfo->tx_burst);
+@@ -1027,7 +1030,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
+ {
+     if (pktgen_tst_port_flags(pinfo, SENDING_PACKETS)) {
+         struct rte_mempool *mp = l2p_get_tx_mp(pinfo->pid);
+-        struct rte_mbuf **pkts = pinfo->tx_pkts;
++        struct rte_mbuf **pkts = pinfo->tx_pkts[qid];
+ 
+         /* Use mempool routines instead of pktmbuf to make sure the mbufs is not altered */
+         if (rte_mempool_get_bulk(mp, (void **)pkts, pinfo->tx_burst) == 0) {
 @@ -1057,7 +1060,7 @@ static inline void
  pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  {
@@ -110,15 +143,15 @@ index 627034d..7d61b00 100644
 -    if (workq_port_arg_set(pid, arg))
 -        return -1;
 +    uint16_t wqt_idx = (wqt == WORKQ_RX) ? 0 : 1;
-+    
++
 +    /* Check if this workqueue type for this port is already set up */
-+    if (__atomic_compare_exchange_n(&workq_setup_done[pid][wqt_idx], 
++    if (__atomic_compare_exchange_n(&workq_setup_done[pid][wqt_idx],
 +                                    &(uint16_t){0}, 1,
 +                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
 +        /* This core won the race - perform the actual setup */
-+        printf("Core %d: Setting up %s workqueue for port %d\n", 
++        printf("Core %d: Setting up %s workqueue for port %d\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
-+        
++
 +        if (workq_port_arg_set(pid, arg)) {
 +            __atomic_store_n(&workq_setup_done[pid][wqt_idx], 0, __ATOMIC_RELEASE);
 +            return -1;
@@ -130,26 +163,26 @@ index 627034d..7d61b00 100644
 +            __atomic_store_n(&workq_setup_done[pid][wqt_idx], 0, __ATOMIC_RELEASE);
 +            return ret;
 +        }
-+        
-+        printf("Core %d: Successfully set up %s workqueue for port %d\n", 
++
++        printf("Core %d: Successfully set up %s workqueue for port %d\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
 +    } else {
 +        /* Another core is setting it up - wait for completion */
-+        printf("Core %d: Waiting for %s workqueue setup for port %d\n", 
++        printf("Core %d: Waiting for %s workqueue setup for port %d\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
-+        
++
 +        while (__atomic_load_n(&workq_setup_done[pid][wqt_idx], __ATOMIC_ACQUIRE) != 1) {
 +            rte_pause();
 +        }
-+        
-+        printf("Core %d: %s workqueue for port %d is ready\n", 
-+               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
-+    }
-+    
-+    return 0;
-+}
  
 -    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++        printf("Core %d: %s workqueue for port %d is ready\n",
++               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
++    }
++
++    return 0;
++}
++
 +static int
 +pktgen_workq_setup(workq_type_t wqt, uint16_t pid, void *arg)
 +{
@@ -157,15 +190,6 @@ index 627034d..7d61b00 100644
  }
  
  /**
-@@ -1226,7 +1270,7 @@ pktgen_main_tx_loop(void)
-     tx_bond_cycle = curr_tsc + pktgen_get_timer_hz() / 10;
- 
-     tx_qid = l2p_get_txqid(lid);
--
-+    
-     printf("TX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, tx_qid,
-            l2p_get_tx_mp(pinfo->pid)->name, l2p_get_tx_mp(pinfo->pid));
- 
 @@ -1280,7 +1324,7 @@ pktgen_main_rx_loop(void)
  
      pinfo  = l2p_get_pinfo_by_lcore(lid);
