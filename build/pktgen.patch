@@ -85,20 +85,124 @@ index d2b54a6..ef6f7d8 100644
      rte_atomic64_t port_flags;       /**< Special send flags for ARP and other */
      rte_atomic64_t transmit_count;   /**< Packets to transmit loaded into current_tx_count */
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..cd0038c 100644
+index 627034d..3ca8b1b 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
-@@ -43,6 +43,9 @@ TXlib */
+@@ -18,6 +18,9 @@ TXlib */
+ #include <rte_arp.h>
+ #include <rte_cycles.h>
+ #include <rte_hexdump.h>
++#include <sys/socket.h>
++#include <arpa/inet.h>
++#include <netinet/in.h>
+ 
+ #include "pktgen.h"
+ #include "pktgen-gre.h"
+@@ -38,11 +41,85 @@ TXlib */
+ #include <pthread.h>
+ #include <sched.h>
+ 
++/* Debug logging control - set to 1 to enable debug logs, 0 to disable */
++#define PKTGEN_DEBUG_LOGS 1  /* Change this to 1 for debug mode, 0 for release */
++
++#if PKTGEN_DEBUG_LOGS
++#define PKTGEN_DEBUG_LOG(fmt, args...) do { fprintf(stderr, fmt "\n", ##args); fflush(stderr); } while(0)
++#else
++#define PKTGEN_DEBUG_LOG(fmt, args...) do {} while(0)
++#endif
++
+ #define FAST_TX_MODE 0
+ 
  /* Allocated the pktgen structure for global use */
  pktgen_t pktgen;
  
 +/* Workqueue setup synchronization */
 +static volatile uint16_t workq_setup_done[RTE_MAX_ETHPORTS][2]; /* [port][WORKQ_RX/WORKQ_TX] */
 +
++/* Analyze and log packet details */
++static void
++analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, uint16_t port_id, const char *direction)
++{
++#if PKTGEN_DEBUG_LOGS
++    struct rte_ether_hdr *eth_hdr;
++    struct rte_ipv4_hdr *ipv4_hdr;
++    struct rte_tcp_hdr *tcp_hdr;
++    struct rte_udp_hdr *udp_hdr;
++    uint32_t src_ip, dst_ip;
++    uint16_t src_port = 0, dst_port = 0;
++    uint8_t proto;
++    char src_ip_str[INET_ADDRSTRLEN];
++    char dst_ip_str[INET_ADDRSTRLEN];
++
++    eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
++    
++    if (RTE_ETH_IS_IPV4_HDR(pkt->packet_type)) {
++        ipv4_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
++        src_ip = rte_be_to_cpu_32(ipv4_hdr->src_addr);
++        dst_ip = rte_be_to_cpu_32(ipv4_hdr->dst_addr);
++        proto = ipv4_hdr->next_proto_id;
++
++        /* Convert IPs to string format */
++        struct in_addr addr;
++        addr.s_addr = rte_cpu_to_be_32(src_ip);
++        inet_ntop(AF_INET, &addr, src_ip_str, INET_ADDRSTRLEN);
++        addr.s_addr = rte_cpu_to_be_32(dst_ip);
++        inet_ntop(AF_INET, &addr, dst_ip_str, INET_ADDRSTRLEN);
++
++        /* Extract port numbers for TCP/UDP */
++        if (proto == IPPROTO_TCP && rte_pktmbuf_data_len(pkt) >= sizeof(*eth_hdr) + sizeof(*ipv4_hdr) + sizeof(*tcp_hdr)) {
++            tcp_hdr = (struct rte_tcp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
++            src_port = rte_be_to_cpu_16(tcp_hdr->src_port);
++            dst_port = rte_be_to_cpu_16(tcp_hdr->dst_port);
++            PKTGEN_DEBUG_LOG("PKTGEN: [%s] lcore=%u port=%u TCP %s:%u -> %s:%u (RSS=0x%08x)",
++                direction, lcore_id, port_id, src_ip_str, src_port, dst_ip_str, dst_port, pkt->hash.rss);
++        } else if (proto == IPPROTO_UDP && rte_pktmbuf_data_len(pkt) >= sizeof(*eth_hdr) + sizeof(*ipv4_hdr) + sizeof(*udp_hdr)) {
++            udp_hdr = (struct rte_udp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
++            src_port = rte_be_to_cpu_16(udp_hdr->src_port);
++            dst_port = rte_be_to_cpu_16(udp_hdr->dst_port);
++            PKTGEN_DEBUG_LOG("PKTGEN: [%s] lcore=%u port=%u UDP %s:%u -> %s:%u (RSS=0x%08x)",
++                direction, lcore_id, port_id, src_ip_str, src_port, dst_ip_str, dst_port, pkt->hash.rss);
++        } else {
++            PKTGEN_DEBUG_LOG("PKTGEN: [%s] lcore=%u port=%u IP proto=%u %s -> %s (RSS=0x%08x)",
++                direction, lcore_id, port_id, proto, src_ip_str, dst_ip_str, pkt->hash.rss);
++        }
++    } else if (RTE_ETH_IS_IPV6_HDR(pkt->packet_type)) {
++        PKTGEN_DEBUG_LOG("PKTGEN: [%s] lcore=%u port=%u IPv6 packet", direction, lcore_id, port_id);
++    } else {
++        PKTGEN_DEBUG_LOG("PKTGEN: [%s] lcore=%u port=%u Non-IP packet (type=0x%04x)",
++            direction, lcore_id, port_id, rte_be_to_cpu_16(eth_hdr->ether_type));
++    }
++#else
++    /* Suppress unused parameter warnings when debug is disabled */
++    (void)pkt;
++    (void)lcore_id;
++    (void)port_id;
++    (void)direction;
++#endif
++}
++
  double
  next_poisson_time(double rateParameter)
  {
-@@ -973,7 +976,7 @@ void
+@@ -280,11 +357,17 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
+ {
+     if (nb_pkts) {
+         uint16_t sent, to_send = nb_pkts;
++        unsigned int lcore_id = rte_lcore_id();
+ 
+         pinfo->queue_stats.q_opackets[qid] += nb_pkts;
+         for (int i = 0; i < nb_pkts; i++)
+             pinfo->queue_stats.q_obytes[qid] += rte_pktmbuf_pkt_len(pkts[i]);
+ 
++        /* Analyze TX packets for debugging */
++        for (int i = 0; i < nb_pkts; i++) {
++            analyze_packet(pkts[i], lcore_id, pinfo->pid, "TX");
++        }
++
+         if (pktgen_tst_port_flags(pinfo, SEND_RANDOM_PKTS))
+             pktgen_rnd_bits_apply(pinfo, pkts, to_send, NULL);
+ 
+@@ -973,7 +1056,7 @@ void
  pktgen_send_pkts(port_info_t *pinfo, uint16_t qid, struct rte_mempool *mp)
  {
      uint64_t txCnt;
@@ -107,7 +211,7 @@ index 627034d..cd0038c 100644
  
      if (!pktgen_tst_port_flags(pinfo, SEND_FOREVER)) {
          txCnt = pkt_atomic64_tx_count(&pinfo->current_tx_count, pinfo->tx_burst);
-@@ -1027,7 +1030,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
+@@ -1027,7 +1110,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
  {
      if (pktgen_tst_port_flags(pinfo, SENDING_PACKETS)) {
          struct rte_mempool *mp = l2p_get_tx_mp(pinfo->pid);
@@ -116,7 +220,7 @@ index 627034d..cd0038c 100644
  
          /* Use mempool routines instead of pktmbuf to make sure the mbufs is not altered */
          if (rte_mempool_get_bulk(mp, (void **)pkts, pinfo->tx_burst) == 0) {
-@@ -1057,7 +1060,7 @@ static inline void
+@@ -1057,7 +1140,7 @@ static inline void
  pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  {
      uint16_t nb_rx, nb_pkts = pinfo->rx_burst, pid;
@@ -125,15 +229,27 @@ index 627034d..cd0038c 100644
  
      if (unlikely(pktgen_tst_port_flags(pinfo, STOP_RECEIVING_PACKETS)))
          return;
-@@ -1066,6 +1069,7 @@ pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
+@@ -1066,12 +1149,19 @@ pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  
      /* Read packets from RX queues and free the mbufs */
      if (likely((nb_rx = rte_eth_rx_burst(pid, qid, pkts, nb_pkts)) > 0)) {
 +        // printf("Core %d received %u packets\n", rte_lcore_id(), nb_rx);
          struct rte_eth_stats *qstats = &pinfo->queue_stats;
++        unsigned int lcore_id = rte_lcore_id();
  
          qstats->q_ipackets[qid] += nb_rx;
-@@ -1122,12 +1126,52 @@ pktgen_tx_workq_setup(uint16_t pid)
+         for (int i = 0; i < nb_rx; i++)
+             qstats->q_ibytes[qid] += rte_pktmbuf_pkt_len(pkts[i]);
+ 
++        /* Analyze RX packets for debugging */
++        for (int i = 0; i < nb_rx; i++) {
++            analyze_packet(pkts[i], lcore_id, pid, "RX");
++        }
++
+         pktgen_tstamp_check(pinfo, pkts, nb_rx);
+ 
+         /* classify the packets for the counters */
+@@ -1122,12 +1212,52 @@ pktgen_tx_workq_setup(uint16_t pid)
  }
  
  static int
@@ -190,7 +306,7 @@ index 627034d..cd0038c 100644
  }
  
  /**
-@@ -1280,7 +1324,7 @@ pktgen_main_rx_loop(void)
+@@ -1280,7 +1410,7 @@ pktgen_main_rx_loop(void)
  
      pinfo  = l2p_get_pinfo_by_lcore(lid);
      rx_qid = l2p_get_rxqid(lid);
@@ -529,7 +645,7 @@ index 0000000..86cde97
 +print("====================================\n")
 diff --git a/scripts/simple-tx-test.lua b/scripts/simple-tx-test.lua
 new file mode 100644
-index 0000000..6c183bc
+index 0000000..dbffeaf
 --- /dev/null
 +++ b/scripts/simple-tx-test.lua
 @@ -0,0 +1,76 @@
@@ -550,8 +666,8 @@ index 0000000..6c183bc
 +
 +-- Configuration (same as measure-tx-rate.lua)
 +pktgen.set(port, "size", 64)
-+pktgen.set(port, "rate", 100)  -- Maximum rate
-+pktgen.set(port, "count", 0)   -- Continuous transmission
++pktgen.set(port, "rate", 0)  -- Maximum rate
++pktgen.set(port, "count", 10)   -- Continuous transmission
 +
 +-- Set MAC addresses (same as measure-tx-rate.lua)
 +pktgen.set_mac(port, "src", "08:c0:eb:b6:cd:5d")
