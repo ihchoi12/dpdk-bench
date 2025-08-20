@@ -1,5 +1,36 @@
+diff --git a/examples/l3fwd/l3fwd.h b/examples/l3fwd/l3fwd.h
+index 0cce3406ee..b9902cb7ef 100644
+--- a/examples/l3fwd/l3fwd.h
++++ b/examples/l3fwd/l3fwd.h
+@@ -119,6 +119,9 @@ extern uint32_t max_pkt_len;
+ extern uint32_t nb_pkt_per_burst;
+ extern uint32_t mb_mempool_cache_size;
+ 
++/* Function declarations */
++void analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction);
++
+ /* Send burst of packets on an output interface */
+ static inline int
+ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
+@@ -126,10 +129,16 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
+ 	struct rte_mbuf **m_table;
+ 	int ret;
+ 	uint16_t queueid;
++	unsigned int lcore_id = rte_lcore_id();
+ 
+ 	queueid = qconf->tx_queue_id[port];
+ 	m_table = (struct rte_mbuf **)qconf->tx_mbufs[port].m_table;
+ 
++	/* Analyze TX packets for debugging */
++	for (int i = 0; i < n; i++) {
++		analyze_packet(m_table[i], lcore_id, "TX");
++	}
++
+ 	ret = rte_eth_tx_burst(port, queueid, m_table, n);
+ 	if (unlikely(ret < n)) {
+ 		do {
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..b20d131c30 100644
+index fec0aeb79c..1d128863a7 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -16,8 +47,8 @@ index fec0aeb79c..b20d131c30 100644
  #include "lpm_route_parse.c"
  
 +/* Debug logging control - set to 1 to enable debug logs, 0 to disable */
-+#define L3FWD_DEBUG_LOGS 0  /* Change this to 1 for debug mode, 0 for release */
-+static volatile bool stats_enabled = false;
++#define L3FWD_DEBUG_LOGS 1  /* Change this to 1 for debug mode, 0 for release */
++static volatile bool stats_enabled = true;
 +
 +
 +#if L3FWD_DEBUG_LOGS
@@ -43,7 +74,7 @@ index fec0aeb79c..b20d131c30 100644
 +static struct lcore_packet_stats lcore_stats[RTE_MAX_LCORE];
 +
 +/* Analyze and log packet details */
-+static void
++void
 +analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction)
 +{
 +#if L3FWD_DEBUG_LOGS
