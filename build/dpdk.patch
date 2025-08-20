@@ -1,5 +1,5 @@
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..7ee2331440 100644
+index fec0aeb79c..b20d131c30 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -17,7 +17,7 @@ index fec0aeb79c..7ee2331440 100644
  
 +/* Debug logging control - set to 1 to enable debug logs, 0 to disable */
 +#define L3FWD_DEBUG_LOGS 0  /* Change this to 1 for debug mode, 0 for release */
-+static volatile bool stats_enabled = true;
++static volatile bool stats_enabled = false;
 +
 +
 +#if L3FWD_DEBUG_LOGS
@@ -29,7 +29,7 @@ index fec0aeb79c..7ee2331440 100644
  #define IPV4_L3FWD_LPM_MAX_RULES         1024
  #define IPV4_L3FWD_LPM_NUMBER_TBL8S (1 << 8)
  #define IPV6_L3FWD_LPM_MAX_RULES         1024
-@@ -41,6 +54,134 @@
+@@ -41,6 +54,142 @@
  static struct rte_lpm *ipv4_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  static struct rte_lpm6 *ipv6_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  
@@ -46,6 +46,7 @@ index fec0aeb79c..7ee2331440 100644
 +static void
 +analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction)
 +{
++#if L3FWD_DEBUG_LOGS
 +	struct rte_ether_hdr *eth_hdr;
 +	struct rte_ipv4_hdr *ipv4_hdr;
 +	struct rte_tcp_hdr *tcp_hdr;
@@ -58,7 +59,6 @@ index fec0aeb79c..7ee2331440 100644
 +
 +	eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 +	
-+	/* Only analyze IPv4 packets */
 +	if (RTE_ETH_IS_IPV4_HDR(pkt->packet_type)) {
 +		ipv4_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
 +		src_ip = rte_be_to_cpu_32(ipv4_hdr->src_addr);
@@ -95,6 +95,12 @@ index fec0aeb79c..7ee2331440 100644
 +		L3FWD_DEBUG_LOG("[%s] lcore=%u Non-IP packet (type=0x%04x)\n", 
 +			direction, lcore_id, rte_be_to_cpu_16(eth_hdr->ether_type));
 +	}
++#else
++	/* Suppress unused parameter warnings when debug is disabled */
++	(void)pkt;
++	(void)lcore_id;
++	(void)direction;
++#endif
 +}
 +
 +/* Print packet statistics when exiting */
@@ -155,8 +161,10 @@ index fec0aeb79c..7ee2331440 100644
 +{
 +	if (signum == SIGINT || signum == SIGTERM) {
 +		printf("\nReceived signal %d, shutting down...\n", signum);
++		if (stats_enabled) {
++			print_packet_stats();
++		}
 +		stats_enabled = false;
-+		print_packet_stats();
 +		force_quit = true;
 +	}
 +}
@@ -164,7 +172,7 @@ index fec0aeb79c..7ee2331440 100644
  /* Performing LPM-based lookups. 8< */
  static inline uint16_t
  lpm_get_ipv4_dst_port(const struct rte_ipv4_hdr *ipv4_hdr,
-@@ -156,6 +297,17 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -156,6 +305,17 @@ lpm_main_loop(__rte_unused void *dummy)
  	lcore_id = rte_lcore_id();
  	qconf = &lcore_conf[lcore_id];
  
@@ -182,7 +190,7 @@ index fec0aeb79c..7ee2331440 100644
  	const uint16_t n_rx_q = qconf->n_rx_queue;
  	const uint16_t n_tx_p = qconf->n_tx_port;
  	if (n_rx_q == 0) {
-@@ -163,7 +315,21 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -163,7 +323,21 @@ lpm_main_loop(__rte_unused void *dummy)
  		return 0;
  	}
  
@@ -205,7 +213,7 @@ index fec0aeb79c..7ee2331440 100644
  
  	for (i = 0; i < n_rx_q; i++) {
  
-@@ -189,6 +355,14 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -189,6 +363,14 @@ lpm_main_loop(__rte_unused void *dummy)
  				portid = qconf->tx_port_id[i];
  				if (qconf->tx_mbufs[portid].len == 0)
  					continue;
@@ -220,7 +228,7 @@ index fec0aeb79c..7ee2331440 100644
  				send_burst(qconf,
  					qconf->tx_mbufs[portid].len,
  					portid);
-@@ -208,7 +382,21 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -208,7 +390,21 @@ lpm_main_loop(__rte_unused void *dummy)
  				nb_pkt_per_burst);
  			if (nb_rx == 0)
  				continue;
@@ -243,12 +251,12 @@ index fec0aeb79c..7ee2331440 100644
  #if defined RTE_ARCH_X86 || defined __ARM_NEON \
  			 || defined RTE_ARCH_PPC_64
  			l3fwd_lpm_send_packets(nb_rx, pkts_burst,
-@@ -222,6 +410,11 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -222,6 +418,11 @@ lpm_main_loop(__rte_unused void *dummy)
  		cur_tsc = rte_rdtsc();
  	}
  
 +	/* Print statistics when main loop exits */
-+	if (rte_lcore_id() == rte_get_main_lcore()) {
++	if (rte_lcore_id() == rte_get_main_lcore() && stats_enabled) {
 +		print_packet_stats();
 +	}
 +

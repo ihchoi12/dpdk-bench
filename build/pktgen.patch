@@ -70,10 +70,20 @@ index d2b54a6..b5c3c2a 100644
  
      rte_atomic64_t port_flags;       /**< Special send flags for ARP and other */
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..e8a1935 100644
+index 627034d..7d61b00 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
-@@ -1057,7 +1057,7 @@ static inline void
+@@ -43,6 +43,9 @@ TXlib */
+ /* Allocated the pktgen structure for global use */
+ pktgen_t pktgen;
+ 
++/* Workqueue setup synchronization */
++static volatile uint16_t workq_setup_done[RTE_MAX_ETHPORTS][2]; /* [port][WORKQ_RX/WORKQ_TX] */
++
+ double
+ next_poisson_time(double rateParameter)
+ {
+@@ -1057,7 +1060,7 @@ static inline void
  pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  {
      uint16_t nb_rx, nb_pkts = pinfo->rx_burst, pid;
@@ -82,7 +92,7 @@ index 627034d..e8a1935 100644
  
      if (unlikely(pktgen_tst_port_flags(pinfo, STOP_RECEIVING_PACKETS)))
          return;
-@@ -1066,6 +1066,7 @@ pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
+@@ -1066,6 +1069,7 @@ pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  
      /* Read packets from RX queues and free the mbufs */
      if (likely((nb_rx = rte_eth_rx_burst(pid, qid, pkts, nb_pkts)) > 0)) {
@@ -90,7 +100,73 @@ index 627034d..e8a1935 100644
          struct rte_eth_stats *qstats = &pinfo->queue_stats;
  
          qstats->q_ipackets[qid] += nb_rx;
-@@ -1280,7 +1281,7 @@ pktgen_main_rx_loop(void)
+@@ -1122,12 +1126,52 @@ pktgen_tx_workq_setup(uint16_t pid)
+ }
+ 
+ static int
+-pktgen_workq_setup(workq_type_t wqt, uint16_t pid, void *arg)
++pktgen_workq_setup_once(workq_type_t wqt, uint16_t pid, void *arg)
+ {
+-    if (workq_port_arg_set(pid, arg))
+-        return -1;
++    uint16_t wqt_idx = (wqt == WORKQ_RX) ? 0 : 1;
++    
++    /* Check if this workqueue type for this port is already set up */
++    if (__atomic_compare_exchange_n(&workq_setup_done[pid][wqt_idx], 
++                                    &(uint16_t){0}, 1,
++                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
++        /* This core won the race - perform the actual setup */
++        printf("Core %d: Setting up %s workqueue for port %d\n", 
++               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
++        
++        if (workq_port_arg_set(pid, arg)) {
++            __atomic_store_n(&workq_setup_done[pid][wqt_idx], 0, __ATOMIC_RELEASE);
++            return -1;
++        }
++
++        int ret = (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++        if (ret != 0) {
++            /* Reset on failure */
++            __atomic_store_n(&workq_setup_done[pid][wqt_idx], 0, __ATOMIC_RELEASE);
++            return ret;
++        }
++        
++        printf("Core %d: Successfully set up %s workqueue for port %d\n", 
++               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
++    } else {
++        /* Another core is setting it up - wait for completion */
++        printf("Core %d: Waiting for %s workqueue setup for port %d\n", 
++               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
++        
++        while (__atomic_load_n(&workq_setup_done[pid][wqt_idx], __ATOMIC_ACQUIRE) != 1) {
++            rte_pause();
++        }
++        
++        printf("Core %d: %s workqueue for port %d is ready\n", 
++               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
++    }
++    
++    return 0;
++}
+ 
+-    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++static int
++pktgen_workq_setup(workq_type_t wqt, uint16_t pid, void *arg)
++{
++    return pktgen_workq_setup_once(wqt, pid, arg);
+ }
+ 
+ /**
+@@ -1226,7 +1270,7 @@ pktgen_main_tx_loop(void)
+     tx_bond_cycle = curr_tsc + pktgen_get_timer_hz() / 10;
+ 
+     tx_qid = l2p_get_txqid(lid);
+-
++    
+     printf("TX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, tx_qid,
+            l2p_get_tx_mp(pinfo->pid)->name, l2p_get_tx_mp(pinfo->pid));
+ 
+@@ -1280,7 +1324,7 @@ pktgen_main_rx_loop(void)
  
      pinfo  = l2p_get_pinfo_by_lcore(lid);
      rx_qid = l2p_get_rxqid(lid);

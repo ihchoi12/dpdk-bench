@@ -209,6 +209,35 @@ run_complete_test_with_retry() {
         if [ -f "$output_file" ]; then
             if grep -q "Segment Fault\|Segmentation fault\|segfault" "$output_file" 2>/dev/null; then
                 has_segfault=true
+                echo ""
+                echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                echo "!!! SEGMENTATION FAULT DETECTED !!!"
+                echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                echo ">> Critical error: Segmentation fault occurred during pktgen execution"
+                echo ">> This indicates a serious bug that needs investigation"
+                echo ">> Stopping benchmark test immediately for safety"
+                echo ">> Check the following for debugging:"
+                echo "   - pktgen-workq.c workq_run() function"
+                echo "   - Multi-core workqueue initialization"
+                echo "   - Memory corruption or NULL pointer dereference"
+                echo ""
+                echo ">> Segfault details from output:"
+                grep -A 5 -B 5 "Segment Fault\|Segmentation fault\|segfault" "$output_file" 2>/dev/null || true
+                echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                echo ""
+                
+                # Save the output file for debugging
+                local debug_file="${RESULTS_DIR}/${TIMESTAMP}-segfault-debug-${cores}cores.txt"
+                cp "$output_file" "$debug_file" 2>/dev/null || true
+                echo ">> Segfault debug output saved to: $debug_file"
+                
+                # Add segfault info to results file
+                echo "# SEGMENTATION FAULT DETECTED - Test stopped at $cores cores" >> "$RESULTS_FILE"
+                echo "${pktgen_setup}|${l3fwd_setup}|SEGFAULT|SEGFAULT" >> "$RESULTS_FILE"
+                
+                # Cleanup and exit immediately
+                cleanup
+                exit 1
             fi
         fi
         
