@@ -139,7 +139,7 @@ index d2b54a6..ef6f7d8 100644
      rte_atomic64_t port_flags;       /**< Special send flags for ARP and other */
      rte_atomic64_t transmit_count;   /**< Packets to transmit loaded into current_tx_count */
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..68ffbc6 100644
+index 627034d..516ba7a 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -157,7 +157,7 @@ index 627034d..68ffbc6 100644
  #include <sched.h>
  
 +/* Debug logging control - set to 1 to enable debug logs, 0 to disable */
-+#define PKTGEN_DEBUG_LOGS 1  /* Change this to 1 for debug mode, 0 for release */
++#define PKTGEN_DEBUG_LOGS 0  /* Change this to 1 for debug mode, 0 for release */
 +
 +#if PKTGEN_DEBUG_LOGS
 +#define PKTGEN_DEBUG_LOG(fmt, args...) do { fprintf(stderr, fmt "\n", ##args); fflush(stderr); } while(0)
@@ -849,7 +849,7 @@ index 0000000..86cde97
 +print("====================================\n")
 diff --git a/scripts/simple-tx-test.lua b/scripts/simple-tx-test.lua
 new file mode 100644
-index 0000000..131687c
+index 0000000..0003adb
 --- /dev/null
 +++ b/scripts/simple-tx-test.lua
 @@ -0,0 +1,81 @@
@@ -870,8 +870,8 @@ index 0000000..131687c
 +
 +-- Configuration (same as measure-tx-rate.lua)
 +pktgen.set(port, "size", 64)
-+pktgen.set(port, "rate", 0)  -- 100% rate to utilize multiple cores
-+pktgen.set(port, "count", 16)   -- Continuous transmission (0 = infinite)
++pktgen.set(port, "rate", 100)  -- 100% rate to utilize multiple cores
++pktgen.set(port, "count", 0)   -- Continuous transmission (0 = infinite)
 +
 +-- Set MAC addresses (same as measure-tx-rate.lua)
 +pktgen.set_mac(port, "src", "08:c0:eb:b6:cd:5d")

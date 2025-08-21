@@ -76,7 +76,7 @@ index 0cce3406ee..ef65225622 100644
  			rte_pktmbuf_free(m_table[ret]);
  		} while (++ret < n);
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..e6387a03cd 100644
+index fec0aeb79c..61081336e8 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -101,7 +101,7 @@ index fec0aeb79c..e6387a03cd 100644
  #define IPV4_L3FWD_LPM_MAX_RULES         1024
  #define IPV4_L3FWD_LPM_NUMBER_TBL8S (1 << 8)
  #define IPV6_L3FWD_LPM_MAX_RULES         1024
-@@ -41,6 +49,200 @@
+@@ -41,6 +49,204 @@
  static struct rte_lpm *ipv4_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  static struct rte_lpm6 *ipv6_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  
@@ -253,32 +253,36 @@ index fec0aeb79c..e6387a03cd 100644
 +			printf("\nTX CONGESTION ANALYSIS:\n");
 +			printf("  - TX queue is overloaded (receiving faster than transmitting)\n");
 +			printf("  - Consider: reducing RX rate, increasing TX queue size, or checking network bottleneck\n");
-+			
-+			printf("\nCURRENT CONFIGURATION:\n");
-+			printf("  RX Descriptors: %u\n", nb_rxd);
-+			printf("  TX Descriptors: %u\n", nb_txd);
-+			printf("  Max PKT Burst: %u\n", MAX_PKT_BURST);
-+			printf("  Default PKT Burst: %u\n", DEFAULT_PKT_BURST);
-+			printf("  TX Drain Interval: %u us\n", BURST_TX_DRAIN_US);
-+			printf("  Enabled Port Mask: 0x%x\n", enabled_port_mask);
-+			
-+			/* Get port info for first enabled port */
-+			uint16_t portid;
-+			for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++) {
-+				if ((enabled_port_mask & (1 << portid)) != 0) {
-+					struct rte_eth_dev_info dev_info;
-+					struct rte_eth_link link;
-+					if (rte_eth_dev_info_get(portid, &dev_info) == 0) {
-+						printf("  Port %u Driver: %s\n", portid, dev_info.driver_name);
-+						printf("  Port %u Max TX Queues: %u\n", portid, dev_info.max_tx_queues);
-+						printf("  Port %u Max RX Queues: %u\n", portid, dev_info.max_rx_queues);
-+					}
-+					if (rte_eth_link_get_nowait(portid, &link) == 0) {
-+						printf("  Port %u Link Speed: %u Mbps, %s\n", portid, link.link_speed,
-+							link.link_status ? "UP" : "DOWN");
-+					}
-+					break; /* Only show first enabled port */
++		}
++	}
++	
++	/* Always show CURRENT CONFIGURATION when stats are enabled */
++	if (stats_enabled) {
++		printf("\nCURRENT CONFIGURATION:\n");
++		printf("  RX_DESC_DEFAULT: %u (actual nb_rxd: %u)\n", RX_DESC_DEFAULT, nb_rxd);
++		printf("  TX_DESC_DEFAULT: %u (actual nb_txd: %u)\n", TX_DESC_DEFAULT, nb_txd);
++		printf("  MAX_PKT_BURST: %u\n", MAX_PKT_BURST);
++		printf("  DEFAULT_PKT_BURST: %u (actual nb_pkt_per_burst: %u)\n", DEFAULT_PKT_BURST, nb_pkt_per_burst);
++		printf("  BURST_TX_DRAIN_US: %u us\n", BURST_TX_DRAIN_US);
++		printf("  MAX_TX_BURST: %u\n", MAX_TX_BURST);
++		printf("  enabled_port_mask: 0x%x\n", enabled_port_mask);
++		
++		/* Get port info for first enabled port */
++		uint16_t portid;
++		for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++) {
++			if ((enabled_port_mask & (1 << portid)) != 0) {
++				struct rte_eth_dev_info dev_info;
++				struct rte_eth_link link;
++				if (rte_eth_dev_info_get(portid, &dev_info) == 0) {
++					printf("  Port %u driver_name: %s\n", portid, dev_info.driver_name);
++					printf("  Port %u max_tx_queues: %u\n", portid, dev_info.max_tx_queues);
++					printf("  Port %u max_rx_queues: %u\n", portid, dev_info.max_rx_queues);
 +				}
++				if (rte_eth_link_get_nowait(portid, &link) == 0) {
++					printf("  Port %u link_speed: %u Mbps, %s\n", portid, link.link_speed,
++						link.link_status ? "UP" : "DOWN");
++				}
++				break; /* Only show first enabled port */
 +			}
 +		}
 +	}
@@ -302,7 +306,7 @@ index fec0aeb79c..e6387a03cd 100644
  /* Performing LPM-based lookups. 8< */
  static inline uint16_t
  lpm_get_ipv4_dst_port(const struct rte_ipv4_hdr *ipv4_hdr,
-@@ -156,6 +358,17 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -156,6 +362,17 @@ lpm_main_loop(__rte_unused void *dummy)
  	lcore_id = rte_lcore_id();
  	qconf = &lcore_conf[lcore_id];
  
@@ -320,7 +324,7 @@ index fec0aeb79c..e6387a03cd 100644
  	const uint16_t n_rx_q = qconf->n_rx_queue;
  	const uint16_t n_tx_p = qconf->n_tx_port;
  	if (n_rx_q == 0) {
-@@ -163,7 +376,21 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -163,7 +380,21 @@ lpm_main_loop(__rte_unused void *dummy)
  		return 0;
  	}
  
@@ -343,7 +347,7 @@ index fec0aeb79c..e6387a03cd 100644
  
  	for (i = 0; i < n_rx_q; i++) {
  
-@@ -189,6 +416,9 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -189,6 +420,9 @@ lpm_main_loop(__rte_unused void *dummy)
  				portid = qconf->tx_port_id[i];
  				if (qconf->tx_mbufs[portid].len == 0)
  					continue;
@@ -353,7 +357,7 @@ index fec0aeb79c..e6387a03cd 100644
  				send_burst(qconf,
  					qconf->tx_mbufs[portid].len,
  					portid);
-@@ -208,7 +438,22 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -208,7 +442,22 @@ lpm_main_loop(__rte_unused void *dummy)
  				nb_pkt_per_burst);
  			if (nb_rx == 0)
  				continue;
@@ -377,7 +381,7 @@ index fec0aeb79c..e6387a03cd 100644
  #if defined RTE_ARCH_X86 || defined __ARM_NEON \
  			 || defined RTE_ARCH_PPC_64
  			l3fwd_lpm_send_packets(nb_rx, pkts_burst,
-@@ -222,6 +467,11 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -222,6 +471,11 @@ lpm_main_loop(__rte_unused void *dummy)
  		cur_tsc = rte_rdtsc();
  	}
  
