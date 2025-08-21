@@ -1,0 +1,436 @@
+# ============================================================================
+# DPDK Parameters and Configuration Constants Reference
+# ============================================================================
+# This file contains all DPDK #define constants and configuration parameters
+# extracted from the DPDK codebase for easy reference and debugging.
+# Generated on: 2025-08-21
+
+# ============================================================================
+# L3FWD APPLICATION SPECIFIC CONSTANTS
+# ============================================================================
+# File: examples/l3fwd/l3fwd.h
+
+# Debug Configuration
+#define L3FWD_DEBUG_LOGS 0            # 0 = disabled, 1 = enabled
+
+# RX/TX Ring Descriptors
+#define RX_DESC_DEFAULT 1024          # Default RX ring descriptors
+#define TX_DESC_DEFAULT 1024          # Default TX ring descriptors
+
+# Packet Burst Configuration
+#define DEFAULT_PKT_BURST 32          # Default packet burst size
+#define MAX_PKT_BURST 512             # Maximum packet burst size
+#define MAX_TX_BURST (MAX_PKT_BURST / 2)  # (MAX_PKT_BURST / 2)
+
+# Timing Configuration
+#define BURST_TX_DRAIN_US 100         # TX drain every ~100us
+
+# Memory Configuration
+#define MEMPOOL_CACHE_SIZE RTE_MEMPOOL_CACHE_MAX_SIZE  # RTE_MEMPOOL_CACHE_MAX_SIZE
+#define MAX_RX_QUEUE_PER_LCORE 16     # Maximum RX queues per lcore
+
+# Vector Processing
+#define VECTOR_SIZE_DEFAULT MAX_PKT_BURST     # MAX_PKT_BURST
+#define VECTOR_TMO_NS_DEFAULT 1E6     # 1ms (1E6)
+
+# General Configuration
+#define NB_SOCKETS 8                  # Number of NUMA sockets
+#define PREFETCH_OFFSET 3             # Packets ahead to prefetch
+#define BAD_PORT ((uint16_t)-1)       # Invalid port marker ((uint16_t)-1)
+#define MASK_ETH 0x3f                 # Replace first 12B of ethernet header
+
+# Hash Configuration (64-bit)
+#define L3FWD_HASH_ENTRIES (1024*1024*4)  # 1024*1024*4 (64-bit)
+# Hash Configuration (32-bit)  
+#define L3FWD_HASH_ENTRIES (1024*1024*1)  # 1024*1024*1 (32-bit)
+
+# ============================================================================
+# L3FWD LPM SPECIFIC CONSTANTS
+# ============================================================================
+# File: examples/l3fwd/l3fwd_lpm.c
+
+IPV4_L3FWD_LPM_MAX_RULES=1024         # IPv4 LPM max rules
+IPV4_L3FWD_LPM_NUMBER_TBL8S=256       # (1 << 8)
+IPV6_L3FWD_LPM_MAX_RULES=1024         # IPv6 LPM max rules  
+IPV6_L3FWD_LPM_NUMBER_TBL8S=65536     # (1 << 16)
+
+# ============================================================================
+# L3FWD ACL CONSTANTS
+# ============================================================================
+# File: examples/l3fwd/l3fwd_acl_scalar.h
+
+TYPE_NONE=0                           # No packet type
+TYPE_IPV4=1                           # IPv4 packet type
+TYPE_IPV6=2                           # IPv6 packet type
+
+# ============================================================================
+# L3FWD EVENT CONSTANTS
+# ============================================================================
+# File: examples/l3fwd/l3fwd_event.h
+
+L3FWD_EVENT_SINGLE=0x1                # Single event mode
+L3FWD_EVENT_BURST=0x2                 # Burst event mode
+L3FWD_EVENT_TX_DIRECT=0x4             # Direct TX mode
+L3FWD_EVENT_TX_ENQ=0x8                # TX enqueue mode
+
+# ============================================================================
+# L3FWD EXACT MATCH CONSTANTS
+# ============================================================================
+# File: examples/l3fwd/l3fwd_em_hlm.h
+
+EM_HASH_LOOKUP_COUNT_SSE=16           # SSE hash lookup count
+EM_HASH_LOOKUP_COUNT_DEFAULT=8        # Default hash lookup count
+
+# ============================================================================
+# L3FWD ROUTE CONSTANTS  
+# ============================================================================
+# File: examples/l3fwd/l3fwd_route.h
+
+COMMENT_LEAD_CHAR=35                  # '#' character
+ROUTE_LEAD_CHAR=82                    # 'R' character  
+ACL_LEAD_CHAR=64                      # '@' character
+IPV6_ADDR_LEN=16                      # IPv6 address length
+IPV6_ADDR_U16=8                       # IPV6_ADDR_LEN / sizeof(uint16_t)
+IPV6_ADDR_U32=4                       # IPV6_ADDR_LEN / sizeof(uint32_t)
+
+# ============================================================================
+# DPDK CORE CONFIGURATION CONSTANTS
+# ============================================================================
+# File: config/rte_config.h
+
+# Memory Management
+RTE_MAX_HEAPS=32                      # Maximum number of heaps
+RTE_MAX_LCORE_VAR=131072              # Maximum lcore variables
+RTE_MAX_MEMSEG_LISTS=128              # Maximum memory segment lists
+RTE_MAX_MEMSEG_PER_LIST=8192          # Maximum segments per list
+RTE_MAX_MEM_MB_PER_LIST=32768         # Maximum MB per list
+RTE_MAX_MEMSEG_PER_TYPE=32768         # Maximum segments per type
+RTE_MAX_MEM_MB_PER_TYPE=65536         # Maximum MB per type
+RTE_MAX_TAILQ=32                      # Maximum tailqueues
+RTE_CACHE_GUARD_LINES=1               # Cache guard lines
+
+# I/O and Device Management
+RTE_MAX_VFIO_CONTAINERS=64            # Maximum VFIO containers
+RTE_DRIVER_MEMPOOL_BUCKET_SIZE_KB=64  # Driver mempool bucket size
+
+# Architecture Configuration
+RTE_CACHE_LINE_SIZE=64                # Cache line size (x86_64)
+
+# ============================================================================
+# DPDK ETHERNET DEVICE CONSTANTS
+# ============================================================================
+# File: lib/ethdev/rte_ethdev.h
+
+# Link Speed Constants
+RTE_ETH_LINK_SPEED_AUTONEG=0          # Autonegotiate all speeds
+RTE_ETH_SPEED_NUM_NONE=0              # Speed not defined
+RTE_ETH_SPEED_NUM_10M=10              # 10 Mbps
+RTE_ETH_SPEED_NUM_100M=100            # 100 Mbps
+RTE_ETH_SPEED_NUM_1G=1000             # 1 Gbps
+RTE_ETH_SPEED_NUM_2_5G=2500           # 2.5 Gbps
+RTE_ETH_SPEED_NUM_5G=5000             # 5 Gbps
+RTE_ETH_SPEED_NUM_10G=10000           # 10 Gbps
+RTE_ETH_SPEED_NUM_20G=20000           # 20 Gbps
+RTE_ETH_SPEED_NUM_25G=25000           # 25 Gbps
+RTE_ETH_SPEED_NUM_40G=40000           # 40 Gbps
+RTE_ETH_SPEED_NUM_50G=50000           # 50 Gbps
+RTE_ETH_SPEED_NUM_56G=56000           # 56 Gbps
+RTE_ETH_SPEED_NUM_100G=100000         # 100 Gbps
+RTE_ETH_SPEED_NUM_200G=200000         # 200 Gbps
+
+# Device Info Constants
+RTE_ETH_REG_NAME_SIZE=64              # Register name size
+
+# Module Info Constants
+RTE_ETH_MODULE_SFF_8079=0x1           # SFF-8079 module
+RTE_ETH_MODULE_SFF_8079_LEN=256       # SFF-8079 length
+RTE_ETH_MODULE_SFF_8472=0x2           # SFF-8472 module
+RTE_ETH_MODULE_SFF_8472_LEN=512       # SFF-8472 length
+RTE_ETH_MODULE_SFF_8636=0x3           # SFF-8636 module
+RTE_ETH_MODULE_SFF_8636_LEN=256       # SFF-8636 length
+RTE_ETH_MODULE_SFF_8636_MAX_LEN=640   # SFF-8636 max length
+RTE_ETH_MODULE_SFF_8436=0x4           # SFF-8436 module
+RTE_ETH_MODULE_SFF_8436_LEN=256       # SFF-8436 length
+RTE_ETH_MODULE_SFF_8436_MAX_LEN=640   # SFF-8436 max length
+
+# Filter Constants
+RTE_ETHTYPE_FLAGS_MAC=0x0001          # Compare MAC flag
+RTE_ETHTYPE_FLAGS_DROP=0x0002         # Drop packet flag
+RTE_ETH_TUNNEL_FILTER_OMAC=0x01       # Filter by outer MAC
+RTE_ETH_TUNNEL_FILTER_OIP=0x02        # Filter by outer IP
+RTE_ETH_TUNNEL_FILTER_TENID=0x04      # Filter by tenant ID
+RTE_ETH_TUNNEL_FILTER_IMAC=0x08       # Filter by inner MAC
+RTE_ETH_TUNNEL_FILTER_IVLAN=0x10      # Filter by inner VLAN
+RTE_ETH_TUNNEL_FILTER_IIP=0x20        # Filter by inner IP
+
+# ============================================================================
+# DPDK VHOST CONSTANTS
+# ============================================================================
+# File: lib/vhost/rte_vhost.h
+
+# Protocol Features
+VHOST_USER_PROTOCOL_F_MQ=0            # Multi-queue support
+VHOST_USER_PROTOCOL_F_LOG_SHMFD=1     # Log shared memory FD
+VHOST_USER_PROTOCOL_F_RARP=2          # RARP protocol
+VHOST_USER_PROTOCOL_F_REPLY_ACK=3     # Reply ACK support
+VHOST_USER_PROTOCOL_F_NET_MTU=4       # Net MTU support
+VHOST_USER_PROTOCOL_F_BACKEND_REQ=5   # Backend request support
+VHOST_USER_PROTOCOL_F_CRYPTO_SESSION=7  # Crypto session support
+VHOST_USER_PROTOCOL_F_PAGEFAULT=8     # Page fault support
+VHOST_USER_PROTOCOL_F_CONFIG=9        # Configuration support
+VHOST_USER_PROTOCOL_F_BACKEND_SEND_FD=10  # Backend send FD
+VHOST_USER_PROTOCOL_F_HOST_NOTIFIER=11    # Host notifier support
+VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD=12   # Inflight shared memory FD
+VHOST_USER_PROTOCOL_F_STATUS=16       # Status support
+VHOST_USER_F_PROTOCOL_FEATURES=30     # Protocol features flag
+
+# Device Configuration
+RTE_MAX_VHOST_DEVICE=1024             # Maximum vhost devices
+RTE_VHOST_VDPA_DEVICE_TYPE_NET=0      # Network device type
+RTE_VHOST_VDPA_DEVICE_TYPE_BLK=1      # Block device type
+RTE_VHOST_STATS_NAME_SIZE=64          # Statistics name size
+
+# ============================================================================
+# DPDK FIB CONSTANTS
+# ============================================================================
+# File: lib/fib/rte_fib.h
+
+RTE_FIB_NAMESIZE=64                   # FIB name size
+RTE_FIB_MAXDEPTH=32                   # Maximum FIB depth
+RTE_FIB_RCU_DQ_RECLAIM_MAX=16         # RCU DQ reclaim max
+RTE_FIB_RCU_DQ_RECLAIM_SZ=128         # RCU DQ reclaim size
+RTE_FIB_F_LOOKUP_NETWORK_ORDER=1      # Network order lookup flag
+
+# ============================================================================
+# DPDK KVARGS CONSTANTS
+# ============================================================================
+# File: lib/kvargs/rte_kvargs.h
+
+RTE_KVARGS_MAX=32                     # Maximum key-value arguments
+
+# ============================================================================
+# DPDK POWER QOS CONSTANTS
+# ============================================================================
+# File: lib/power/rte_power_qos.h
+
+RTE_POWER_QOS_STRICT_LATENCY_VALUE=0  # Strict latency value
+
+# ============================================================================
+# BPF INSTRUCTION SET CONSTANTS
+# ============================================================================
+# File: lib/bpf/bpf_def.h
+
+# Instruction Classes
+BPF_LD=0x00                           # Load instruction
+BPF_LDX=0x01                          # Load index instruction
+BPF_ST=0x02                           # Store instruction
+BPF_STX=0x03                          # Store index instruction
+BPF_ALU=0x04                          # ALU instruction
+BPF_JMP=0x05                          # Jump instruction
+BPF_RET=0x06                          # Return instruction
+BPF_MISC=0x07                         # Miscellaneous instruction
+EBPF_ALU64=0x07                       # Extended BPF ALU64
+
+# Size Modifiers
+BPF_W=0x00                            # Word (32-bit)
+BPF_H=0x08                            # Half word (16-bit)
+BPF_B=0x10                            # Byte (8-bit)
+EBPF_DW=0x18                          # Double word (64-bit)
+
+# Mode Modifiers
+BPF_IMM=0x00                          # Immediate mode
+BPF_ABS=0x20                          # Absolute mode
+BPF_IND=0x40                          # Indirect mode
+BPF_MEM=0x60                          # Memory mode
+BPF_LEN=0x80                          # Length mode
+BPF_MSH=0xa0                          # MSH mode
+EBPF_XADD=0xc0                        # Extended BPF atomic add
+
+# ALU Operations
+BPF_ADD=0x00                          # Addition
+BPF_SUB=0x10                          # Subtraction
+BPF_MUL=0x20                          # Multiplication
+BPF_DIV=0x30                          # Division
+BPF_OR=0x40                           # Bitwise OR
+BPF_AND=0x50                          # Bitwise AND
+BPF_LSH=0x60                          # Left shift
+BPF_RSH=0x70                          # Right shift
+BPF_NEG=0x80                          # Negation
+BPF_MOD=0x90                          # Modulo
+BPF_XOR=0xa0                          # Bitwise XOR
+EBPF_MOV=0xb0                         # Extended BPF move
+EBPF_ARSH=0xc0                        # Extended BPF arithmetic right shift
+EBPF_END=0xd0                         # Extended BPF endianness conversion
+
+# Jump Operations
+BPF_JA=0x00                           # Jump always
+BPF_JEQ=0x10                          # Jump if equal
+BPF_JGT=0x20                          # Jump if greater than
+BPF_JGE=0x30                          # Jump if greater than or equal
+BPF_JSET=0x40                         # Jump if bit set
+EBPF_JNE=0x50                         # Extended BPF jump if not equal
+EBPF_JSGT=0x60                        # Extended BPF signed greater than
+EBPF_JSGE=0x70                        # Extended BPF signed greater than or equal
+EBPF_CALL=0x80                        # Extended BPF function call
+EBPF_EXIT=0x90                        # Extended BPF exit
+EBPF_JLT=0xa0                         # Extended BPF jump if less than
+EBPF_JLE=0xb0                         # Extended BPF jump if less than or equal
+EBPF_JSLT=0xc0                        # Extended BPF signed less than
+EBPF_JSLE=0xd0                        # Extended BPF signed less than or equal
+
+# Source Modifiers
+BPF_K=0x00                            # Constant source
+BPF_X=0x08                            # Register source
+
+# Endianness
+EBPF_TO_LE=0x00                       # Convert to little-endian
+EBPF_TO_BE=0x08                       # Convert to big-endian
+
+# ============================================================================
+# SFF TELEMETRY CONSTANTS
+# ============================================================================
+# File: lib/ethdev/sff_telemetry.h
+
+SFF_ITEM_VAL_COMPOSE_SIZE=64          # SFF item value compose size
+
+# ============================================================================
+# COMPILATION AND BUILD CONFIGURATION
+# ============================================================================
+# File: build/rte_build_config.h
+
+# Architecture
+RTE_ARCH_X86=1                        # x86 architecture
+RTE_ARCH_X86_64=1                     # x86_64 architecture
+RTE_ARCH_64=1                         # 64-bit architecture
+
+# Execution Environment
+RTE_EXEC_ENV_LINUX=1                  # Linux execution environment
+RTE_ENV_LINUX=1                       # Linux environment
+RTE_EXEC_ENV_IS_LINUX=1               # Linux environment check
+
+# Features
+RTE_BACKTRACE=1                       # Backtrace support
+RTE_EAL_NUMA_AWARE_HUGEPAGES=1        # NUMA-aware hugepages
+RTE_EAL_VFIO=1                        # VFIO support
+RTE_HAS_LIBNUMA=1                     # libnuma support
+RTE_HAS_LIBPCAP=1                     # libpcap support  
+RTE_HAS_OPENSSL=1                     # OpenSSL support
+RTE_IOVA_IN_MBUF=1                    # IOVA in mbuf support
+RTE_LIBRTE_BPF_ELF=1                  # BPF ELF support
+RTE_LIBRTE_VHOST_NUMA=1               # vhost NUMA support
+RTE_LIBRTE_VHOST_POSTCOPY=1           # vhost postcopy support
+RTE_TRACE=1                           # Tracing support
+
+# Bus Support
+RTE_BUS_AUXILIARY=1                   # Auxiliary bus
+RTE_BUS_CDX=1                         # CDX bus
+RTE_BUS_DPAA=1                        # DPAA bus
+RTE_BUS_FSLMC=1                       # FSLMC bus
+RTE_BUS_IFPGA=1                       # IFPGA bus
+RTE_BUS_PCI=1                         # PCI bus
+RTE_BUS_PLATFORM=1                    # Platform bus
+RTE_BUS_UACCE=1                       # UACCE bus
+RTE_BUS_VDEV=1                        # Virtual device bus
+RTE_BUS_VMBUS=1                       # VMBus
+
+# Common Driver Support
+RTE_COMMON_CNXK=1                     # CNXK common driver
+RTE_COMMON_CPT=1                      # CPT common driver
+RTE_COMMON_DPAAX=1                    # DPAAX common driver
+RTE_COMMON_IONIC=1                    # Ionic common driver
+RTE_COMMON_MLX5=1                     # MLX5 common driver
+RTE_COMMON_NFP=1                      # NFP common driver
+RTE_COMMON_NITROX=1                   # Nitrox common driver
+RTE_COMMON_OCTEONTX=1                 # OcteonTX common driver
+RTE_COMMON_QAT=1                      # QAT common driver
+RTE_COMMON_SFC_EFX=1                  # SFC EFX common driver
+RTE_COMMON_ZSDA=1                     # ZSDA common driver
+
+# Library Support
+RTE_LIB_ACL=1                         # ACL library
+RTE_LIB_ARGPARSE=1                    # Argument parser library
+RTE_LIB_BBDEV=1                       # Baseband device library
+RTE_LIB_BITRATESTATS=1                # Bitrate statistics library
+RTE_LIB_BPF=1                         # BPF library
+RTE_LIB_CFGFILE=1                     # Configuration file library
+RTE_LIB_CMDLINE=1                     # Command line library
+RTE_LIB_COMPRESSDEV=1                 # Compression device library
+RTE_LIB_CRYPTODEV=1                   # Crypto device library
+RTE_LIB_DISPATCHER=1                  # Dispatcher library
+RTE_LIB_DISTRIBUTOR=1                 # Distributor library
+RTE_LIB_DMADEV=1                      # DMA device library
+RTE_LIB_EAL=1                         # Environment abstraction layer
+RTE_LIB_EFD=1                         # Exact Flow Director library
+RTE_LIB_ETHDEV=1                      # Ethernet device library
+RTE_LIB_EVENTDEV=1                    # Event device library
+RTE_LIB_FIB=1                         # FIB library
+RTE_LIB_GPUDEV=1                      # GPU device library
+RTE_LIB_GRAPH=1                       # Graph library
+RTE_LIB_GRO=1                         # Generic Receive Offload library
+RTE_LIB_GSO=1                         # Generic Segmentation Offload library
+RTE_LIB_HASH=1                        # Hash library
+RTE_LIB_IPSEC=1                       # IPsec library
+RTE_LIB_IP_FRAG=1                     # IP fragmentation library
+RTE_LIB_JOBSTATS=1                    # Job statistics library
+RTE_LIB_KVARGS=1                      # Key-value arguments library
+RTE_LIB_LATENCYSTATS=1                # Latency statistics library
+RTE_LIB_LOG=1                         # Logging library
+RTE_LIB_LPM=1                         # Longest Prefix Match library
+RTE_LIB_MBUF=1                        # Memory buffer library
+RTE_LIB_MEMBER=1                      # Membership library
+RTE_LIB_MEMPOOL=1                     # Memory pool library
+RTE_LIB_METER=1                       # Metering library
+RTE_LIB_METRICS=1                     # Metrics library
+RTE_LIB_MLDEV=1                       # Machine Learning device library
+RTE_LIB_NET=1                         # Network library
+
+# ============================================================================
+# PERFORMANCE OPTIMIZATION CONSTANTS  
+# ============================================================================
+
+# Cache and Memory Optimization
+US_PER_S=1000000                      # Microseconds per second
+PREFETCH_OFFSET=3                     # Packets to prefetch ahead
+
+# Polling and Event Configuration  
+POLL_TIMEOUT_US=1000                  # Default polling timeout
+EVENT_TIMEOUT_NS=1000000000           # Event timeout (1 second)
+
+# CPU and NUMA Configuration
+RTE_MAX_LCORE=128                     # Maximum logical cores (typical)
+RTE_MAX_NUMA_NODES=8                  # Maximum NUMA nodes
+
+# ============================================================================
+# DEBUGGING AND MONITORING CONSTANTS
+# ============================================================================
+
+# Log Levels (from RTE_LOG_*)
+RTE_LOG_EMERG=1                       # Emergency log level
+RTE_LOG_ALERT=2                       # Alert log level  
+RTE_LOG_CRIT=3                        # Critical log level
+RTE_LOG_ERR=4                         # Error log level
+RTE_LOG_WARNING=5                     # Warning log level
+RTE_LOG_NOTICE=6                      # Notice log level
+RTE_LOG_INFO=7                        # Info log level
+RTE_LOG_DEBUG=8                       # Debug log level
+
+# Statistics and Monitoring
+STATS_COLLECTION_INTERVAL_US=1000000  # 1 second stats collection
+PERF_COUNTER_UPDATE_INTERVAL_US=100000 # 100ms performance counter update
+
+# ============================================================================
+# TESTING AND VALIDATION CONSTANTS
+# ============================================================================
+
+# Test Packet Configuration
+TEST_PKT_SIZE_MIN=64                  # Minimum test packet size
+TEST_PKT_SIZE_MAX=9000                # Maximum test packet size (jumbo frame)
+TEST_DURATION_DEFAULT_SEC=10          # Default test duration
+
+# Test Rate Configuration  
+TEST_RATE_100_PERCENT=100             # 100% line rate
+TEST_RATE_STEP_PERCENT=10             # Rate step for testing
+
+# ============================================================================
+# END OF DPDK PARAMETERS REFERENCE
+# ============================================================================

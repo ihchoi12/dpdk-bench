@@ -1,0 +1,347 @@
+# ============================================================================
+# PKTGEN-DPDK Parameters and Configuration Constants Reference
+# ============================================================================
+# This file contains all Pktgen-DPDK #define constants and configuration 
+# parameters extracted from the Pktgen-DPDK codebase for easy reference 
+# and debugging.
+# Generated on: 2025-08-21
+
+# ============================================================================
+# PKTGEN CONSTANTS - Core Configuration
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-constants.h
+
+# Packet Burst Configuration
+MAX_PKT_RX_BURST = 256                # Used to create Max array sizes
+MAX_PKT_TX_BURST = 256                # Used to create Max array sizes
+DEFAULT_PKT_RX_BURST = 64             # Increasing this number consumes memory very fast
+DEFAULT_PKT_TX_BURST = 32             # Increasing this number consumes memory very fast
+
+# Ring Descriptors
+DEFAULT_RX_DESC = 1024                # Default Rx ring descriptor size
+DEFAULT_TX_DESC = 1024                # Default Tx ring descriptor size
+
+# Memory Configuration
+DEFAULT_MBUFS_PER_PORT_MULTIPLIER = 16  # Multiplier for number of mbufs per port
+MAX_SPECIAL_MBUFS = 1024              # Maximum special mbufs
+MBUF_CACHE_SIZE = 256                 # Mbuf cache size
+DEFAULT_PRIV_SIZE = 0                 # Default private size
+
+# Memory Pool Calculation Macro
+#define MAX_MBUFS_PER_PORT(rxd, txd) ((rxd + txd) * DEFAULT_MBUFS_PER_PORT_MULTIPLIER)
+
+# ============================================================================
+# PKTGEN MAIN - Core Definitions
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen.h
+
+# Matrix and String Configuration
+#define MAX_MATRIX_ENTRIES 128        # Maximum matrix entries
+#define MAX_STRING 256                # Maximum string length
+
+# Numeric Constants
+#define Million (uint64_t)(1000000UL)      # One million
+#define Billion (uint64_t)(1000000000UL)   # One billion
+
+# Packet Overhead Calculations
+#define iBitsTotal(_x) (uint64_t)(((_x.ipackets * PKT_OVERHEAD_SIZE) + _x.ibytes) * 8)
+#define oBitsTotal(_x) (uint64_t)(((_x.opackets * PKT_OVERHEAD_SIZE) + _x.obytes) * 8)
+
+# Wire Size Calculation
+#define WIRE_SIZE(pkt_size, t) (t)(pkt_size + PKT_OVERHEAD_SIZE)
+
+# Display Update Configuration
+#define UPDATE_DISPLAY_TICK_INTERVAL 4  # check stats rate per second
+#define UPDATE_DISPLAY_TICK_RATE (pktgen.hz / UPDATE_DISPLAY_TICK_INTERVAL)
+
+# Magic Numbers
+#define TSTAMP_MAGIC 0xf00dcafe         # Timestamp magic number
+
+# Memory Pool Flags
+#define MEMPOOL_F_DMA 0                 # DMA memory pool flag
+
+# ============================================================================
+# LATENCY CONFIGURATION
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-latency.h
+
+#define DEFAULT_JITTER_THRESHOLD (50)      # usec
+#define DEFAULT_LATENCY_RATE (10000)       # micro-seconds
+#define MAX_LATENCY_RATE (1000000)         # micro-seconds
+#define DEFAULT_LATENCY_ENTROPY (0)        # default value to use in (SPORT + (i % N))
+#define LATENCY_PKT_SIZE RTE_ETHER_MIN_LEN # Packet size 64 + 4 FCS = 68 bytes
+#define LATENCY_DPORT 1028                 # Reserved
+
+# ============================================================================
+# L2P (Layer 2 to Port) CONFIGURATION
+# ============================================================================
+# File: Pktgen-DPDK/app/l2p.h
+
+#define MAX_MATRIX_ENTRIES 128             # Maximum matrix entries
+#define MAX_STRING 256                     # Maximum string length
+#define MAX_MAP_PORTS (RTE_MAX_ETHPORTS + 1)   # Maximum mapped ports
+#define MAX_MAP_LCORES (RTE_MAX_LCORE + 1)     # Maximum mapped lcores
+#define MAX_MAPPINGS 32                    # Max number of mappings
+#define MAX_ALLOCA_SIZE 1024               # Maximum size of an allocation
+#define MEMPOOL_CACHE_SIZE (RTE_MEMPOOL_CACHE_MAX_SIZE / 2)  # Size of mempool cache
+
+# ============================================================================
+# PCAP CONFIGURATION
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-pcap.h
+
+#define PCAP_MAGIC_NUMBER 0xa1b2c3d4       # PCAP magic number
+#define PCAP_MAJOR_VERSION 2               # PCAP major version
+#define PCAP_MINOR_VERSION 4               # PCAP minor version
+
+# ============================================================================
+# UDP CONFIGURATION
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-udp.h
+
+#define VXLAN_PORT_ID 4789                 # VXLAN port ID
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-log.h
+
+# Log Levels
+#define LOG_LEVEL_ALL 0                    # All log messages
+#define LOG_LEVEL_TRACE 1                  # Trace level
+#define LOG_LEVEL_DEBUG 2                  # Debug level
+#define LOG_LEVEL_INFO 3                   # Info level
+#define LOG_LEVEL_WARNING 4                # Warning level
+#define LOG_LEVEL_ERROR 5                  # Error level
+#define LOG_LEVEL_PANIC 6                  # Panic level
+#define LOG_LEVEL_NONE 7                   # No logging
+
+# Default Log Level
+#define LOG_LEVEL LOG_LEVEL_INFO           # Default log level
+
+# ============================================================================
+# PORT CONFIGURATION
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-port-cfg.h
+
+#define USER_PATTERN_SIZE 16               # User pattern size
+#define MAX_LATENCY_QUEUES 10              # Maximum latency queues
+#define MAX_LATENCY_ENTRIES \              # Maximum latency entries calculation
+    (DEFAULT_PKT_TX_BURST * MAX_LATENCY_QUEUES)
+
+# Randomization Flags
+#define RANDOMIZE_SRC_IP (1ULL << 32)      # Set the source IP address as random
+#define RANDOMIZE_SRC_PT (1ULL << 33)      # Set the source port as random
+
+# PMD Parameters
+#define RTE_PMD_PARAM_UNSET -1             # PMD parameter unset value
+
+# ============================================================================
+# WORK QUEUE CONFIGURATION
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-workq.h
+
+#define MAX_WORKQ_ENTRIES 16               # Maximum size of workqueue items
+
+# ============================================================================
+# DEBUG AND DEVELOPMENT CONSTANTS
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen.c
+
+#define PKTGEN_DEBUG_LOGS 0                # Change this to 1 for debug mode, 0 for release
+#define FAST_TX_MODE 0                     # Fast TX mode flag
+#define PREFETCH_OFFSET 3                  # Prefetch offset
+
+# ============================================================================
+# MAIN APPLICATION CONSTANTS
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-main.c
+
+#define MAX_BACKTRACE 32                   # Maximum backtrace entries
+
+# ============================================================================
+# PCAP PROCESSING CONSTANTS
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-pcap.c
+
+#define MBUF_INVALID_PORT UINT16_MAX       # Invalid port for mbuf
+
+# ============================================================================
+# LOG BUFFER CONFIGURATION
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-log.c
+
+#define LOG_HISTORY 64                     # log "scrollback buffer" size
+#define LOG_MAX_LINE 1024                  # max. length of a log line
+#define MAX_PAGE_LINES 28                  # Maximum page lines
+
+# ============================================================================
+# DISPLAY CONFIGURATION
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-display.c
+
+#define MAX_COLOR_NAME_SIZE 64             # Maximum color name size
+#define MAX_PROMPT_STRING_SIZE 64          # Maximum prompt string size
+
+# ============================================================================
+# CLI FUNCTIONS CONSTANTS
+# ============================================================================
+# File: Pktgen-DPDK/app/cli-functions.c
+
+#define MEGA (uint64_t)(1024 * 1024)       # Megabyte definition
+
+# ============================================================================
+# GRE TUNNEL CONFIGURATION
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-gre.c
+
+#define GRE_SRC_ADDR (10 << 24) | (10 << 16) | (1 << 8) | 1  # GRE source address (10.10.1.1)
+#define GRE_DST_ADDR (10 << 24) | (10 << 16) | (1 << 8) | 2  # GRE destination address (10.10.1.2)
+
+# ============================================================================
+# CAPTURE CONFIGURATION
+# ============================================================================
+# File: Pktgen-DPDK/app/pktgen-capture.c
+
+#define CAPTURE_BUFF_SIZE (4 * (1024 * 1024))  # Capture buffer size (4MB)
+
+# ============================================================================
+# LUA INTEGRATION CONSTANTS
+# ============================================================================
+# File: Pktgen-DPDK/app/lpktgenlib.h
+
+#define LUA_PKTGENLIBNAME "pktgen"         # Lua library name
+#define PKTGEN_SHORTCUTS "Pktgen"          # Pktgen shortcuts
+
+# ============================================================================
+# PACKET PROCESSING MACROS
+# ============================================================================
+
+# Iteration Macros
+#define _do(_exp) \                        # Do expression macro
+    do { \
+        _exp; \
+    } while ((0))
+
+#define forall_ports(_action) \            # For all ports action macro
+    do { \
+        uint16_t pid; \
+        RTE_ETH_FOREACH_DEV(pid) { \
+            port_info_t *pinfo; \
+            pinfo = l2p_get_port_pinfo(pid); \
+            if (pinfo->seq_pkt == NULL) \
+                continue; \
+            _action; \
+        } \
+    } while ((0))
+
+#define foreach_port(_portlist, _action) \ # For each port in portlist action macro
+    do { \
+        uint64_t *_pl = (uint64_t *)&_portlist; \
+        uint16_t pid, idx, bit; \
+        RTE_ETH_FOREACH_DEV(pid) { \
+            port_info_t *pinfo; \
+            idx = (pid / (sizeof(uint64_t) * 8)); \
+            bit = (pid - (idx * (sizeof(uint64_t) * 8))); \
+            if ((_pl[idx] & (1LL << bit)) == 0) \
+                continue; \
+            pinfo = l2p_get_port_pinfo(pid); \
+            if (pinfo->seq_pkt == NULL) \
+                continue; \
+            _action; \
+        } \
+    } while ((0))
+
+# ============================================================================
+# PAGE MASK CONFIGURATION
+# ============================================================================
+
+#define PAGE_MASK_BITS \                   # Page mask bits calculation
+    (TIMER_PAGE | STATS_PAGE | RANGE_PAGE | CONFIG_PAGE | PCAP_PAGE | \
+     CPU_PAGE | SEQUENCE_PAGE | RND_BITFIELD_PAGE | LOG_PAGE | LATENCY_PAGE | \
+     RAW_PAGE)
+
+# ============================================================================
+# PACKET MODES AND FLAGS
+# ============================================================================
+
+# Exclusive Modes
+#define EXCLUSIVE_MODES (SEND_SINGLE_PKTS | SEND_PCAP_PKTS | SEND_RANGE_PKTS | SEND_SEQ_PKTS)
+
+# Exclusive Packet Modes
+#define EXCLUSIVE_PKT_MODES \
+    (EXCLUSIVE_MODES | SEND_LATENCY_PKTS | SEND_RATE_PACKETS)
+
+# ============================================================================
+# PERFORMANCE AND OPTIMIZATION CONSTANTS
+# ============================================================================
+
+# Prefetch Configuration
+#define PREFETCH_OFFSET 3                  # Packets ahead to prefetch
+
+# Memory Management
+#define MEMPOOL_CACHE_SIZE 256             # Memory pool cache size
+#define DEFAULT_PRIV_SIZE 0                # Default private size
+
+# Timing Configuration
+#define UPDATE_DISPLAY_TICK_INTERVAL 4     # Display update interval
+#define DEFAULT_JITTER_THRESHOLD 50        # Default jitter threshold (usec)
+#define DEFAULT_LATENCY_RATE 10000         # Default latency rate (micro-seconds)
+#define MAX_LATENCY_RATE 1000000           # Maximum latency rate (micro-seconds)
+
+# ============================================================================
+# NETWORK PROTOCOL CONSTANTS
+# ============================================================================
+
+# Ethernet
+#define LATENCY_PKT_SIZE RTE_ETHER_MIN_LEN # Minimum Ethernet packet size
+
+# VXLAN
+#define VXLAN_PORT_ID 4789                 # Standard VXLAN port
+
+# Latency
+#define LATENCY_DPORT 1028                 # Reserved latency destination port
+
+# PCAP
+#define PCAP_MAGIC_NUMBER 0xa1b2c3d4       # PCAP file format magic number
+#define PCAP_MAJOR_VERSION 2               # PCAP format major version
+#define PCAP_MINOR_VERSION 4               # PCAP format minor version
+
+# ============================================================================
+# BUFFER AND MEMORY SIZE CONSTANTS
+# ============================================================================
+
+# String and Array Sizes
+#define MAX_STRING 256                     # Maximum string length
+#define MAX_MATRIX_ENTRIES 128             # Maximum matrix entries
+#define USER_PATTERN_SIZE 16               # User pattern size
+#define MAX_COLOR_NAME_SIZE 64             # Maximum color name size
+#define MAX_PROMPT_STRING_SIZE 64          # Maximum prompt string size
+
+# Buffer Sizes
+#define LOG_HISTORY 64                     # Log scrollback buffer size
+#define LOG_MAX_LINE 1024                  # Maximum log line length
+#define CAPTURE_BUFF_SIZE (4 * (1024 * 1024))  # Capture buffer size (4MB)
+#define MAX_ALLOCA_SIZE 1024               # Maximum allocation size
+
+# Work Queue
+#define MAX_WORKQ_ENTRIES 16               # Maximum workqueue entries
+
+# Latency
+#define MAX_LATENCY_QUEUES 10              # Maximum latency queues
+
+# ============================================================================
+# ARITHMETIC AND CONVERSION CONSTANTS
+# ============================================================================
+
+# Size Multipliers
+#define Million (uint64_t)(1000000UL)      # 10^6
+#define Billion (uint64_t)(1000000000UL)   # 10^9
+#define MEGA (uint64_t)(1024 * 1024)       # 1024^2 (1 Megabyte)
+
+# Magic Numbers
+#define TSTAMP_MAGIC 0xf00dcafe            # Timestamp magic number for validation
+
+# ============================================================================
+# END OF PKTGEN-DPDK PARAMETERS REFERENCE
+# ============================================================================
