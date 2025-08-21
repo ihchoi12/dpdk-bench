@@ -1,18 +1,47 @@
 diff --git a/examples/l3fwd/l3fwd.h b/examples/l3fwd/l3fwd.h
-index 0cce3406ee..b9902cb7ef 100644
+index 0cce3406ee..ef65225622 100644
 --- a/examples/l3fwd/l3fwd.h
 +++ b/examples/l3fwd/l3fwd.h
-@@ -119,6 +119,9 @@ extern uint32_t max_pkt_len;
+@@ -9,6 +9,13 @@
+ #include <rte_vect.h>
+ #include <rte_acl.h>
+ 
++/* Debug logging control - MAIN CONFIGURATION */
++/* Set to 1 to enable debug logs, 0 to disable for better performance */
++#ifndef L3FWD_DEBUG_LOGS
++#define L3FWD_DEBUG_LOGS 0  /* 0 = disabled, 1 = enabled */
++#endif
++static volatile bool stats_enabled = true;
++
+ #define DO_RFC_1812_CHECKS
+ 
+ #define RTE_LOGTYPE_L3FWD RTE_LOGTYPE_USER1
+@@ -119,6 +126,24 @@ extern uint32_t max_pkt_len;
  extern uint32_t nb_pkt_per_burst;
  extern uint32_t mb_mempool_cache_size;
  
++/* Packet statistics per lcore */
++struct lcore_packet_stats {
++	uint64_t rx_packets;
++	uint64_t tx_packets;
++	uint64_t start_time;
++	/* Drop counters */
++	uint64_t dropped_invalid_ipv4;
++	uint64_t dropped_no_route;
++	uint64_t dropped_tx_failed;
++	uint64_t dropped_non_ip;
++	uint64_t dropped_unknown;
++};
++
++extern struct lcore_packet_stats lcore_stats[RTE_MAX_LCORE];
++
 +/* Function declarations */
 +void analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction);
 +
  /* Send burst of packets on an output interface */
  static inline int
  send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
-@@ -126,10 +129,16 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
+@@ -126,12 +151,33 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
  	struct rte_mbuf **m_table;
  	int ret;
  	uint16_t queueid;
@@ -21,16 +50,33 @@ index 0cce3406ee..b9902cb7ef 100644
  	queueid = qconf->tx_queue_id[port];
  	m_table = (struct rte_mbuf **)qconf->tx_mbufs[port].m_table;
  
-+	/* Analyze TX packets for debugging */
++#if L3FWD_DEBUG_LOGS
++	/* Analyze TX packets for debugging only when debug is enabled */
 +	for (int i = 0; i < n; i++) {
 +		analyze_packet(m_table[i], lcore_id, "TX");
 +	}
++#endif
 +
  	ret = rte_eth_tx_burst(port, queueid, m_table, n);
++	
++	/* Update TX statistics */
++	lcore_stats[lcore_id].tx_packets += ret;
++	
  	if (unlikely(ret < n)) {
++		/* Count failed TX packets */
++		lcore_stats[lcore_id].dropped_tx_failed += (n - ret);
++		
++		/* Log TX congestion for debugging */
++		if (L3FWD_DEBUG_LOGS && (lcore_stats[lcore_id].dropped_tx_failed % 1000 == 0)) {
++			RTE_LOG(WARNING, L3FWD, "TX congestion on port %u: tried %u, sent %d, failed %u (total failed: %" PRIu64 ")\n",
++				port, n, ret, (n - ret), lcore_stats[lcore_id].dropped_tx_failed);
++		}
++		
  		do {
+ 			rte_pktmbuf_free(m_table[ret]);
+ 		} while (++ret < n);
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..1c737f65a9 100644
+index fec0aeb79c..e6387a03cd 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -42,15 +88,10 @@ index fec0aeb79c..1c737f65a9 100644
  
  #include <rte_debug.h>
  #include <rte_ether.h>
-@@ -33,6 +35,17 @@
+@@ -33,6 +35,12 @@
  
  #include "lpm_route_parse.c"
  
-+/* Debug logging control - set to 1 to enable debug logs, 0 to disable */
-+#define L3FWD_DEBUG_LOGS 1  /* Change this to 1 for debug mode, 0 for release */
-+static volatile bool stats_enabled = true;
-+
-+
 +#if L3FWD_DEBUG_LOGS
 +#define L3FWD_DEBUG_LOG(fmt, args...) RTE_LOG(INFO, L3FWD, fmt, ##args)
 +#else
@@ -60,18 +101,12 @@ index fec0aeb79c..1c737f65a9 100644
  #define IPV4_L3FWD_LPM_MAX_RULES         1024
  #define IPV4_L3FWD_LPM_NUMBER_TBL8S (1 << 8)
  #define IPV6_L3FWD_LPM_MAX_RULES         1024
-@@ -41,6 +54,154 @@
+@@ -41,6 +49,200 @@
  static struct rte_lpm *ipv4_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  static struct rte_lpm6 *ipv6_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  
-+/* Packet statistics per lcore */
-+struct lcore_packet_stats {
-+	uint64_t rx_packets;
-+	uint64_t tx_packets;
-+	uint64_t start_time;
-+};
-+
-+static struct lcore_packet_stats lcore_stats[RTE_MAX_LCORE];
++/* Global array of packet statistics per lcore */
++struct lcore_packet_stats lcore_stats[RTE_MAX_LCORE];
 +
 +/* Analyze and log packet details */
 +void
@@ -164,6 +199,9 @@ index fec0aeb79c..1c737f65a9 100644
 +	printf("%-8s %-12s %-12s %-10s %-10s %-8s\n", 
 +		"-----", "----------", "----------", "--------", "--------", "------");
 +
++	uint64_t total_dropped_invalid_ipv4 = 0, total_dropped_no_route = 0;
++	uint64_t total_dropped_tx_failed = 0, total_dropped_non_ip = 0, total_dropped_unknown = 0;
++
 +	RTE_LCORE_FOREACH(lcore_id) {
 +		if (lcore_stats[lcore_id].start_time > 0) {
 +			uint64_t duration = current_time - lcore_stats[lcore_id].start_time;
@@ -183,6 +221,11 @@ index fec0aeb79c..1c737f65a9 100644
 +			
 +			total_rx += lcore_stats[lcore_id].rx_packets;
 +			total_tx += lcore_stats[lcore_id].tx_packets;
++			total_dropped_invalid_ipv4 += lcore_stats[lcore_id].dropped_invalid_ipv4;
++			total_dropped_no_route += lcore_stats[lcore_id].dropped_no_route;
++			total_dropped_tx_failed += lcore_stats[lcore_id].dropped_tx_failed;
++			total_dropped_non_ip += lcore_stats[lcore_id].dropped_non_ip;
++			total_dropped_unknown += lcore_stats[lcore_id].dropped_unknown;
 +		}
 +	}
 +	
@@ -195,6 +238,50 @@ index fec0aeb79c..1c737f65a9 100644
 +	printf("=====================================\n");
 +	printf("ANALYSIS: RX/TX difference = %" PRIu64 " packets (%.1f%% loss)\n", 
 +		total_rx - total_tx, total_loss_rate);
++	
++	/* Print detailed drop analysis */
++	if (total_rx - total_tx > 0) {
++		printf("DROP ANALYSIS:\n");
++		printf("  Invalid IPv4 packets: %" PRIu64 "\n", total_dropped_invalid_ipv4);
++		printf("  No route found: %" PRIu64 "\n", total_dropped_no_route);
++		printf("  TX failed (queue full): %" PRIu64 " (%.1f%% of RX)\n", 
++			total_dropped_tx_failed, total_rx > 0 ? (double)total_dropped_tx_failed * 100.0 / total_rx : 0.0);
++		printf("  Non-IP packets: %" PRIu64 "\n", total_dropped_non_ip);
++		printf("  Unknown drops: %" PRIu64 "\n", total_dropped_unknown);
++		
++		if (total_dropped_tx_failed > 0) {
++			printf("\nTX CONGESTION ANALYSIS:\n");
++			printf("  - TX queue is overloaded (receiving faster than transmitting)\n");
++			printf("  - Consider: reducing RX rate, increasing TX queue size, or checking network bottleneck\n");
++			
++			printf("\nCURRENT CONFIGURATION:\n");
++			printf("  RX Descriptors: %u\n", nb_rxd);
++			printf("  TX Descriptors: %u\n", nb_txd);
++			printf("  Max PKT Burst: %u\n", MAX_PKT_BURST);
++			printf("  Default PKT Burst: %u\n", DEFAULT_PKT_BURST);
++			printf("  TX Drain Interval: %u us\n", BURST_TX_DRAIN_US);
++			printf("  Enabled Port Mask: 0x%x\n", enabled_port_mask);
++			
++			/* Get port info for first enabled port */
++			uint16_t portid;
++			for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++) {
++				if ((enabled_port_mask & (1 << portid)) != 0) {
++					struct rte_eth_dev_info dev_info;
++					struct rte_eth_link link;
++					if (rte_eth_dev_info_get(portid, &dev_info) == 0) {
++						printf("  Port %u Driver: %s\n", portid, dev_info.driver_name);
++						printf("  Port %u Max TX Queues: %u\n", portid, dev_info.max_tx_queues);
++						printf("  Port %u Max RX Queues: %u\n", portid, dev_info.max_rx_queues);
++					}
++					if (rte_eth_link_get_nowait(portid, &link) == 0) {
++						printf("  Port %u Link Speed: %u Mbps, %s\n", portid, link.link_speed,
++							link.link_status ? "UP" : "DOWN");
++					}
++					break; /* Only show first enabled port */
++				}
++			}
++		}
++	}
 +	printf("=====================================\n");
 +}
 +
@@ -215,7 +302,7 @@ index fec0aeb79c..1c737f65a9 100644
  /* Performing LPM-based lookups. 8< */
  static inline uint16_t
  lpm_get_ipv4_dst_port(const struct rte_ipv4_hdr *ipv4_hdr,
-@@ -156,6 +317,17 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -156,6 +358,17 @@ lpm_main_loop(__rte_unused void *dummy)
  	lcore_id = rte_lcore_id();
  	qconf = &lcore_conf[lcore_id];
  
@@ -233,7 +320,7 @@ index fec0aeb79c..1c737f65a9 100644
  	const uint16_t n_rx_q = qconf->n_rx_queue;
  	const uint16_t n_tx_p = qconf->n_tx_port;
  	if (n_rx_q == 0) {
-@@ -163,7 +335,21 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -163,7 +376,21 @@ lpm_main_loop(__rte_unused void *dummy)
  		return 0;
  	}
  
@@ -256,22 +343,17 @@ index fec0aeb79c..1c737f65a9 100644
  
  	for (i = 0; i < n_rx_q; i++) {
  
-@@ -189,6 +375,14 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -189,6 +416,9 @@ lpm_main_loop(__rte_unused void *dummy)
  				portid = qconf->tx_port_id[i];
  				if (qconf->tx_mbufs[portid].len == 0)
  					continue;
-+				
-+				/* Update TX packet statistics */
-+				if (stats_enabled) {
-+					lcore_stats[lcore_id].tx_packets += qconf->tx_mbufs[portid].len;
-+				}
 +				
 +				L3FWD_DEBUG_LOG("lcore %u sending %u packets to port %u queue %u\n", 
 +					lcore_id, qconf->tx_mbufs[portid].len, portid, qconf->tx_queue_id[portid]);
  				send_burst(qconf,
  					qconf->tx_mbufs[portid].len,
  					portid);
-@@ -208,7 +402,21 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -208,7 +438,22 @@ lpm_main_loop(__rte_unused void *dummy)
  				nb_pkt_per_burst);
  			if (nb_rx == 0)
  				continue;
@@ -286,7 +368,8 @@ index fec0aeb79c..1c737f65a9 100644
 +			
 +			/* Analyze first few packets for debugging */
 +			if (L3FWD_DEBUG_LOGS) {
-+				// int analyze_count = nb_rx > 3 ? 3 : nb_rx;  /* Analyze first 3 packets */
++				/* Analyze only first 3 packets to reduce overhead */
++				// int analyze_count = nb_rx > 3 ? 3 : nb_rx;
 +				for (int j = 0; j < nb_rx; j++) {
 +					analyze_packet(pkts_burst[j], lcore_id, "RX");
 +				}
@@ -294,7 +377,7 @@ index fec0aeb79c..1c737f65a9 100644
  #if defined RTE_ARCH_X86 || defined __ARM_NEON \
  			 || defined RTE_ARCH_PPC_64
  			l3fwd_lpm_send_packets(nb_rx, pkts_burst,
-@@ -222,6 +430,11 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -222,6 +467,11 @@ lpm_main_loop(__rte_unused void *dummy)
  		cur_tsc = rte_rdtsc();
  	}
  
@@ -306,6 +389,62 @@ index fec0aeb79c..1c737f65a9 100644
  	return 0;
  }
  
+diff --git a/examples/l3fwd/l3fwd_lpm.h b/examples/l3fwd/l3fwd_lpm.h
+index 4ee61e8d88..b2f0682abb 100644
+--- a/examples/l3fwd/l3fwd_lpm.h
++++ b/examples/l3fwd/l3fwd_lpm.h
+@@ -12,6 +12,7 @@ l3fwd_lpm_simple_forward(struct rte_mbuf *m, uint16_t portid,
+ 	struct rte_ether_hdr *eth_hdr;
+ 	struct rte_ipv4_hdr *ipv4_hdr;
+ 	uint16_t dst_port;
++	unsigned int lcore_id = rte_lcore_id();
+ 
+ 	eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+ 
+@@ -23,6 +24,7 @@ l3fwd_lpm_simple_forward(struct rte_mbuf *m, uint16_t portid,
+ #ifdef DO_RFC_1812_CHECKS
+ 		/* Check to make sure the packet is valid (RFC1812) */
+ 		if (is_valid_ipv4_pkt(ipv4_hdr, m->pkt_len, m->ol_flags) < 0) {
++			lcore_stats[lcore_id].dropped_invalid_ipv4++;
+ 			rte_pktmbuf_free(m);
+ 			return;
+ 		}
+@@ -31,8 +33,11 @@ l3fwd_lpm_simple_forward(struct rte_mbuf *m, uint16_t portid,
+ 						qconf->ipv4_lookup_struct);
+ 
+ 		if (dst_port >= RTE_MAX_ETHPORTS ||
+-			(enabled_port_mask & 1 << dst_port) == 0)
+-			dst_port = portid;
++			(enabled_port_mask & 1 << dst_port) == 0) {
++			lcore_stats[lcore_id].dropped_no_route++;
++			rte_pktmbuf_free(m);
++			return;
++		}
+ 
+ #ifdef DO_RFC_1812_CHECKS
+ 		/* Update time to live and header checksum */
+@@ -58,8 +63,11 @@ l3fwd_lpm_simple_forward(struct rte_mbuf *m, uint16_t portid,
+ 					qconf->ipv6_lookup_struct);
+ 
+ 		if (dst_port >= RTE_MAX_ETHPORTS ||
+-			(enabled_port_mask & 1 << dst_port) == 0)
+-			dst_port = portid;
++			(enabled_port_mask & 1 << dst_port) == 0) {
++			lcore_stats[lcore_id].dropped_no_route++;
++			rte_pktmbuf_free(m);
++			return;
++		}
+ 
+ 		/* dst addr */
+ 		*(uint64_t *)&eth_hdr->dst_addr = dest_eth_addr[dst_port];
+@@ -71,6 +79,7 @@ l3fwd_lpm_simple_forward(struct rte_mbuf *m, uint16_t portid,
+ 		send_single_packet(qconf, m, dst_port);
+ 	} else {
+ 		/* Free the mbuf that contains non-IPV4/IPV6 packet */
++		lcore_stats[lcore_id].dropped_non_ip++;
+ 		rte_pktmbuf_free(m);
+ 	}
+ }
 diff --git a/examples/l3fwd/main.c b/examples/l3fwd/main.c
 index ae3b4f6439..3ef2aa5151 100644
 --- a/examples/l3fwd/main.c
