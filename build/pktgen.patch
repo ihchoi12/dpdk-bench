@@ -38,7 +38,7 @@ index eb0682f..67b0cbe 100644
  deps += [cc.find_library('dl', required: false)]
  deps += [cc.find_library('m', required: false)]
 diff --git a/app/pktgen-cmds.c b/app/pktgen-cmds.c
-index 086ac5a..e2c576b 100644
+index 086ac5a..95eaa6d 100644
 --- a/app/pktgen-cmds.c
 +++ b/app/pktgen-cmds.c
 @@ -3895,6 +3895,9 @@ pktgen_set_vxlan_seq(port_info_t *pinfo, uint32_t seqnum, uint32_t flag, uint32_
@@ -47,7 +47,7 @@ index 086ac5a..e2c576b 100644
  {
 +    /* Print packet statistics summary before quitting */
 +    print_pktgen_stats_summary();
-+    
++
      cli_quit();
  }
  
@@ -139,7 +139,7 @@ index d2b54a6..ef6f7d8 100644
      rte_atomic64_t port_flags;       /**< Special send flags for ARP and other */
      rte_atomic64_t transmit_count;   /**< Packets to transmit loaded into current_tx_count */
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..516ba7a 100644
+index 627034d..0121f42 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -152,7 +152,7 @@ index 627034d..516ba7a 100644
  
  #include "pktgen.h"
  #include "pktgen-gre.h"
-@@ -38,11 +41,112 @@ TXlib */
+@@ -38,11 +41,116 @@ TXlib */
  #include <pthread.h>
  #include <sched.h>
  
@@ -180,6 +180,10 @@ index 627034d..516ba7a 100644
 +
 +/* Function to print packet statistics summary */
 +void print_pktgen_stats_summary(void);
++
++/* Function to print NIC hardware statistics */
++void print_nic_hw_stats(uint16_t port_id);
++void print_all_nic_hw_stats(void);
 +
  /* Allocated the pktgen structure for global use */
  pktgen_t pktgen;
@@ -265,7 +269,7 @@ index 627034d..516ba7a 100644
  double
  next_poisson_time(double rateParameter)
  {
-@@ -280,11 +384,23 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
+@@ -280,11 +388,23 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
  {
      if (nb_pkts) {
          uint16_t sent, to_send = nb_pkts;
@@ -289,7 +293,7 @@ index 627034d..516ba7a 100644
          if (pktgen_tst_port_flags(pinfo, SEND_RANDOM_PKTS))
              pktgen_rnd_bits_apply(pinfo, pkts, to_send, NULL);
  
-@@ -973,7 +1089,7 @@ void
+@@ -973,7 +1093,7 @@ void
  pktgen_send_pkts(port_info_t *pinfo, uint16_t qid, struct rte_mempool *mp)
  {
      uint64_t txCnt;
@@ -298,7 +302,7 @@ index 627034d..516ba7a 100644
  
      if (!pktgen_tst_port_flags(pinfo, SEND_FOREVER)) {
          txCnt = pkt_atomic64_tx_count(&pinfo->current_tx_count, pinfo->tx_burst);
-@@ -1027,7 +1143,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
+@@ -1027,7 +1147,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
  {
      if (pktgen_tst_port_flags(pinfo, SENDING_PACKETS)) {
          struct rte_mempool *mp = l2p_get_tx_mp(pinfo->pid);
@@ -307,7 +311,7 @@ index 627034d..516ba7a 100644
  
          /* Use mempool routines instead of pktmbuf to make sure the mbufs is not altered */
          if (rte_mempool_get_bulk(mp, (void **)pkts, pinfo->tx_burst) == 0) {
-@@ -1057,7 +1173,7 @@ static inline void
+@@ -1057,7 +1177,7 @@ static inline void
  pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  {
      uint16_t nb_rx, nb_pkts = pinfo->rx_burst, pid;
@@ -316,7 +320,7 @@ index 627034d..516ba7a 100644
  
      if (unlikely(pktgen_tst_port_flags(pinfo, STOP_RECEIVING_PACKETS)))
          return;
-@@ -1066,12 +1182,25 @@ pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
+@@ -1066,12 +1186,25 @@ pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  
      /* Read packets from RX queues and free the mbufs */
      if (likely((nb_rx = rte_eth_rx_burst(pid, qid, pkts, nb_pkts)) > 0)) {
@@ -342,7 +346,7 @@ index 627034d..516ba7a 100644
          pktgen_tstamp_check(pinfo, pkts, nb_rx);
  
          /* classify the packets for the counters */
-@@ -1122,12 +1251,52 @@ pktgen_tx_workq_setup(uint16_t pid)
+@@ -1122,12 +1255,52 @@ pktgen_tx_workq_setup(uint16_t pid)
  }
  
  static int
@@ -365,8 +369,7 @@ index 627034d..516ba7a 100644
 +            __atomic_store_n(&workq_setup_done[pid][wqt_idx], 0, __ATOMIC_RELEASE);
 +            return -1;
 +        }
- 
--    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++
 +        int ret = (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
 +        if (ret != 0) {
 +            /* Reset on failure */
@@ -391,7 +394,8 @@ index 627034d..516ba7a 100644
 +
 +    return 0;
 +}
-+
+ 
+-    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
 +static int
 +pktgen_workq_setup(workq_type_t wqt, uint16_t pid, void *arg)
 +{
@@ -399,7 +403,7 @@ index 627034d..516ba7a 100644
  }
  
  /**
-@@ -1280,7 +1449,7 @@ pktgen_main_rx_loop(void)
+@@ -1280,7 +1453,7 @@ pktgen_main_rx_loop(void)
  
      pinfo  = l2p_get_pinfo_by_lcore(lid);
      rx_qid = l2p_get_rxqid(lid);
@@ -408,7 +412,7 @@ index 627034d..516ba7a 100644
      printf("RX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, rx_qid,
             l2p_get_rx_mp(pinfo->pid)->name, l2p_get_rx_mp(pinfo->pid));
  
-@@ -1479,3 +1648,98 @@ pktgen_timer_setup(void)
+@@ -1479,3 +1652,237 @@ pktgen_timer_setup(void)
      CPU_SET(rte_get_main_lcore(), cpuset);
      pthread_setaffinity_np(tid, sizeof(cpuset), cpuset);
  }
@@ -506,6 +510,145 @@ index 627034d..516ba7a 100644
 +    printf("ANALYSIS: RX/TX difference = %+" PRId64 " packets (%.1f%% %s)\n", 
 +        difference, rate, rate_type);
 +    printf("=====================================\n");
++    
++    /* Print NIC hardware statistics */
++    print_all_nic_hw_stats();
++}
++
++/**
++ * print_nic_hw_stats - Print NIC hardware statistics for a specific port
++ *
++ * DESCRIPTION
++ * Print detailed NIC hardware statistics including drops, errors, and buffer states
++ *
++ * RETURNS: N/A
++ */
++void
++print_nic_hw_stats(uint16_t port_id)
++{
++    struct rte_eth_stats eth_stats;
++    struct rte_eth_xstat *xstats = NULL;
++    struct rte_eth_xstat_name *xstat_names = NULL;
++    int cnt_xstats, ret, i;
++
++    printf("\n=== NIC Hardware Statistics (Port %u) ===\n", port_id);
++    
++    /* Get basic ethernet statistics */
++    ret = rte_eth_stats_get(port_id, &eth_stats);
++    if (ret == 0) {
++        printf("Hardware RX Packets:     %"PRIu64"\n", eth_stats.ipackets);
++        printf("Hardware TX Packets:     %"PRIu64"\n", eth_stats.opackets);
++        printf("Hardware RX Bytes:       %"PRIu64"\n", eth_stats.ibytes);
++        printf("Hardware TX Bytes:       %"PRIu64"\n", eth_stats.obytes);
++        printf("Hardware RX Errors:      %"PRIu64"\n", eth_stats.ierrors);
++        printf("Hardware TX Errors:      %"PRIu64"\n", eth_stats.oerrors);
++        printf("Hardware RX Missed:      %"PRIu64" (packets dropped by HW)\n", eth_stats.imissed);
++        printf("Hardware RX No MBuf:     %"PRIu64" (mbuf allocation failed)\n", eth_stats.rx_nombuf);
++        
++        /* Print per-queue statistics if available */
++        bool has_queue_stats = false;
++        for (i = 0; i < RTE_ETHDEV_QUEUE_STAT_CNTRS && i < 8; i++) {
++            if (eth_stats.q_ipackets[i] > 0 || eth_stats.q_opackets[i] > 0 || eth_stats.q_errors[i] > 0) {
++                if (!has_queue_stats) {
++                    printf("\nPer-Queue Statistics:\n");
++                    has_queue_stats = true;
++                }
++                printf("  Queue %d: RX=%"PRIu64", TX=%"PRIu64", Errors=%"PRIu64"\n",
++                    i, eth_stats.q_ipackets[i], eth_stats.q_opackets[i], eth_stats.q_errors[i]);
++            }
++        }
++        
++        /* Calculate packet loss if any */
++        if (eth_stats.ipackets > 0) {
++            uint64_t total_drops = eth_stats.imissed + eth_stats.rx_nombuf + eth_stats.ierrors;
++            if (total_drops > 0) {
++                double drop_rate = (double)total_drops * 100.0 / (eth_stats.ipackets + total_drops);
++                printf("\nPacket Loss Analysis:\n");
++                printf("  Total Drops:           %"PRIu64"\n", total_drops);
++                printf("  Drop Rate:             %.2f%%\n", drop_rate);
++                printf("  Primary Drop Cause:    ");
++                if (eth_stats.imissed > eth_stats.rx_nombuf && eth_stats.imissed > eth_stats.ierrors) {
++                    printf("HW Ring Full (imissed)\n");
++                } else if (eth_stats.rx_nombuf > eth_stats.ierrors) {
++                    printf("No MBuf Available\n");
++                } else if (eth_stats.ierrors > 0) {
++                    printf("HW Errors\n");
++                } else {
++                    printf("Unknown\n");
++                }
++            }
++        }
++    } else {
++        printf("Failed to get basic statistics for port %u\n", port_id);
++    }
++    
++    /* Get extended statistics for detailed drop analysis */
++    cnt_xstats = rte_eth_xstats_get_names(port_id, NULL, 0);
++    if (cnt_xstats > 0) {
++        xstat_names = malloc(sizeof(struct rte_eth_xstat_name) * cnt_xstats);
++        xstats = malloc(sizeof(struct rte_eth_xstat) * cnt_xstats);
++        
++        if (xstat_names && xstats) {
++            ret = rte_eth_xstats_get_names(port_id, xstat_names, cnt_xstats);
++            if (ret == cnt_xstats) {
++                ret = rte_eth_xstats_get(port_id, xstats, cnt_xstats);
++                if (ret == cnt_xstats) {
++                    printf("\nDetailed Drop/Error Statistics:\n");
++                    bool found_drops = false;
++                    for (i = 0; i < cnt_xstats; i++) {
++                        const char *name = xstat_names[i].name;
++                        uint64_t value = xstats[i].value;
++                        
++                        /* Filter for drop/error related statistics */
++                        if (value > 0 && (strstr(name, "drop") || strstr(name, "discard") || 
++                                         strstr(name, "error") || strstr(name, "miss") ||
++                                         strstr(name, "full") || strstr(name, "overflow") ||
++                                         strstr(name, "underrun") || strstr(name, "crc") ||
++                                         strstr(name, "fragment") || strstr(name, "jabber"))) {
++                            printf("  %-30s: %"PRIu64"\n", name, value);
++                            found_drops = true;
++                        }
++                    }
++                    if (!found_drops) {
++                        printf("  No drop/error statistics found\n");
++                    }
++                }
++            }
++        }
++        
++        free(xstat_names);
++        free(xstats);
++    }
++    printf("==========================================\n");
++}
++
++/**
++ * print_all_nic_hw_stats - Print NIC hardware statistics for all active ports
++ *
++ * DESCRIPTION
++ * Print NIC hardware statistics for all ports currently in use by pktgen
++ *
++ * RETURNS: N/A
++ */
++void
++print_all_nic_hw_stats(void)
++{
++    uint16_t port_id;
++    port_info_t *pinfo;
++    
++    printf("\n");
++    printf("########################################\n");
++    printf("# NIC HARDWARE STATISTICS ANALYSIS\n");
++    printf("########################################\n");
++    
++    RTE_ETH_FOREACH_DEV(port_id) {
++        pinfo = l2p_get_port_pinfo(port_id);
++        if (pinfo && pinfo->seq_pkt) {
++            print_nic_hw_stats(port_id);
++        }
++    }
++    
++    printf("########################################\n");
 +}
 diff --git a/app/pktgen.h b/app/pktgen.h
 index 5349a31..9315768 100644
