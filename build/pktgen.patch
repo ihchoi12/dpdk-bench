@@ -142,7 +142,7 @@ index d2b54a6..ef6f7d8 100644
      rte_atomic64_t port_flags;       /**< Special send flags for ARP and other */
      rte_atomic64_t transmit_count;   /**< Packets to transmit loaded into current_tx_count */
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..ab6a845 100644
+index 627034d..fa21cbf 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -155,7 +155,7 @@ index 627034d..ab6a845 100644
  
  #include "pktgen.h"
  #include "pktgen-gre.h"
-@@ -38,11 +41,109 @@ TXlib */
+@@ -38,11 +41,131 @@ TXlib */
  #include <pthread.h>
  #include <sched.h>
  
@@ -181,12 +181,34 @@ index 627034d..ab6a845 100644
 +/* Global array to store per-lcore statistics */
 +static lcore_stats_t lcore_stats[RTE_MAX_LCORE];
 +
++/* RX Drop Analysis Structure */
++typedef struct {
++    uint64_t total_rx_attempts;     /* Total rte_eth_rx_burst calls */
++    uint64_t zero_rx_count;         /* Times rx_burst returned 0 */
++    uint64_t small_rx_count;        /* Times rx_burst returned < expected */
++    uint64_t full_rx_count;         /* Times rx_burst returned max burst */
++    uint64_t hw_drops_last;         /* Last HW drop count */
++    uint64_t hw_drops_delta;        /* HW drop increase since last check */
++    uint64_t mbuf_fail_count;       /* mbuf allocation failures */
++    uint64_t ring_full_count;       /* Ring full incidents */
++    uint64_t last_check_time;       /* Last analysis timestamp */
++    uint64_t analysis_interval;     /* Analysis interval in cycles */
++} rx_drop_analysis_t;
++
++/* Per-core RX drop analysis */
++static rx_drop_analysis_t rx_analysis[RTE_MAX_LCORE];
++
 +/* Function to print packet statistics summary */
 +void print_pktgen_stats_summary(void);
 +
 +/* Function to print NIC hardware statistics */
 +void print_nic_hw_stats(uint16_t port_id);
 +void print_all_nic_hw_stats(void);
++
++/* RX Drop Analysis Functions */
++void init_rx_drop_analysis(unsigned int lcore_id);
++void analyze_rx_performance(unsigned int lcore_id, uint16_t port_id, uint16_t nb_rx, uint16_t expected_rx);
++void print_rx_drop_analysis(void);
 +
  /* Allocated the pktgen structure for global use */
  pktgen_t pktgen;
@@ -265,7 +287,7 @@ index 627034d..ab6a845 100644
  double
  next_poisson_time(double rateParameter)
  {
-@@ -280,11 +381,23 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
+@@ -280,11 +403,23 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
  {
      if (nb_pkts) {
          uint16_t sent, to_send = nb_pkts;
@@ -290,7 +312,7 @@ index 627034d..ab6a845 100644
          if (pktgen_tst_port_flags(pinfo, SEND_RANDOM_PKTS))
              pktgen_rnd_bits_apply(pinfo, pkts, to_send, NULL);
  
-@@ -973,7 +1086,7 @@ void
+@@ -973,7 +1108,7 @@ void
  pktgen_send_pkts(port_info_t *pinfo, uint16_t qid, struct rte_mempool *mp)
  {
      uint64_t txCnt;
@@ -299,7 +321,7 @@ index 627034d..ab6a845 100644
  
      if (!pktgen_tst_port_flags(pinfo, SEND_FOREVER)) {
          txCnt = pkt_atomic64_tx_count(&pinfo->current_tx_count, pinfo->tx_burst);
-@@ -1027,7 +1140,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
+@@ -1027,7 +1162,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
  {
      if (pktgen_tst_port_flags(pinfo, SENDING_PACKETS)) {
          struct rte_mempool *mp = l2p_get_tx_mp(pinfo->pid);
@@ -308,7 +330,7 @@ index 627034d..ab6a845 100644
  
          /* Use mempool routines instead of pktmbuf to make sure the mbufs is not altered */
          if (rte_mempool_get_bulk(mp, (void **)pkts, pinfo->tx_burst) == 0) {
-@@ -1057,7 +1170,7 @@ static inline void
+@@ -1057,25 +1192,43 @@ static inline void
  pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  {
      uint16_t nb_rx, nb_pkts = pinfo->rx_burst, pid;
@@ -317,11 +339,17 @@ index 627034d..ab6a845 100644
  
      if (unlikely(pktgen_tst_port_flags(pinfo, STOP_RECEIVING_PACKETS)))
          return;
-@@ -1066,12 +1179,25 @@ pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
+ 
+     pid = pinfo->pid;
++    unsigned int lcore_id = rte_lcore_id();
++
++    /* Initialize RX analysis if not done */
++    if (rx_analysis[lcore_id].analysis_interval == 0) {
++        init_rx_drop_analysis(lcore_id);
++    }
  
      /* Read packets from RX queues and free the mbufs */
      if (likely((nb_rx = rte_eth_rx_burst(pid, qid, pkts, nb_pkts)) > 0)) {
-+        // printf("Core %d received %u packets\n", rte_lcore_id(), nb_rx);
          struct rte_eth_stats *qstats = &pinfo->queue_stats;
 +        unsigned int lcore_id = rte_lcore_id();
 +
@@ -343,8 +371,14 @@ index 627034d..ab6a845 100644
 +#endif
          pktgen_tstamp_check(pinfo, pkts, nb_rx);
  
-         /* classify the packets for the counters */
-@@ -1122,12 +1248,52 @@ pktgen_tx_workq_setup(uint16_t pid)
+-        /* classify the packets for the counters */
+-        pktgen_packet_classify_bulk(pkts, nb_rx, pid, qid);
++        /* Skip packet classification in high-performance mode */
++        // pktgen_packet_classify_bulk(pkts, nb_rx, pid, qid);
+ 
+         if (unlikely(pinfo->dump_count > 0))
+             pktgen_packet_dump_bulk(pkts, nb_rx, pid);
+@@ -1122,12 +1275,52 @@ pktgen_tx_workq_setup(uint16_t pid)
  }
  
  static int
@@ -381,7 +415,8 @@ index 627034d..ab6a845 100644
 +        /* Another core is setting it up - wait for completion */
 +        printf("Core %d: Waiting for %s workqueue setup for port %d\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
-+
+ 
+-    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
 +        while (__atomic_load_n(&workq_setup_done[pid][wqt_idx], __ATOMIC_ACQUIRE) != 1) {
 +            rte_pause();
 +        }
@@ -392,8 +427,7 @@ index 627034d..ab6a845 100644
 +
 +    return 0;
 +}
- 
--    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++
 +static int
 +pktgen_workq_setup(workq_type_t wqt, uint16_t pid, void *arg)
 +{
@@ -401,7 +435,7 @@ index 627034d..ab6a845 100644
  }
  
  /**
-@@ -1280,7 +1446,7 @@ pktgen_main_rx_loop(void)
+@@ -1280,7 +1473,7 @@ pktgen_main_rx_loop(void)
  
      pinfo  = l2p_get_pinfo_by_lcore(lid);
      rx_qid = l2p_get_rxqid(lid);
@@ -410,7 +444,7 @@ index 627034d..ab6a845 100644
      printf("RX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, rx_qid,
             l2p_get_rx_mp(pinfo->pid)->name, l2p_get_rx_mp(pinfo->pid));
  
-@@ -1479,3 +1645,237 @@ pktgen_timer_setup(void)
+@@ -1479,3 +1672,343 @@ pktgen_timer_setup(void)
      CPU_SET(rte_get_main_lcore(), cpuset);
      pthread_setaffinity_np(tid, sizeof(cpuset), cpuset);
  }
@@ -511,6 +545,9 @@ index 627034d..ab6a845 100644
 +    
 +    /* Print NIC hardware statistics */
 +    print_all_nic_hw_stats();
++    
++    /* Print RX drop analysis */
++    print_rx_drop_analysis();
 +}
 +
 +/**
@@ -643,6 +680,109 @@ index 627034d..ab6a845 100644
 +        pinfo = l2p_get_port_pinfo(port_id);
 +        if (pinfo && pinfo->seq_pkt) {
 +            print_nic_hw_stats(port_id);
++        }
++    }
++    
++    printf("########################################\n");
++}
++
++/**
++ * init_rx_drop_analysis - Initialize RX drop analysis for a core
++ */
++void
++init_rx_drop_analysis(unsigned int lcore_id)
++{
++    rx_drop_analysis_t *analysis = &rx_analysis[lcore_id];
++    
++    memset(analysis, 0, sizeof(rx_drop_analysis_t));
++    analysis->analysis_interval = rte_get_tsc_hz(); /* 1 second interval */
++    analysis->last_check_time = rte_rdtsc();
++    
++    printf("RX Drop Analysis initialized for lcore %u\n", lcore_id);
++}
++
++/**
++ * analyze_rx_performance - Analyze RX performance and detect issues
++ */
++void
++analyze_rx_performance(unsigned int lcore_id, uint16_t port_id, uint16_t nb_rx, uint16_t expected_rx)
++{
++    rx_drop_analysis_t *analysis = &rx_analysis[lcore_id];
++    uint64_t current_time = rte_rdtsc();
++    
++    /* Update counters */
++    analysis->total_rx_attempts++;
++    
++    if (nb_rx == 0) {
++        analysis->zero_rx_count++;
++        /* Log frequent zero RX events */
++        if (analysis->zero_rx_count % 10000 == 0) {
++            printf("WARNING: Lcore %u - %lu consecutive zero RX events\n", 
++                   lcore_id, analysis->zero_rx_count);
++        }
++    } else if (nb_rx < expected_rx / 2) {
++        analysis->small_rx_count++;
++    } else if (nb_rx == expected_rx) {
++        analysis->full_rx_count++;
++    }
++    
++    /* Periodic detailed analysis */
++    if (current_time - analysis->last_check_time > analysis->analysis_interval) {
++        struct rte_eth_stats eth_stats;
++        
++        if (rte_eth_stats_get(port_id, &eth_stats) == 0) {
++            uint64_t hw_drops_current = eth_stats.imissed + eth_stats.rx_nombuf + eth_stats.ierrors;
++            analysis->hw_drops_delta = hw_drops_current - analysis->hw_drops_last;
++            analysis->hw_drops_last = hw_drops_current;
++            
++            /* Log significant drop events */
++            if (analysis->hw_drops_delta > 1000) {
++                printf("CRITICAL: Lcore %u Port %u - %lu HW drops in last second!\n",
++                       lcore_id, port_id, analysis->hw_drops_delta);
++                printf("  Zero RX: %lu, Small RX: %lu, Full RX: %lu\n",
++                       analysis->zero_rx_count, analysis->small_rx_count, analysis->full_rx_count);
++                printf("  RX Missed: %lu, No MBuf: %lu, Errors: %lu\n",
++                       eth_stats.imissed, eth_stats.rx_nombuf, eth_stats.ierrors);
++            }
++        }
++        
++        analysis->last_check_time = current_time;
++        /* Reset counters for next interval */
++        analysis->zero_rx_count = 0;
++        analysis->small_rx_count = 0;
++        analysis->full_rx_count = 0;
++    }
++}
++
++/**
++ * print_rx_drop_analysis - Print comprehensive RX drop analysis
++ */
++void
++print_rx_drop_analysis(void)
++{
++    unsigned int lcore_id;
++    
++    printf("\n");
++    printf("########################################\n");
++    printf("# RX DROP ANALYSIS REPORT\n");
++    printf("########################################\n");
++    
++    printf("%-8s %-12s %-12s %-12s %-12s %-12s\n",
++           "Lcore", "RX Attempts", "Zero RX", "Small RX", "Full RX", "HW Drops");
++    printf("%-8s %-12s %-12s %-12s %-12s %-12s\n",
++           "-----", "-----------", "--------", "---------", "--------", "--------");
++    
++    RTE_LCORE_FOREACH(lcore_id) {
++        rx_drop_analysis_t *analysis = &rx_analysis[lcore_id];
++        
++        if (analysis->total_rx_attempts > 0) {
++            printf("%-8u %-12lu %-12lu %-12lu %-12lu %-12lu\n",
++                   lcore_id,
++                   analysis->total_rx_attempts,
++                   analysis->zero_rx_count,
++                   analysis->small_rx_count,
++                   analysis->full_rx_count,
++                   analysis->hw_drops_delta);
 +        }
 +    }
 +    
