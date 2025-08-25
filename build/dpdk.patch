@@ -76,7 +76,7 @@ index 0cce3406ee..af807f105a 100644
  			rte_pktmbuf_free(m_table[ret]);
  		} while (++ret < n);
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..c6e507c63d 100644
+index fec0aeb79c..851e8a857c 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -324,28 +324,41 @@ index fec0aeb79c..c6e507c63d 100644
  	const uint16_t n_rx_q = qconf->n_rx_queue;
  	const uint16_t n_tx_p = qconf->n_tx_port;
  	if (n_rx_q == 0) {
-@@ -163,7 +380,21 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -163,17 +380,31 @@ lpm_main_loop(__rte_unused void *dummy)
  		return 0;
  	}
  
 -	RTE_LOG(INFO, L3FWD, "entering main loop on lcore %u\n", lcore_id);
+-
 +	RTE_LOG(INFO, L3FWD, "[lpm] entering main loop on lcore %u\n", lcore_id);
-+	for (i = 0; i < n_rx_q; i++) {
-+		portid = qconf->rx_queue_list[i].port_id;
-+		queueid = qconf->rx_queue_list[i].queue_id;
-+		RTE_LOG(INFO, L3FWD,
+ 	for (i = 0; i < n_rx_q; i++) {
+-
+ 		portid = qconf->rx_queue_list[i].port_id;
+ 		queueid = qconf->rx_queue_list[i].queue_id;
+ 		RTE_LOG(INFO, L3FWD,
+-			" -- lcoreid=%u portid=%u rxqueueid=%" PRIu16 "\n",
 +			" [RX] lcoreid=%u, port=%u rxq=%hhu\n",
-+			lcore_id, portid, queueid);
-+	}
-+
+ 			lcore_id, portid, queueid);
+ 	}
+ 
 +	for (i = 0; i < n_tx_p; i++) {
 +		portid = qconf->tx_port_id[i];
 +		RTE_LOG(INFO, L3FWD,
 +			" [TX] lcoreid=%u, port=%u, txq=%hhu\n",
 +			lcore_id, portid, qconf->tx_queue_id[portid]);
 +	}
- 
- 	for (i = 0; i < n_rx_q; i++) {
++
++	for (i = 0; i < n_rx_q; i++) {
++		portid = qconf->rx_queue_list[i].port_id;
++		queueid = qconf->rx_queue_list[i].queue_id;
++		uint16_t tx_queueid = qconf->tx_queue_id[portid];
++		RTE_LOG(INFO, L3FWD,
++			" -- lcoreid=%u portid=%u rxqueueid=%" PRIu16 " txqueueid=%" PRIu16 "\n",
++			lcore_id, portid, queueid, tx_queueid);
++	}
++
+ 	cur_tsc = rte_rdtsc();
+ 	prev_tsc = cur_tsc;
  
 @@ -189,6 +420,9 @@ lpm_main_loop(__rte_unused void *dummy)
  				portid = qconf->tx_port_id[i];
@@ -448,7 +461,7 @@ index 4ee61e8d88..b2f0682abb 100644
  	}
  }
 diff --git a/examples/l3fwd/main.c b/examples/l3fwd/main.c
-index ae3b4f6439..3ef2aa5151 100644
+index ae3b4f6439..51771c40bb 100644
 --- a/examples/l3fwd/main.c
 +++ b/examples/l3fwd/main.c
 @@ -131,7 +131,8 @@ static struct rte_eth_conf port_conf = {
@@ -482,7 +495,25 @@ index ae3b4f6439..3ef2aa5151 100644
  				socketid = 0;
  
 -			printf("txq=%u,%d,%d ", lcore_id, queueid, socketid);
-+			printf("TXQ=%u,%d,%d ", lcore_id, queueid, socketid);
++			// printf("TXQ=%u,%d,%d ", lcore_id, queueid, socketid);
  			fflush(stdout);
  
  			txconf = &dev_info.default_txconf;
+@@ -1474,7 +1476,7 @@ l3fwd_poll_resource_setup(void)
+ 		if (rte_lcore_is_enabled(lcore_id) == 0)
+ 			continue;
+ 		qconf = &lcore_conf[lcore_id];
+-		printf("\nInitializing rx queues on lcore %u ... ", lcore_id );
++		// printf("\nInitializing rx queues on lcore %u ... ", lcore_id );
+ 		fflush(stdout);
+ 		/* init RX queues */
+ 		for(queue = 0; queue < qconf->n_rx_queue; ++queue) {
+@@ -1490,7 +1492,7 @@ l3fwd_poll_resource_setup(void)
+ 			else
+ 				socketid = 0;
+ 
+-			printf("rxq=%d,%d,%d ", portid, queueid, socketid);
++			// printf("rxq=%d,%d,%d ", portid, queueid, socketid);
+ 			fflush(stdout);
+ 
+ 			ret = rte_eth_dev_info_get(portid, &dev_info);
