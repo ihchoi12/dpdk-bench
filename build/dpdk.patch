@@ -1,5 +1,5 @@
 diff --git a/examples/l3fwd/l3fwd.h b/examples/l3fwd/l3fwd.h
-index 0cce3406ee..af807f105a 100644
+index 0cce3406ee..cb6332eab6 100644
 --- a/examples/l3fwd/l3fwd.h
 +++ b/examples/l3fwd/l3fwd.h
 @@ -9,6 +9,13 @@
@@ -36,7 +36,7 @@ index 0cce3406ee..af807f105a 100644
 +extern struct lcore_packet_stats lcore_stats[RTE_MAX_LCORE];
 +
 +/* Function declarations */
-+void analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction);
++void analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction, uint16_t queue_id);
 +
  /* Send burst of packets on an output interface */
  static inline int
@@ -53,7 +53,7 @@ index 0cce3406ee..af807f105a 100644
 +#if L3FWD_DEBUG_LOGS
 +	/* Analyze TX packets for debugging only when debug is enabled */
 +	for (int i = 0; i < n; i++) {
-+		analyze_packet(m_table[i], lcore_id, "TX");
++		analyze_packet(m_table[i], lcore_id, "TX", queueid);
 +	}
 +#endif
 +
@@ -76,7 +76,7 @@ index 0cce3406ee..af807f105a 100644
  			rte_pktmbuf_free(m_table[ret]);
  		} while (++ret < n);
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..851e8a857c 100644
+index fec0aeb79c..42e25a6f17 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -101,7 +101,7 @@ index fec0aeb79c..851e8a857c 100644
  #define IPV4_L3FWD_LPM_MAX_RULES         1024
  #define IPV4_L3FWD_LPM_NUMBER_TBL8S (1 << 8)
  #define IPV6_L3FWD_LPM_MAX_RULES         1024
-@@ -41,6 +49,204 @@
+@@ -41,6 +49,205 @@
  static struct rte_lpm *ipv4_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  static struct rte_lpm6 *ipv6_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  
@@ -110,7 +110,7 @@ index fec0aeb79c..851e8a857c 100644
 +
 +/* Analyze and log packet details */
 +void
-+analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction)
++analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction, uint16_t queue_id)
 +{
 +#if L3FWD_DEBUG_LOGS
 +	struct rte_ether_hdr *eth_hdr;
@@ -155,29 +155,30 @@ index fec0aeb79c..851e8a857c 100644
 +			tcp_hdr = (struct rte_tcp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
 +			src_port = rte_be_to_cpu_16(tcp_hdr->src_port);
 +			dst_port = rte_be_to_cpu_16(tcp_hdr->dst_port);
-+			L3FWD_DEBUG_LOG("[%s] lcore=%u TCP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x)\n",
-+				direction, lcore_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss);
++			L3FWD_DEBUG_LOG("[%s] lcore=%u queue=%u TCP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x)\n",
++				direction, lcore_id, queue_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss);
 +		} else if (proto == IPPROTO_UDP && rte_pktmbuf_data_len(pkt) >= sizeof(*eth_hdr) + sizeof(*ipv4_hdr) + sizeof(*udp_hdr)) {
 +			udp_hdr = (struct rte_udp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
 +			src_port = rte_be_to_cpu_16(udp_hdr->src_port);
 +			dst_port = rte_be_to_cpu_16(udp_hdr->dst_port);
-+			L3FWD_DEBUG_LOG("[%s] lcore=%u UDP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x)\n",
-+				direction, lcore_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss);
++			L3FWD_DEBUG_LOG("[%s] lcore=%u queue=%u UDP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x)\n",
++				direction, lcore_id, queue_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss);
 +		} else {
-+			L3FWD_DEBUG_LOG("[%s] lcore=%u IP proto=%u %s -> %s (MAC %s -> %s) (RSS=0x%08x)\n",
-+				direction, lcore_id, proto, src_ip_str, dst_ip_str, src_mac_str, dst_mac_str, pkt->hash.rss);
++			L3FWD_DEBUG_LOG("[%s] lcore=%u queue=%u IP proto=%u %s -> %s (MAC %s -> %s) (RSS=0x%08x)\n",
++				direction, lcore_id, queue_id, proto, src_ip_str, dst_ip_str, src_mac_str, dst_mac_str, pkt->hash.rss);
 +		}
 +	} else if (RTE_ETH_IS_IPV6_HDR(pkt->packet_type)) {
-+		L3FWD_DEBUG_LOG("[%s] lcore=%u IPv6 packet (MAC %s -> %s)\n", direction, lcore_id, src_mac_str, dst_mac_str);
++		L3FWD_DEBUG_LOG("[%s] lcore=%u queue=%u IPv6 packet (MAC %s -> %s)\n", direction, lcore_id, queue_id, src_mac_str, dst_mac_str);
 +	} else {
-+		L3FWD_DEBUG_LOG("[%s] lcore=%u Non-IP packet (type=0x%04x) (MAC %s -> %s)\n",
-+			direction, lcore_id, rte_be_to_cpu_16(eth_hdr->ether_type), src_mac_str, dst_mac_str);
++		L3FWD_DEBUG_LOG("[%s] lcore=%u queue=%u Non-IP packet (type=0x%04x) (MAC %s -> %s)\n",
++			direction, lcore_id, queue_id, rte_be_to_cpu_16(eth_hdr->ether_type), src_mac_str, dst_mac_str);
 +	}
 +#else
 +	/* Suppress unused parameter warnings when debug is disabled */
 +	(void)pkt;
 +	(void)lcore_id;
 +	(void)direction;
++	(void)queue_id;
 +#endif
 +}
 +
@@ -306,7 +307,7 @@ index fec0aeb79c..851e8a857c 100644
  /* Performing LPM-based lookups. 8< */
  static inline uint16_t
  lpm_get_ipv4_dst_port(const struct rte_ipv4_hdr *ipv4_hdr,
-@@ -156,6 +362,17 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -156,6 +363,17 @@ lpm_main_loop(__rte_unused void *dummy)
  	lcore_id = rte_lcore_id();
  	qconf = &lcore_conf[lcore_id];
  
@@ -324,7 +325,7 @@ index fec0aeb79c..851e8a857c 100644
  	const uint16_t n_rx_q = qconf->n_rx_queue;
  	const uint16_t n_tx_p = qconf->n_tx_port;
  	if (n_rx_q == 0) {
-@@ -163,17 +380,31 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -163,17 +381,31 @@ lpm_main_loop(__rte_unused void *dummy)
  		return 0;
  	}
  
@@ -360,7 +361,7 @@ index fec0aeb79c..851e8a857c 100644
  	cur_tsc = rte_rdtsc();
  	prev_tsc = cur_tsc;
  
-@@ -189,6 +420,9 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -189,6 +421,9 @@ lpm_main_loop(__rte_unused void *dummy)
  				portid = qconf->tx_port_id[i];
  				if (qconf->tx_mbufs[portid].len == 0)
  					continue;
@@ -370,7 +371,7 @@ index fec0aeb79c..851e8a857c 100644
  				send_burst(qconf,
  					qconf->tx_mbufs[portid].len,
  					portid);
-@@ -209,6 +443,21 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -209,6 +444,21 @@ lpm_main_loop(__rte_unused void *dummy)
  			if (nb_rx == 0)
  				continue;
  
@@ -386,13 +387,13 @@ index fec0aeb79c..851e8a857c 100644
 +				/* Analyze only first 3 packets to reduce overhead */
 +				// int analyze_count = nb_rx > 3 ? 3 : nb_rx;
 +				for (int j = 0; j < nb_rx; j++) {
-+					analyze_packet(pkts_burst[j], lcore_id, "RX");
++					analyze_packet(pkts_burst[j], lcore_id, "RX", queueid);
 +				}
 +			}
  #if defined RTE_ARCH_X86 || defined __ARM_NEON \
  			 || defined RTE_ARCH_PPC_64
  			l3fwd_lpm_send_packets(nb_rx, pkts_burst,
-@@ -222,6 +471,11 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -222,6 +472,11 @@ lpm_main_loop(__rte_unused void *dummy)
  		cur_tsc = rte_rdtsc();
  	}
  
