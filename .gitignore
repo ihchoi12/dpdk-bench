@@ -16,3 +16,6 @@ build/
 # Ignore backup files
 *.bak
 *.orig
+
+.vscode/*
+*.pyc

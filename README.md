@@ -132,3 +132,5 @@ L3FWD_LCORES=-l 0-2            # CPU cores for l3fwd
 References:
 - https://developer.arm.com/documentation/109701/1-0/Example-for-Multi-core-scenario
 - https://fast.dpdk.org/doc/perf/DPDK_20_11_Mellanox_NIC_performance_report.pdf
+- https://github.com/intel/pcm
+- 
