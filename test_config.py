@@ -56,6 +56,10 @@ PACKET_SIZES = [64, 128, 256, 512, 1024, 1518]  # Packet sizes to test
 TRAFFIC_RATES = [1, 10, 25, 50, 75, 100]  # Percentage of line rate
 TEST_DURATION = 30  # seconds per test
 
+# TX Descriptor test configuration
+TX_DESC_MULTIPLIERS = [1, 2, 4, 8, 16, 32]  # Will test 1024*1, 1024*2, ..., 1024*32
+TX_DESC_VALUES = [1024 * m for m in TX_DESC_MULTIPLIERS]  # [1024, 2048, 4096, 8192, 16384, 32768]
+
 ################## BUILD CONFIG #####################
 LIBOS = 'dpdk'  # DPDK-based applications
 FEATURES = [

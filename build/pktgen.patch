@@ -1130,7 +1130,7 @@ index 0000000..86cde97
 +print("====================================\n")
 diff --git a/scripts/simple-tx-test.lua b/scripts/simple-tx-test.lua
 new file mode 100644
-index 0000000..0003adb
+index 0000000..577175c
 --- /dev/null
 +++ b/scripts/simple-tx-test.lua
 @@ -0,0 +1,81 @@
@@ -1208,7 +1208,7 @@ index 0000000..0003adb
 +print("Starting packet transmission for " .. sleeptime .. " seconds...")
 +pktgen.start(port)
 +
-+pktgen.delay(1000)  -- Wait 1 second before quitting
++pktgen.delay(5000)  -- Wait 1 second before quitting
 +
 +-- Print packet statistics summary before exit
 +print("\nPrinting packet statistics summary...")

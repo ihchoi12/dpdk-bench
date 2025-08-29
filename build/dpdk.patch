@@ -1,8 +1,13 @@
 diff --git a/examples/l3fwd/l3fwd.h b/examples/l3fwd/l3fwd.h
-index 0cce3406ee..cb6332eab6 100644
+index 0cce3406ee..5d933e661a 100644
 --- a/examples/l3fwd/l3fwd.h
 +++ b/examples/l3fwd/l3fwd.h
-@@ -9,6 +9,13 @@
+@@ -5,10 +5,18 @@
+ #ifndef __L3_FWD_H__
+ #define __L3_FWD_H__
+ 
++#include <stdlib.h>
+ #include <rte_ethdev.h>
  #include <rte_vect.h>
  #include <rte_acl.h>
  
@@ -16,7 +21,7 @@ index 0cce3406ee..cb6332eab6 100644
  #define DO_RFC_1812_CHECKS
  
  #define RTE_LOGTYPE_L3FWD RTE_LOGTYPE_USER1
-@@ -119,6 +126,24 @@ extern uint32_t max_pkt_len;
+@@ -119,6 +127,24 @@ extern uint32_t max_pkt_len;
  extern uint32_t nb_pkt_per_burst;
  extern uint32_t mb_mempool_cache_size;
  
@@ -41,7 +46,7 @@ index 0cce3406ee..cb6332eab6 100644
  /* Send burst of packets on an output interface */
  static inline int
  send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
-@@ -126,12 +151,33 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
+@@ -126,12 +152,33 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
  	struct rte_mbuf **m_table;
  	int ret;
  	uint16_t queueid;
@@ -76,7 +81,7 @@ index 0cce3406ee..cb6332eab6 100644
  			rte_pktmbuf_free(m_table[ret]);
  		} while (++ret < n);
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..42e25a6f17 100644
+index fec0aeb79c..ace107a4bb 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -260,8 +265,8 @@ index fec0aeb79c..42e25a6f17 100644
 +	/* Always show CURRENT CONFIGURATION when stats are enabled */
 +	if (stats_enabled) {
 +		printf("\nCURRENT CONFIGURATION:\n");
-+		printf("  RX_DESC_DEFAULT: %u (actual nb_rxd: %u)\n", RX_DESC_DEFAULT, nb_rxd);
-+		printf("  TX_DESC_DEFAULT: %u (actual nb_txd: %u)\n", TX_DESC_DEFAULT, nb_txd);
++		printf("  RX_DESC_DEFAULT (nb_rxd): %u \n", nb_rxd);
++		printf("  TX_DESC_DEFAULT (nb_txd): %u \n", nb_txd);
 +		printf("  MAX_PKT_BURST: %u\n", MAX_PKT_BURST);
 +		printf("  DEFAULT_PKT_BURST: %u (actual nb_pkt_per_burst: %u)\n", DEFAULT_PKT_BURST, nb_pkt_per_burst);
 +		printf("  BURST_TX_DRAIN_US: %u us\n", BURST_TX_DRAIN_US);
@@ -462,7 +467,7 @@ index 4ee61e8d88..b2f0682abb 100644
  	}
  }
 diff --git a/examples/l3fwd/main.c b/examples/l3fwd/main.c
-index ae3b4f6439..51771c40bb 100644
+index ae3b4f6439..74d5379d99 100644
 --- a/examples/l3fwd/main.c
 +++ b/examples/l3fwd/main.c
 @@ -131,7 +131,8 @@ static struct rte_eth_conf port_conf = {
@@ -491,7 +496,7 @@ index ae3b4f6439..51771c40bb 100644
  
  	if (optind >= 0)
  		argv[optind-1] = prgname;
-@@ -1448,7 +1450,7 @@ l3fwd_poll_resource_setup(void)
+@@ -1448,13 +1450,17 @@ l3fwd_poll_resource_setup(void)
  			else
  				socketid = 0;
  
@@ -500,7 +505,17 @@ index ae3b4f6439..51771c40bb 100644
  			fflush(stdout);
  
  			txconf = &dev_info.default_txconf;
-@@ -1474,7 +1476,7 @@ l3fwd_poll_resource_setup(void)
+ 			txconf->offloads = local_port_conf.txmode.offloads;
+ 			ret = rte_eth_tx_queue_setup(portid, queueid, nb_txd,
+ 						     socketid, txconf);
++			printf("txconf: tx_thresh={pthresh=%u, hthresh=%u, wthresh=%u}, "
++				"tx_rs_thresh=%u, tx_free_thresh=%u, offloads=0x%"PRIx64"\n",
++				txconf->tx_thresh.pthresh, txconf->tx_thresh.hthresh, txconf->tx_thresh.wthresh,
++				txconf->tx_rs_thresh, txconf->tx_free_thresh, txconf->offloads);
+ 			if (ret < 0)
+ 				rte_exit(EXIT_FAILURE,
+ 					"rte_eth_tx_queue_setup: err=%d, "
+@@ -1474,7 +1480,7 @@ l3fwd_poll_resource_setup(void)
  		if (rte_lcore_is_enabled(lcore_id) == 0)
  			continue;
  		qconf = &lcore_conf[lcore_id];
@@ -509,7 +524,7 @@ index ae3b4f6439..51771c40bb 100644
  		fflush(stdout);
  		/* init RX queues */
  		for(queue = 0; queue < qconf->n_rx_queue; ++queue) {
-@@ -1490,7 +1492,7 @@ l3fwd_poll_resource_setup(void)
+@@ -1490,7 +1496,7 @@ l3fwd_poll_resource_setup(void)
  			else
  				socketid = 0;
  

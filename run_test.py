@@ -9,6 +9,7 @@ import os
 import time
 import math
 import operator
+import re
 import pyrem.host
 import pyrem.task
 from pyrem.host import RemoteHost
@@ -65,12 +66,18 @@ def setup_arp_tables():
         arp_task.append(task)
     pyrem.task.Parallel(arp_task, aggregate=True).start(wait=True)
 
-def run_l3fwd():
+def run_l3fwd(tx_desc_value=None):
     """Run l3fwd on node8"""
     global experiment_id
-    print('RUNNING L3FWD on node8')
+    print(f'RUNNING L3FWD on node8 with TX_DESC={tx_desc_value}')
     
     host = pyrem.host.RemoteHost(L3FWD_CONFIG["node"])
+    
+    # Build tx-queue-size argument if specified
+    tx_queue_arg = ""
+    if tx_desc_value:
+        tx_queue_arg = f" --tx-queue-size={tx_desc_value}"
+    
     cmd = [f'cd {os.path.dirname(L3FWD_CONFIG["binary_path"])} && '
            f'sudo -E {ENV} ' 
            f'{L3FWD_CONFIG["binary_path"]} '
@@ -79,19 +86,14 @@ def run_l3fwd():
            f'-a {L3FWD_CONFIG["pci_address"]} '
            f'-- {L3FWD_CONFIG["port_mask"]} '
            f'--config="{L3FWD_CONFIG["config"]}" '
-           f'--eth-dest=0,{L3FWD_CONFIG["eth_dest"]} '
+           f'--eth-dest=0,{L3FWD_CONFIG["eth_dest"]}'
+           f'{tx_queue_arg} '
            f'> {DATA_PATH}/{experiment_id}.l3fwd 2>&1']
     
     task = host.run(cmd, quiet=False)
     print(f'L3FWD command: {cmd}')
     pyrem.task.Parallel([task], aggregate=True).start(wait=False)
     time.sleep(3)
-    # Format and print L3FWD command with line breaks for readability
-    # cmd_formatted = cmd[0].replace(' && ', ' &&\n    ').replace(' -', '\n    -').replace(' --', '\n    --')
-    # Remove multiple consecutive newlines and fix spacing
-    # cmd_formatted = '\n    '.join(line.strip() for line in cmd_formatted.split('\n') if line.strip())
-    # print(f'L3FWD command: {cmd}\n\n    {cmd_formatted}')
-    # time.sleep(10)
 
 def run_pktgen():
     """Run pktgen on node7"""
@@ -124,9 +126,8 @@ def run_pktgen():
     
     # time.sleep(3)
 
-def parse_dpdk_results(experiment_id):
+def parse_dpdk_results(experiment_id, tx_desc_value=None):
     """Parse DPDK test results from l3fwd and pktgen"""
-    import re
     result_str = ''
     
     # Parse L3FWD results
@@ -208,7 +209,7 @@ def parse_dpdk_results(experiment_id):
     print(f"L3FWD: RX={l3fwd_rx_pkts:,} TX={l3fwd_tx_pkts:,} ({l3fwd_status})")
     print(f"Pktgen: RX={pktgen_rx_pkts:,} TX={pktgen_tx_pkts:,} ({pktgen_status})")
     
-    result_str += f'{experiment_id}, {l3fwd_rx_pkts}, {l3fwd_tx_pkts}, {pktgen_rx_pkts}, {pktgen_tx_pkts}, {l3fwd_status}, {pktgen_status}\n'
+    result_str += f'{experiment_id}, {tx_desc_value}, {l3fwd_rx_pkts}, {l3fwd_tx_pkts}, {pktgen_rx_pkts}, {pktgen_tx_pkts}, {l3fwd_status}, {pktgen_status}\n'
     return result_str
 
 def run_eval():
@@ -216,27 +217,35 @@ def run_eval():
     global experiment_id
     global final_result
     
-    kill_procs()
-    experiment_id = datetime.datetime.now().strftime('%Y%m%d-%H%M%S.%f')
-    print(f'================ RUNNING DPDK TEST =================')
-    print(f'EXPTID: {experiment_id}')
+    print("Starting DPDK TX Descriptor Tests")
+    print(f"Testing TX descriptor values: {TX_DESC_VALUES}")
     
-    setup_arp_tables()
-    
-    # Run L3FWD
-    run_l3fwd()
-    
-    # Run Pktgen
-    run_pktgen()
-    
-    
-    # Stop processes
-    kill_procs()
-    time.sleep(3)
-    # Parse results
-    print(f'================ {experiment_id} TEST COMPLETE =================')
-    res = parse_dpdk_results(experiment_id)
-    final_result = final_result + f'{res}'
+    for tx_desc_value in TX_DESC_VALUES:
+        print(f'\n================ TESTING TX_DESC={tx_desc_value} =================')
+        
+        kill_procs()
+        experiment_id = datetime.datetime.now().strftime('%Y%m%d-%H%M%S.%f')
+        print(f'EXPTID: {experiment_id}')
+        
+        setup_arp_tables()
+        
+        # Run L3FWD with specific TX descriptor value
+        run_l3fwd(tx_desc_value)
+        
+        # Run Pktgen
+        run_pktgen()
+        
+        # Stop processes
+        kill_procs()
+        time.sleep(3)
+        
+        # Parse results
+        print(f'================ {experiment_id} TEST COMPLETE =================')
+        res = parse_dpdk_results(experiment_id, tx_desc_value)
+        final_result = final_result + f'{res}'
+        
+        # Wait a bit between tests
+        time.sleep(5)
     
         
 
@@ -246,7 +255,7 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "experiment_id, l3fwd_rx_pkts, l3fwd_tx_pkts, pktgen_rx_pkts, pktgen_tx_pkts, l3fwd_status, pktgen_status\n"
+    result_header = "experiment_id, tx_desc_value, l3fwd_rx_pkts, l3fwd_tx_pkts, pktgen_rx_pkts, pktgen_tx_pkts, l3fwd_status, pktgen_status\n"
         
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
