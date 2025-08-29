@@ -139,13 +139,6 @@ def parse_dpdk_results(experiment_id):
         try:
             with open(l3fwd_file, "r", encoding='utf-8', errors='ignore') as file:
                 l3fwd_text = file.read()
-            
-            # Remove ANSI escape sequences and control characters that might interfere
-            import re
-            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-            l3fwd_text = ansi_escape.sub('', l3fwd_text)
-            control_chars = re.compile(r'[\x00-\x1F\x7F-\x9F]')
-            l3fwd_text = control_chars.sub('', l3fwd_text)
                 
             # Look for Total RX/TX packets in L3FWD output
             # Pattern: "Total    344052981    256861708"
