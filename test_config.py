@@ -26,7 +26,6 @@ NODE8_MAC = '08:c0:eb:b6:e8:05'
 L3FWD_CONFIG = {
     "binary_path": f"{DPDK_PATH}/build/examples/dpdk-l3fwd",
     "node": "node8",
-    "duration": 30,
     "lcores": "-l 0-3",
     "memory_channels": "-n 4", 
     "pci_address": "0000:31:00.1,txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256",
@@ -81,6 +80,9 @@ EVAL_PACKET_LOSS = True
 ### DPDK ###
 ENV = f'LD_LIBRARY_PATH={DPDK_PATH}/build/lib:{DPDK_PATH}/build/lib/x86_64-linux-gnu'
 ### DATA COLLECTION ###
-DATA_PATH = f'{HOME}/dpdk-bench-data'
+DATA_PATH = f'{DPDK_BENCH_HOME}/results'
 
 # Remove unused imports and configs
+
+# commands
+# python3 -u run_test.py 2>&1 | tee -a /homes/inho/Autokernel/dpdk-bench/results/experiment_history.txt

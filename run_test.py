@@ -40,14 +40,18 @@ experiment_id = ''
 
 def kill_procs():
     """Kill DPDK processes on all nodes"""
-    cmd = ['sudo pkill -f dpdk-l3fwd ; \
-            sudo pkill -f pktgen ']
+
+    # Kill pktgen processes on node7
+    node7_cmd = ['sudo pkill -f pktgen']
+    node7 = pyrem.host.RemoteHost('node7')
+    node7_task = node7.run(node7_cmd, quiet=False)
     
-    for node in ALL_NODES:
-        host = pyrem.host.RemoteHost(node)
-        task = host.run(cmd, quiet=False)
-        pyrem.task.Parallel([task], aggregate=True).start(wait=True)
+    # Kill dpdk-l3fwd more precisely - target the executable name only
+    node8_cmd = ['sudo pkill dpdk-l3fwd']
+    node8 = pyrem.host.RemoteHost('node8')
+    node8_task = node8.run(node8_cmd, quiet=False)
     
+    pyrem.task.Parallel([node7_task, node8_task], aggregate=True).start(wait=True)
     print('KILLED LEGACY PROCESSES')
 
 # Setup ARP tables
@@ -79,12 +83,14 @@ def run_l3fwd():
            f'> {DATA_PATH}/{experiment_id}.l3fwd 2>&1']
     
     task = host.run(cmd, quiet=False)
+    print(f'L3FWD command: {cmd}')
     pyrem.task.Parallel([task], aggregate=True).start(wait=False)
+    time.sleep(3)
     # Format and print L3FWD command with line breaks for readability
-    cmd_formatted = cmd[0].replace(' && ', ' &&\n    ').replace(' -', '\n    -').replace(' --', '\n    --')
+    # cmd_formatted = cmd[0].replace(' && ', ' &&\n    ').replace(' -', '\n    -').replace(' --', '\n    --')
     # Remove multiple consecutive newlines and fix spacing
-    cmd_formatted = '\n    '.join(line.strip() for line in cmd_formatted.split('\n') if line.strip())
-    print(f'L3FWD command: {cmd}\n\n    {cmd_formatted}')
+    # cmd_formatted = '\n    '.join(line.strip() for line in cmd_formatted.split('\n') if line.strip())
+    # print(f'L3FWD command: {cmd}\n\n    {cmd_formatted}')
     # time.sleep(10)
 
 def run_pktgen():
@@ -107,15 +113,16 @@ def run_pktgen():
            f'> {DATA_PATH}/{experiment_id}.pktgen 2>&1']
     
     task = host.run(cmd, quiet=False)
-    pyrem.task.Parallel([task], aggregate=True).start(wait=False)
+    print(f'PKTGEN command: {cmd}')
+    pyrem.task.Parallel([task], aggregate=True).start(wait=True)
     
     # Format and print L3FWD command with line breaks for readability
-    cmd_formatted = cmd[0].replace(' && ', ' &&\n    ').replace(' -', '\n    -').replace(' --', '\n    --')
+    # cmd_formatted = cmd[0].replace(' && ', ' &&\n    ').replace(' -', '\n    -').replace(' --', '\n    --')
     # Remove multiple consecutive newlines and fix spacing
-    cmd_formatted = '\n    '.join(line.strip() for line in cmd_formatted.split('\n') if line.strip())
-    print(f'PKTGEN command: {cmd}\n\n    {cmd_formatted}')
+    # cmd_formatted = '\n    '.join(line.strip() for line in cmd_formatted.split('\n') if line.strip())
+    # print(f'PKTGEN command: {cmd}\n\n    {cmd_formatted}')
     
-    time.sleep(10)
+    # time.sleep(3)
 
 def parse_dpdk_results(experiment_id):
     """Parse DPDK test results from l3fwd and pktgen"""
@@ -124,46 +131,91 @@ def parse_dpdk_results(experiment_id):
     
     # Parse L3FWD results
     l3fwd_file = f'{DATA_PATH}/{experiment_id}.l3fwd'
-    l3fwd_throughput = 0
+    l3fwd_rx_pkts = 0
+    l3fwd_tx_pkts = 0
     l3fwd_status = 'unknown'
     
     if os.path.exists(l3fwd_file):
-        with open(l3fwd_file, "r") as file:
-            l3fwd_text = file.read()
+        try:
+            with open(l3fwd_file, "r", encoding='utf-8', errors='ignore') as file:
+                l3fwd_text = file.read()
             
-        # Look for packet forwarding rate
-        rate_match = re.search(r'(\d+\.?\d*)\s*Mpps', l3fwd_text)
-        if rate_match:
-            l3fwd_throughput = float(rate_match.group(1))
-            l3fwd_status = 'success'
-        elif 'Error' in l3fwd_text or 'error' in l3fwd_text:
+            # Remove ANSI escape sequences and control characters that might interfere
+            import re
+            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+            l3fwd_text = ansi_escape.sub('', l3fwd_text)
+            control_chars = re.compile(r'[\x00-\x1F\x7F-\x9F]')
+            l3fwd_text = control_chars.sub('', l3fwd_text)
+                
+            # Look for Total RX/TX packets in L3FWD output
+            # Pattern: "Total    344052981    256861708"
+            total_matches = re.findall(r'Total\s+(\d+)\s+(\d+)', l3fwd_text)
+            if total_matches:
+                # Use the last occurrence (most recent stats)
+                l3fwd_rx_pkts = int(total_matches[-1][0])
+                l3fwd_tx_pkts = int(total_matches[-1][1])
+                l3fwd_status = 'success'
+                print(f"DEBUG L3FWD: Found {len(total_matches)} Total lines, using last one: RX={l3fwd_rx_pkts}, TX={l3fwd_tx_pkts}")
+            else:
+                # If no Total line found, try to sum individual lcore stats
+                # Pattern: "0        83098188     64865061     7.7        6.0        21.9"
+                lcore_matches = re.findall(r'^\s*(\d+)\s+(\d+)\s+(\d+)\s+[\d\.]+\s+[\d\.]+\s+[\d\.]+', l3fwd_text, re.MULTILINE)
+                if lcore_matches:
+                    # Remove duplicates by using unique lcore IDs (take last occurrence of each lcore)
+                    lcore_dict = {}
+                    for match in lcore_matches:
+                        lcore_id = int(match[0])
+                        lcore_dict[lcore_id] = (int(match[1]), int(match[2]))  # (RX, TX)
+                    
+                    l3fwd_rx_pkts = sum(rx for rx, tx in lcore_dict.values())
+                    l3fwd_tx_pkts = sum(tx for rx, tx in lcore_dict.values())
+                    l3fwd_status = 'success'
+                    print(f"DEBUG L3FWD: No Total line found, summed {len(lcore_dict)} unique lcore stats: RX={l3fwd_rx_pkts}, TX={l3fwd_tx_pkts}")
+                elif 'Error' in l3fwd_text or 'error' in l3fwd_text:
+                    l3fwd_status = 'error'
+                else:
+                    l3fwd_status = 'running'
+                    print(f"DEBUG L3FWD: No Total or lcore lines found in {l3fwd_file}")
+                    # Debug: show first few lines to understand content
+                    lines = l3fwd_text.split('\n')[:10]
+                    print(f"DEBUG L3FWD: First 10 lines: {lines}")
+        except Exception as e:
+            print(f"ERROR parsing L3FWD file {l3fwd_file}: {e}")
             l3fwd_status = 'error'
-        else:
-            l3fwd_status = 'running'
     
     # Parse Pktgen results  
     pktgen_file = f'{DATA_PATH}/{experiment_id}.pktgen'
-    pktgen_throughput = 0
+    pktgen_rx_pkts = 0
+    pktgen_tx_pkts = 0
     pktgen_status = 'unknown'
     
     if os.path.exists(pktgen_file):
-        with open(pktgen_file, "r") as file:
-            pktgen_text = file.read()
-            
-        # Look for transmission rate
-        rate_match = re.search(r'Tx:\s*(\d+\.?\d*)\s*Mpps', pktgen_text)
-        if rate_match:
-            pktgen_throughput = float(rate_match.group(1))
-            pktgen_status = 'success'
-        elif 'Error' in pktgen_text or 'error' in pktgen_text:
+        try:
+            with open(pktgen_file, "r", encoding='utf-8', errors='ignore') as file:
+                pktgen_text = file.read()
+                
+            # Look for Total RX/TX packets in Pktgen output
+            # Pattern: "Total    257710936    623995552"
+            total_matches = re.findall(r'Total\s+(\d+)\s+(\d+)', pktgen_text)
+            if total_matches:
+                # Use the last occurrence (most recent stats)
+                pktgen_rx_pkts = int(total_matches[-1][0])
+                pktgen_tx_pkts = int(total_matches[-1][1])
+                pktgen_status = 'success'
+                print(f"DEBUG Pktgen: Found {len(total_matches)} Total lines, using last one: RX={pktgen_rx_pkts}, TX={pktgen_tx_pkts}")
+            elif 'Error' in pktgen_text or 'error' in pktgen_text:
+                pktgen_status = 'error'
+            else:
+                pktgen_status = 'running'
+                print(f"DEBUG Pktgen: No Total line found in {pktgen_file}")
+        except Exception as e:
+            print(f"ERROR parsing Pktgen file {pktgen_file}: {e}")
             pktgen_status = 'error'
-        else:
-            pktgen_status = 'running'
     
-    print(f"L3FWD: {l3fwd_throughput} Mpps ({l3fwd_status})")
-    print(f"Pktgen: {pktgen_throughput} Mpps ({pktgen_status})")
+    print(f"L3FWD: RX={l3fwd_rx_pkts:,} TX={l3fwd_tx_pkts:,} ({l3fwd_status})")
+    print(f"Pktgen: RX={pktgen_rx_pkts:,} TX={pktgen_tx_pkts:,} ({pktgen_status})")
     
-    result_str += f'{experiment_id}, {l3fwd_throughput}, {pktgen_throughput}, {l3fwd_status}, {pktgen_status}\n'
+    result_str += f'{experiment_id}, {l3fwd_rx_pkts}, {l3fwd_tx_pkts}, {pktgen_rx_pkts}, {pktgen_tx_pkts}, {l3fwd_status}, {pktgen_status}\n'
     return result_str
 
 def run_eval():
@@ -184,20 +236,16 @@ def run_eval():
     # Run Pktgen
     run_pktgen()
     
-    # Wait for test duration
-    print(f'Running test for {TEST_DURATION} seconds...')
-    time.sleep(TEST_DURATION)
     
     # Stop processes
     kill_procs()
-    
+    time.sleep(3)
     # Parse results
     print(f'================ {experiment_id} TEST COMPLETE =================')
     res = parse_dpdk_results(experiment_id)
     final_result = final_result + f'{res}'
     
         
-    time.sleep(2)  # Brief pause between tests
 
 
 
@@ -205,14 +253,13 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "experiment_id, l3fwd_mpps, pktgen_mpps, l3fwd_status, pktgen_status\n"
+    result_header = "experiment_id, l3fwd_rx_pkts, l3fwd_tx_pkts, pktgen_rx_pkts, pktgen_tx_pkts, l3fwd_status, pktgen_status\n"
         
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
     with open(f'{DATA_PATH}/dpdk_benchmark_results.txt', "w") as file:
         file.write(f'{result_header}')
         file.write(final_result)
-    kill_procs()
 
 
 def run_compile():
@@ -248,7 +295,5 @@ if __name__ == '__main__':
     print("Starting DPDK Benchmark Tests")
     print(f"L3FWD Node: {L3FWD_CONFIG['node']}")
     print(f"Pktgen Node: {PKTGEN_CONFIG['node']}")
-    print(f"Test Duration: {TEST_DURATION} seconds")
     print(f"Data Path: {DATA_PATH}")
     run_eval()
-    kill_procs()
