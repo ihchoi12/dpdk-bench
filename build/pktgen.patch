@@ -142,7 +142,7 @@ index d2b54a6..ef6f7d8 100644
      rte_atomic64_t port_flags;       /**< Special send flags for ARP and other */
      rte_atomic64_t transmit_count;   /**< Packets to transmit loaded into current_tx_count */
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..fa21cbf 100644
+index 627034d..afc83ba 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -235,7 +235,7 @@ index 627034d..fa21cbf 100644
 +
 +    eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 +    uint16_t ether_type = rte_be_to_cpu_16(eth_hdr->ether_type);
-+    
++
 +    /* Convert MAC addresses to string format */
 +    snprintf(src_mac_str, sizeof(src_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
 +             eth_hdr->src_addr.addr_bytes[0], eth_hdr->src_addr.addr_bytes[1],
@@ -245,7 +245,7 @@ index 627034d..fa21cbf 100644
 +             eth_hdr->dst_addr.addr_bytes[0], eth_hdr->dst_addr.addr_bytes[1],
 +             eth_hdr->dst_addr.addr_bytes[2], eth_hdr->dst_addr.addr_bytes[3],
 +             eth_hdr->dst_addr.addr_bytes[4], eth_hdr->dst_addr.addr_bytes[5]);
-+    
++
 +    if (ether_type == RTE_ETHER_TYPE_IPV4) {
 +        ipv4_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
 +        src_ip = rte_be_to_cpu_32(ipv4_hdr->src_addr);
@@ -415,8 +415,7 @@ index 627034d..fa21cbf 100644
 +        /* Another core is setting it up - wait for completion */
 +        printf("Core %d: Waiting for %s workqueue setup for port %d\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
- 
--    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++
 +        while (__atomic_load_n(&workq_setup_done[pid][wqt_idx], __ATOMIC_ACQUIRE) != 1) {
 +            rte_pause();
 +        }
@@ -424,7 +423,8 @@ index 627034d..fa21cbf 100644
 +        printf("Core %d: %s workqueue for port %d is ready\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
 +    }
-+
+ 
+-    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
 +    return 0;
 +}
 +
@@ -465,14 +465,14 @@ index 627034d..fa21cbf 100644
 +    uint64_t total_rx = 0, total_tx = 0;
 +    uint64_t current_time = rte_rdtsc();
 +    uint64_t tsc_hz = rte_get_tsc_hz();
-+    
++
 +    printf("\n");
 +    printf("=====================================\n");
 +    printf("PKTGEN Packet Statistics Summary\n");
 +    printf("=====================================\n");
-+    printf("%-8s %-12s %-12s %-10s %-10s %-8s\n", 
++    printf("%-8s %-12s %-12s %-10s %-10s %-8s\n",
 +        "Lcore", "RX Packets", "TX Packets", "RX Rate", "TX Rate", "Diff%");
-+    printf("%-8s %-12s %-12s %-10s %-10s %-8s\n", 
++    printf("%-8s %-12s %-12s %-10s %-10s %-8s\n",
 +        "-----", "----------", "----------", "--------", "--------", "------");
 +
 +    RTE_LCORE_FOREACH(lcore_id) {
@@ -481,12 +481,12 @@ index 627034d..fa21cbf 100644
 +            double elapsed_sec = (double)duration / tsc_hz;
 +            double rx_rate = elapsed_sec > 0 ? lcore_stats[lcore_id].rx_packets / elapsed_sec : 0;
 +            double tx_rate = elapsed_sec > 0 ? lcore_stats[lcore_id].tx_packets / elapsed_sec : 0;
-+            
++
 +            /* Calculate proper rate for individual lcore */
 +            double rate = 0.0;
 +            uint64_t rx = lcore_stats[lcore_id].rx_packets;
 +            uint64_t tx = lcore_stats[lcore_id].tx_packets;
-+            
++
 +            if (rx > 0) {
 +                if (tx > rx) {
 +                    /* Amplification case: more TX than RX */
@@ -499,7 +499,7 @@ index 627034d..fa21cbf 100644
 +                /* Only TX, no RX - show as 0% since no reference */
 +                rate = 0.0;
 +            }
-+            
++
 +            printf("%-8u %-12" PRIu64 " %-12" PRIu64 " %-10.1f %-10.1f %-8.1f\n",
 +                lcore_id,
 +                lcore_stats[lcore_id].rx_packets,
@@ -507,17 +507,17 @@ index 627034d..fa21cbf 100644
 +                rx_rate / 1000000.0,  /* Convert to Mpps */
 +                tx_rate / 1000000.0,
 +                rate);
-+            
++
 +            total_rx += lcore_stats[lcore_id].rx_packets;
 +            total_tx += lcore_stats[lcore_id].tx_packets;
 +        }
 +    }
-+    
++
 +    /* Calculate loss/amplification rate properly */
 +    int64_t difference = (int64_t)total_tx - (int64_t)total_rx;  /* TX - RX */
 +    double rate = 0.0;
 +    const char *rate_type = "";
-+    
++
 +    if (total_rx > 0) {
 +        if (difference > 0) {
 +            /* More TX than RX - amplification */
@@ -533,19 +533,19 @@ index 627034d..fa21cbf 100644
 +            rate_type = "perfect";
 +        }
 +    }
-+    
-+    printf("%-8s %-12s %-12s %-10s %-10s %-8s\n", 
++
++    printf("%-8s %-12s %-12s %-10s %-10s %-8s\n",
 +        "-----", "----------", "----------", "--------", "--------", "------");
-+    printf("%-8s %-12" PRIu64 " %-12" PRIu64 " %-10s %-10s %-8.1f\n", 
++    printf("%-8s %-12" PRIu64 " %-12" PRIu64 " %-10s %-10s %-8.1f\n",
 +        "Total", total_rx, total_tx, "", "", rate);
 +    printf("=====================================\n");
-+    printf("ANALYSIS: RX/TX difference = %+" PRId64 " packets (%.1f%% %s)\n", 
++    printf("ANALYSIS: RX/TX difference = %+" PRId64 " packets (%.1f%% %s)\n",
 +        difference, rate, rate_type);
 +    printf("=====================================\n");
-+    
++
 +    /* Print NIC hardware statistics */
 +    print_all_nic_hw_stats();
-+    
++
 +    /* Print RX drop analysis */
 +    print_rx_drop_analysis();
 +}
@@ -567,7 +567,7 @@ index 627034d..fa21cbf 100644
 +    int cnt_xstats, ret, i;
 +
 +    printf("\n=== NIC Hardware Statistics (Port %u) ===\n", port_id);
-+    
++
 +    /* Get basic ethernet statistics */
 +    ret = rte_eth_stats_get(port_id, &eth_stats);
 +    if (ret == 0) {
@@ -579,7 +579,7 @@ index 627034d..fa21cbf 100644
 +        printf("Hardware TX Errors:      %"PRIu64"\n", eth_stats.oerrors);
 +        printf("Hardware RX Missed:      %"PRIu64" (packets dropped by HW)\n", eth_stats.imissed);
 +        printf("Hardware RX No MBuf:     %"PRIu64" (mbuf allocation failed)\n", eth_stats.rx_nombuf);
-+        
++
 +        /* Print per-queue statistics if available */
 +        bool has_queue_stats = false;
 +        for (i = 0; i < RTE_ETHDEV_QUEUE_STAT_CNTRS && i < 8; i++) {
@@ -592,7 +592,7 @@ index 627034d..fa21cbf 100644
 +                    i, eth_stats.q_ipackets[i], eth_stats.q_opackets[i], eth_stats.q_errors[i]);
 +            }
 +        }
-+        
++
 +        /* Calculate packet loss if any */
 +        if (eth_stats.ipackets > 0) {
 +            uint64_t total_drops = eth_stats.imissed + eth_stats.rx_nombuf + eth_stats.ierrors;
@@ -616,13 +616,13 @@ index 627034d..fa21cbf 100644
 +    } else {
 +        printf("Failed to get basic statistics for port %u\n", port_id);
 +    }
-+    
++
 +    /* Get extended statistics for detailed drop analysis */
 +    cnt_xstats = rte_eth_xstats_get_names(port_id, NULL, 0);
 +    if (cnt_xstats > 0) {
 +        xstat_names = malloc(sizeof(struct rte_eth_xstat_name) * cnt_xstats);
 +        xstats = malloc(sizeof(struct rte_eth_xstat) * cnt_xstats);
-+        
++
 +        if (xstat_names && xstats) {
 +            ret = rte_eth_xstats_get_names(port_id, xstat_names, cnt_xstats);
 +            if (ret == cnt_xstats) {
@@ -633,9 +633,9 @@ index 627034d..fa21cbf 100644
 +                    for (i = 0; i < cnt_xstats; i++) {
 +                        const char *name = xstat_names[i].name;
 +                        uint64_t value = xstats[i].value;
-+                        
++
 +                        /* Filter for drop/error related statistics */
-+                        if (value > 0 && (strstr(name, "drop") || strstr(name, "discard") || 
++                        if (value > 0 && (strstr(name, "drop") || strstr(name, "discard") ||
 +                                         strstr(name, "error") || strstr(name, "miss") ||
 +                                         strstr(name, "full") || strstr(name, "overflow") ||
 +                                         strstr(name, "underrun") || strstr(name, "crc") ||
@@ -650,7 +650,7 @@ index 627034d..fa21cbf 100644
 +                }
 +            }
 +        }
-+        
++
 +        free(xstat_names);
 +        free(xstats);
 +    }
@@ -670,19 +670,19 @@ index 627034d..fa21cbf 100644
 +{
 +    uint16_t port_id;
 +    port_info_t *pinfo;
-+    
++
 +    printf("\n");
 +    printf("########################################\n");
 +    printf("# NIC HARDWARE STATISTICS ANALYSIS\n");
 +    printf("########################################\n");
-+    
++
 +    RTE_ETH_FOREACH_DEV(port_id) {
 +        pinfo = l2p_get_port_pinfo(port_id);
 +        if (pinfo && pinfo->seq_pkt) {
 +            print_nic_hw_stats(port_id);
 +        }
 +    }
-+    
++
 +    printf("########################################\n");
 +}
 +
@@ -693,11 +693,11 @@ index 627034d..fa21cbf 100644
 +init_rx_drop_analysis(unsigned int lcore_id)
 +{
 +    rx_drop_analysis_t *analysis = &rx_analysis[lcore_id];
-+    
++
 +    memset(analysis, 0, sizeof(rx_drop_analysis_t));
 +    analysis->analysis_interval = rte_get_tsc_hz(); /* 1 second interval */
 +    analysis->last_check_time = rte_rdtsc();
-+    
++
 +    printf("RX Drop Analysis initialized for lcore %u\n", lcore_id);
 +}
 +
@@ -709,15 +709,15 @@ index 627034d..fa21cbf 100644
 +{
 +    rx_drop_analysis_t *analysis = &rx_analysis[lcore_id];
 +    uint64_t current_time = rte_rdtsc();
-+    
++
 +    /* Update counters */
 +    analysis->total_rx_attempts++;
-+    
++
 +    if (nb_rx == 0) {
 +        analysis->zero_rx_count++;
 +        /* Log frequent zero RX events */
 +        if (analysis->zero_rx_count % 10000 == 0) {
-+            printf("WARNING: Lcore %u - %lu consecutive zero RX events\n", 
++            printf("WARNING: Lcore %u - %lu consecutive zero RX events\n",
 +                   lcore_id, analysis->zero_rx_count);
 +        }
 +    } else if (nb_rx < expected_rx / 2) {
@@ -725,16 +725,16 @@ index 627034d..fa21cbf 100644
 +    } else if (nb_rx == expected_rx) {
 +        analysis->full_rx_count++;
 +    }
-+    
++
 +    /* Periodic detailed analysis */
 +    if (current_time - analysis->last_check_time > analysis->analysis_interval) {
 +        struct rte_eth_stats eth_stats;
-+        
++
 +        if (rte_eth_stats_get(port_id, &eth_stats) == 0) {
 +            uint64_t hw_drops_current = eth_stats.imissed + eth_stats.rx_nombuf + eth_stats.ierrors;
 +            analysis->hw_drops_delta = hw_drops_current - analysis->hw_drops_last;
 +            analysis->hw_drops_last = hw_drops_current;
-+            
++
 +            /* Log significant drop events */
 +            if (analysis->hw_drops_delta > 1000) {
 +                printf("CRITICAL: Lcore %u Port %u - %lu HW drops in last second!\n",
@@ -745,7 +745,7 @@ index 627034d..fa21cbf 100644
 +                       eth_stats.imissed, eth_stats.rx_nombuf, eth_stats.ierrors);
 +            }
 +        }
-+        
++
 +        analysis->last_check_time = current_time;
 +        /* Reset counters for next interval */
 +        analysis->zero_rx_count = 0;
@@ -761,20 +761,20 @@ index 627034d..fa21cbf 100644
 +print_rx_drop_analysis(void)
 +{
 +    unsigned int lcore_id;
-+    
++
 +    printf("\n");
 +    printf("########################################\n");
 +    printf("# RX DROP ANALYSIS REPORT\n");
 +    printf("########################################\n");
-+    
++
 +    printf("%-8s %-12s %-12s %-12s %-12s %-12s\n",
 +           "Lcore", "RX Attempts", "Zero RX", "Small RX", "Full RX", "HW Drops");
 +    printf("%-8s %-12s %-12s %-12s %-12s %-12s\n",
 +           "-----", "-----------", "--------", "---------", "--------", "--------");
-+    
++
 +    RTE_LCORE_FOREACH(lcore_id) {
 +        rx_drop_analysis_t *analysis = &rx_analysis[lcore_id];
-+        
++
 +        if (analysis->total_rx_attempts > 0) {
 +            printf("%-8u %-12lu %-12lu %-12lu %-12lu %-12lu\n",
 +                   lcore_id,
@@ -785,7 +785,7 @@ index 627034d..fa21cbf 100644
 +                   analysis->hw_drops_delta);
 +        }
 +    }
-+    
++
 +    printf("########################################\n");
 +}
 diff --git a/app/pktgen.h b/app/pktgen.h
