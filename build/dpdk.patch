@@ -1258,6 +1258,12 @@ index 0000000000..998019c89f
 +int pcm_monitoring_get_info(char *info_buffer, size_t buffer_size);
 +
 +#endif /* __L3FWD_PCM_H__ */
+diff --git a/examples/l3fwd/l3fwd_pcm_new.h b/examples/l3fwd/l3fwd_pcm_new.h
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/examples/l3fwd/l3fwd_pcm_simple.c b/examples/l3fwd/l3fwd_pcm_simple.c
+new file mode 100644
+index 0000000000..e69de29bb2
 diff --git a/examples/l3fwd/l3fwd_pcm_wrapper.cpp b/examples/l3fwd/l3fwd_pcm_wrapper.cpp
 new file mode 100644
 index 0000000000..38518923d0
@@ -2035,10 +2041,10 @@ index ae3b4f6439..599e3fbf21 100644
  	rte_eal_mp_remote_launch(l3fwd_lkp.main_loop, NULL, CALL_MAIN);
  
 diff --git a/examples/l3fwd/meson.build b/examples/l3fwd/meson.build
-index 74144c7979..2d65149954 100644
+index 74144c7979..b10568d0f4 100644
 --- a/examples/l3fwd/meson.build
 +++ b/examples/l3fwd/meson.build
-@@ -7,7 +7,25 @@
+@@ -7,7 +7,26 @@
  # DPDK instance, use 'make'
  
  allow_experimental_apis = true
@@ -2049,8 +2055,9 @@ index 74144c7979..2d65149954 100644
  deps += ['acl', 'hash', 'lpm', 'fib']
 +
 +# PCM library configuration for static linking
-+pcm_lib_path = '/homes/inho/Autokernel/dpdk-bench/pcm/build/src'
-+pcm_inc_path = '/homes/inho/Autokernel/dpdk-bench/pcm/src'
++pcm_base_path = meson.current_source_dir() / '..' / '..' / '..' / 'pcm'
++pcm_lib_path = pcm_base_path / 'build' / 'src'
++pcm_inc_path = pcm_base_path / 'src'
 +
 +# Check for PCM static library
 +pcm_static_lib = pcm_lib_path / 'libpcm.a'
@@ -2064,7 +2071,7 @@ index 74144c7979..2d65149954 100644
  sources = files(
          'l3fwd_acl.c',
          'l3fwd_em.c',
-@@ -16,9 +34,28 @@ sources = files(
+@@ -16,9 +35,26 @@ sources = files(
          'l3fwd_event_generic.c',
          'l3fwd_fib.c',
          'l3fwd_lpm.c',
@@ -2075,8 +2082,6 @@ index 74144c7979..2d65149954 100644
 +# Add PCM wrapper if library found
 +if pcm_found
 +    sources += files('l3fwd_pcm_wrapper.cpp')
-+    # Add PCM include directory for compilation
-+    includes += include_directories(pcm_inc_path)
 +    message('PCM integration enabled with static linking')
 +endif
 +
@@ -2090,6 +2095,6 @@ index 74144c7979..2d65149954 100644
 +
 +# Add PCM support if available
 +if pcm_found
-+    include_directories(pcm_inc_path)
++    includes += include_directories('../../../pcm/src')
 +    ldflags += [pcm_static_lib, '-static-libstdc++', '-static-libgcc', '-lpthread', '-ldl', '-lnuma']
 +endif

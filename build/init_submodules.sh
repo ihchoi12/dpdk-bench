@@ -32,6 +32,12 @@ PKTGEN_PATCH_SERIES="${PKTGEN_PATCH_SERIES:-${REPO_ROOT}/build/patches/pktgen}"
 PKTGEN_PATCH_SINGLE="${PKTGEN_PATCH_SINGLE:-${REPO_ROOT}/build/pktgen.patch}"
 
 # -----------------------
+# PCM settings
+# -----------------------
+PCM_DIR="${PCM_DIR:-pcm}"
+PCM_BUILD="${PCM_BUILD:-${PCM_DIR}/build}"
+
+# -----------------------
 CORES="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 8)"
 CMD="${1:-build}"
 
@@ -84,6 +90,15 @@ build_dpdk() {
 }
 
 build_l3fwd() {
+  # First ensure PCM is built
+  echo ">> ensuring PCM is built for L3FWD integration"
+  sync_pcm
+  if [ ! -f "${PCM_DIR}/build/src/libpcm.a" ]; then
+    build_pcm
+  else
+    echo ">> PCM already built"
+  fi
+  
   pushd "$DPDK_DIR" >/dev/null
   if [ ! -d build ]; then
     echo ">> DPDK build/ not found; doing full DPDK build first"
@@ -150,6 +165,35 @@ build_pktgen() {
 
   popd >/dev/null
   echo ">> done. pktgen binary at: ${PKTGEN_DIR}/build/app/pktgen"
+}
+
+# -----------------------
+# PCM helpers
+# -----------------------
+sync_pcm() {
+  git submodule update --init --recursive "$PCM_DIR"
+}
+
+reset_pcm() {
+  echo ">> reset/clean submodule: $PCM_DIR"
+  git -C "$PCM_DIR" reset --hard
+  git -C "$PCM_DIR" clean -fdx
+}
+
+build_pcm() {
+  echo ">> building PCM static library"
+  pushd "$PCM_DIR" >/dev/null
+  
+  # Create build directory and configure with CMake
+  mkdir -p build
+  cd build
+  
+  # Configure and build PCM
+  cmake ..
+  make -j"$CORES"
+  
+  popd >/dev/null
+  echo ">> done. PCM static library at: ${PCM_DIR}/build/src/libpcm.a"
 }
 
 

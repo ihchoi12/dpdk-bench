@@ -26,9 +26,14 @@ dpdk-version:
 	@echo ">> exact tag (if any):"
 	-@git -C "$(DPDK_DIR)" describe --tags --exact-match || true
 
-PHONY: l3fwd l3fwd-rebuild l3fwd-clean run-l3fwd run-l3fwd-timed benchmark-l3fwd-multi-core
+PHONY: l3fwd l3fwd-rebuild l3fwd-clean run-l3fwd run-l3fwd-timed benchmark-l3fwd-multi-core build-pcm
 
-l3fwd:
+build-pcm:
+	@echo ">> Building PCM static library..."
+	@cd pcm && mkdir -p build && cd build && cmake .. && make -j$(shell nproc)
+	@echo ">> PCM build completed"
+
+l3fwd: build-pcm
 	@bash build/init_submodules.sh l3fwd
 
 l3fwd-rebuild:

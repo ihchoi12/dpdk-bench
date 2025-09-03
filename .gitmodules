@@ -5,3 +5,6 @@
 	path = Pktgen-DPDK
 	url = https://github.com/pktgen/Pktgen-DPDK.git
 	branch = main
+[submodule "pcm"]
+	path = pcm
+	url = https://github.com/intel/pcm.git
