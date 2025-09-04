@@ -170,7 +170,7 @@ index ac33b51..f6206cd 100644
      if (pktgen.flags & BLINK_PORTS_FLAG) {
          RTE_ETH_FOREACH_DEV(pid)
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..e71be6f 100644
+index 627034d..5e95827 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -315,7 +315,7 @@ index 627034d..e71be6f 100644
  double
  next_poisson_time(double rateParameter)
  {
-@@ -280,11 +403,23 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
+@@ -280,11 +403,25 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
  {
      if (nb_pkts) {
          uint16_t sent, to_send = nb_pkts;
@@ -323,9 +323,11 @@ index 627034d..e71be6f 100644
 +
 +        /* Update per-lcore statistics */
 +        lcore_stats[lcore_id].tx_packets += nb_pkts;
-+        lcore_stats[lcore_id].port_id = pinfo->pid;
-+        if (lcore_stats[lcore_id].start_time == 0)
-+            lcore_stats[lcore_id].start_time = rte_rdtsc();
++        if (stats_enabled) {
++            lcore_stats[lcore_id].port_id = pinfo->pid;
++            if (lcore_stats[lcore_id].start_time == 0)
++                lcore_stats[lcore_id].start_time = rte_rdtsc();
++        }
  
          pinfo->queue_stats.q_opackets[qid] += nb_pkts;
          for (int i = 0; i < nb_pkts; i++)
@@ -340,7 +342,7 @@ index 627034d..e71be6f 100644
          if (pktgen_tst_port_flags(pinfo, SEND_RANDOM_PKTS))
              pktgen_rnd_bits_apply(pinfo, pkts, to_send, NULL);
  
-@@ -973,7 +1108,7 @@ void
+@@ -973,7 +1110,7 @@ void
  pktgen_send_pkts(port_info_t *pinfo, uint16_t qid, struct rte_mempool *mp)
  {
      uint64_t txCnt;
@@ -349,7 +351,7 @@ index 627034d..e71be6f 100644
  
      if (!pktgen_tst_port_flags(pinfo, SEND_FOREVER)) {
          txCnt = pkt_atomic64_tx_count(&pinfo->current_tx_count, pinfo->tx_burst);
-@@ -1027,7 +1162,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
+@@ -1027,7 +1164,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
  {
      if (pktgen_tst_port_flags(pinfo, SENDING_PACKETS)) {
          struct rte_mempool *mp = l2p_get_tx_mp(pinfo->pid);
@@ -358,7 +360,7 @@ index 627034d..e71be6f 100644
  
          /* Use mempool routines instead of pktmbuf to make sure the mbufs is not altered */
          if (rte_mempool_get_bulk(mp, (void **)pkts, pinfo->tx_burst) == 0) {
-@@ -1057,25 +1192,48 @@ static inline void
+@@ -1057,25 +1194,52 @@ static inline void
  pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  {
      uint16_t nb_rx, nb_pkts = pinfo->rx_burst, pid;
@@ -372,7 +374,7 @@ index 627034d..e71be6f 100644
 +    unsigned int lcore_id = rte_lcore_id();
 +
 +    /* Initialize RX analysis if not done */
-+    if (rx_analysis[lcore_id].analysis_interval == 0) {
++    if (stats_enabled && rx_analysis[lcore_id].analysis_interval == 0) {
 +        init_rx_drop_analysis(lcore_id);
 +    }
  
@@ -381,17 +383,21 @@ index 627034d..e71be6f 100644
 +    nb_rx = rte_eth_rx_burst(pid, qid, pkts, nb_pkts);
 +    
 +    /* Analyze RX performance */
-+    analyze_rx_performance(lcore_id, pid, nb_rx, nb_pkts);
++    if (stats_enabled) {
++        analyze_rx_performance(lcore_id, pid, nb_rx, nb_pkts);
++    }
 +    
 +    if (likely(nb_rx > 0)) {
          struct rte_eth_stats *qstats = &pinfo->queue_stats;
 +        unsigned int lcore_id = rte_lcore_id();
 +
-+        /* Update per-lcore statistics */
-+        lcore_stats[lcore_id].rx_packets += nb_rx;
-+        lcore_stats[lcore_id].port_id = pid;
-+        if (lcore_stats[lcore_id].start_time == 0)
-+            lcore_stats[lcore_id].start_time = rte_rdtsc();
++        if (stats_enabled) {
++            /* Update per-lcore statistics */
++            lcore_stats[lcore_id].rx_packets += nb_rx;
++            lcore_stats[lcore_id].port_id = pid;
++            if (lcore_stats[lcore_id].start_time == 0)
++                lcore_stats[lcore_id].start_time = rte_rdtsc();
++        }
  
          qstats->q_ipackets[qid] += nb_rx;
          for (int i = 0; i < nb_rx; i++)
@@ -412,7 +418,7 @@ index 627034d..e71be6f 100644
  
          if (unlikely(pinfo->dump_count > 0))
              pktgen_packet_dump_bulk(pkts, nb_rx, pid);
-@@ -1122,12 +1280,60 @@ pktgen_tx_workq_setup(uint16_t pid)
+@@ -1122,12 +1286,60 @@ pktgen_tx_workq_setup(uint16_t pid)
  }
  
  static int
@@ -444,8 +450,7 @@ index 627034d..e71be6f 100644
 +            __atomic_store_n(&workq_setup_done[pid][wqt_idx], 0, __ATOMIC_RELEASE);
 +            return ret;
 +        }
- 
--    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++
 +#if PKTGEN_DEBUG_LOGS
 +        printf("DEBUG: Core %d: Successfully set up %s workqueue for port %d\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
@@ -466,7 +471,8 @@ index 627034d..e71be6f 100644
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
 +#endif
 +    }
-+
+ 
+-    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
 +    return 0;
 +}
 +
@@ -477,7 +483,7 @@ index 627034d..e71be6f 100644
  }
  
  /**
-@@ -1280,7 +1486,9 @@ pktgen_main_rx_loop(void)
+@@ -1280,7 +1492,9 @@ pktgen_main_rx_loop(void)
  
      pinfo  = l2p_get_pinfo_by_lcore(lid);
      rx_qid = l2p_get_rxqid(lid);
@@ -488,7 +494,7 @@ index 627034d..e71be6f 100644
      printf("RX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, rx_qid,
             l2p_get_rx_mp(pinfo->pid)->name, l2p_get_rx_mp(pinfo->pid));
  
-@@ -1479,3 +1687,383 @@ pktgen_timer_setup(void)
+@@ -1479,3 +1693,383 @@ pktgen_timer_setup(void)
      CPU_SET(rte_get_main_lcore(), cpuset);
      pthread_setaffinity_np(tid, sizeof(cpuset), cpuset);
  }
