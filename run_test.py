@@ -141,15 +141,16 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
             with open(l3fwd_file, "r", encoding='utf-8', errors='ignore') as file:
                 l3fwd_text = file.read()
                 
-            # Look for Total RX/TX packets in L3FWD output
-            # Pattern: "Total    344052981    256861708"
-            total_matches = re.findall(r'Total\s+(\d+)\s+(\d+)', l3fwd_text)
-            if total_matches:
-                # Use the last occurrence (most recent stats)
-                l3fwd_rx_pkts = int(total_matches[-1][0])
-                l3fwd_tx_pkts = int(total_matches[-1][1])
+            # Look for Total RX/TX packets in L3FWD Packet Statistics section only
+            # Pattern: "Total    418860446    384005423                          8.3"
+            # Look for the section between "L3FWD Packet Statistics Summary" and "====="
+            packet_stats_pattern = r'L3FWD Packet Statistics Summary.*?Total\s+(\d+)\s+(\d+).*?====='
+            packet_stats_match = re.search(packet_stats_pattern, l3fwd_text, re.DOTALL)
+            if packet_stats_match:
+                l3fwd_rx_pkts = int(packet_stats_match.group(1))
+                l3fwd_tx_pkts = int(packet_stats_match.group(2))
                 l3fwd_status = 'success'
-                print(f"DEBUG L3FWD: Found {len(total_matches)} Total lines, using last one: RX={l3fwd_rx_pkts}, TX={l3fwd_tx_pkts}")
+                print(f"DEBUG L3FWD: Found L3FWD packet statistics Total: RX={l3fwd_rx_pkts}, TX={l3fwd_tx_pkts}")
             else:
                 # If no Total line found, try to sum individual lcore stats
                 # Pattern: "0        83098188     64865061     7.7        6.0        21.9"
