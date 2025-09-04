@@ -1,3 +1,29 @@
+diff --git a/examples/l3fwd/Makefile b/examples/l3fwd/Makefile
+index a06480a19e..505b282049 100644
+--- a/examples/l3fwd/Makefile
++++ b/examples/l3fwd/Makefile
+@@ -7,6 +7,7 @@ APP = l3fwd
+ # all source are stored in SRCS-y
+ SRCS-y := main.c l3fwd_acl.c l3fwd_lpm.c l3fwd_fib.c l3fwd_em.c l3fwd_event.c
+ SRCS-y += l3fwd_event_generic.c l3fwd_event_internal_port.c
++SRCS-y += l3fwd_pcm.c l3fwd_pcm_wrapper.cpp
+ 
+ PKGCONF ?= pkg-config
+ 
+@@ -26,8 +27,13 @@ PC_FILE := $(shell $(PKGCONF) --path libdpdk 2>/dev/null)
+ CFLAGS += -O3 $(shell $(PKGCONF) --cflags libdpdk)
+ # Added for 'rte_eth_link_to_str()'
+ CFLAGS += -DALLOW_EXPERIMENTAL_API
++# PCM include path
++CFLAGS += -I../../../pcm/src
+ LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk)
+ LDFLAGS_STATIC = $(shell $(PKGCONF) --static --libs libdpdk)
++# PCM library linking
++LDFLAGS_SHARED += -L../../../pcm/build/lib -lpcm -lstdc++
++LDFLAGS_STATIC += -L../../../pcm/build/lib -lpcm -lstdc++
+ 
+ CFLAGS += -I../common
+ 
 diff --git a/examples/l3fwd/l3fwd.h b/examples/l3fwd/l3fwd.h
 index 0cce3406ee..5d933e661a 100644
 --- a/examples/l3fwd/l3fwd.h
@@ -81,7 +107,7 @@ index 0cce3406ee..5d933e661a 100644
  			rte_pktmbuf_free(m_table[ret]);
  		} while (++ret < n);
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..69b9208440 100644
+index fec0aeb79c..481b7129e8 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -300,7 +326,10 @@ index fec0aeb79c..69b9208440 100644
 +	
 +	/* Print PCM performance statistics if available */
 +	if (stats_enabled && pcm_monitoring_is_available()) {
-+		/* Collect final statistics BEFORE stopping monitoring */
++		/* Stop measurement period FIRST to capture final state */
++		pcm_monitoring_stop_all();
++		
++		/* Then collect and calculate statistics immediately */
 +		pcm_monitoring_measure_all();
 +		
 +		/* Print comprehensive PCM statistics */
@@ -308,9 +337,6 @@ index fec0aeb79c..69b9208440 100644
 +		pcm_print_memory_statistics();
 +		pcm_print_io_statistics();
 +		pcm_print_system_statistics();
-+		
-+		/* Stop measurement period after collecting statistics */
-+		pcm_monitoring_stop_all();
 +	}
 +}
 +
@@ -487,10 +513,10 @@ index 4ee61e8d88..b2f0682abb 100644
  }
 diff --git a/examples/l3fwd/l3fwd_pcm.c b/examples/l3fwd/l3fwd_pcm.c
 new file mode 100644
-index 0000000000..4ac89fc122
+index 0000000000..e6b09926c4
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm.c
-@@ -0,0 +1,563 @@
+@@ -0,0 +1,567 @@
 +/* SPDX-License-Identifier: BSD-3-Clause
 + * Copyright(c) 2010-2025 Intel Corporation
 + */
@@ -739,7 +765,9 @@ index 0000000000..4ac89fc122
 +
 +    /* Collect core metrics for all active lcores */
 +    RTE_LCORE_FOREACH(lcore_id) {
-+        if (g_pcm_state.lcore_states[lcore_id].monitoring_active) {
++        /* Always collect metrics for all lcores that were initialized, 
++         * regardless of monitoring_active flag since stop_all() resets it */
++        if (g_pcm_state.lcore_states[lcore_id].initialized) {
 +            struct pcm_core_metrics *metrics = &g_pcm_state.core_metrics[lcore_id];
 +            pcm_core_counters_t counters;
 +            
@@ -764,7 +792,7 @@ index 0000000000..4ac89fc122
 +                printf("DEBUG: Failed to get counters for lcore %u\n", lcore_id);
 +            }
 +        } else {
-+            printf("DEBUG: Lcore %u not monitoring active\n", lcore_id);
++            printf("DEBUG: Lcore %u not initialized\n", lcore_id);
 +        }
 +    }
 +
@@ -845,9 +873,11 @@ index 0000000000..4ac89fc122
 +    printf("DEBUG: Starting core statistics print...\n");
 +    uint32_t lcore_id;
 +    RTE_LCORE_FOREACH(lcore_id) {
-+        printf("DEBUG: Checking lcore %u, monitoring_active = %d\n", 
-+               lcore_id, g_pcm_state.lcore_states[lcore_id].monitoring_active);
-+        if (g_pcm_state.lcore_states[lcore_id].monitoring_active) {
++        printf("DEBUG: Checking lcore %u, initialized = %d\n", 
++               lcore_id, g_pcm_state.lcore_states[lcore_id].initialized);
++        /* Check if lcore was initialized and has valid metrics */
++        if (g_pcm_state.lcore_states[lcore_id].initialized && 
++            (g_pcm_state.core_metrics[lcore_id].cycles > 0 || g_pcm_state.core_metrics[lcore_id].instructions > 0)) {
 +            struct pcm_core_metrics *metrics = &g_pcm_state.core_metrics[lcore_id];
 +            
 +            printf("DEBUG: Lcore %u metrics: cycles=%lu, instructions=%lu, ipc=%.2f\n",
@@ -1266,10 +1296,10 @@ new file mode 100644
 index 0000000000..e69de29bb2
 diff --git a/examples/l3fwd/l3fwd_pcm_wrapper.cpp b/examples/l3fwd/l3fwd_pcm_wrapper.cpp
 new file mode 100644
-index 0000000000..38518923d0
+index 0000000000..125b720f4a
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm_wrapper.cpp
-@@ -0,0 +1,490 @@
+@@ -0,0 +1,704 @@
 +// C++ wrapper for PCM that will be statically linked
 +#include "l3fwd_pcm_wrapper.h"
 +#include <iostream>
@@ -1400,11 +1430,14 @@ index 0000000000..38518923d0
 +
 +int pcm_wrapper_start_measurement(void) {
 +    if (!g_initialized || !g_pcm_instance) {
++        printf("ERROR: PCM not initialized when trying to start measurement\n");
 +        return -1;
 +    }
 +    
 +    try {
 +        printf("DEBUG: Starting PCM measurement - clearing old states\n");
++        printf("DEBUG: PCM Instance details: %u cores, %u sockets\n", 
++               g_pcm_instance->getNumCores(), g_pcm_instance->getNumSockets());
 +        
 +        // Wait a bit to ensure clean counter state
 +        usleep(100000); // 100ms
@@ -1412,49 +1445,86 @@ index 0000000000..38518923d0
 +        printf("DEBUG: Capturing initial PCM states\n");
 +        g_before_system_state = getSystemCounterState();
 +        
-+        for (uint32_t i = 0; i < g_pcm_instance->getNumCores(); ++i) {
++        uint32_t num_cores = g_pcm_instance->getNumCores();
++        printf("DEBUG: Capturing BEFORE states for %u cores\n", num_cores);
++        
++        for (uint32_t i = 0; i < num_cores; ++i) {
 +            g_before_core_states[i] = getCoreCounterState(i);
++            printf("DEBUG: Captured BEFORE state for core %u\n", i);
 +        }
 +        
-+        for (uint32_t i = 0; i < g_pcm_instance->getNumSockets(); ++i) {
++        uint32_t num_sockets = g_pcm_instance->getNumSockets();
++        printf("DEBUG: Capturing BEFORE states for %u sockets\n", num_sockets);
++        
++        for (uint32_t i = 0; i < num_sockets; ++i) {
 +            g_before_socket_states[i] = getSocketCounterState(i);
++            printf("DEBUG: Captured BEFORE state for socket %u\n", i);
 +        }
 +        
 +        g_measurement_active = true;
-+        printf("PCM measurement started, captured BEFORE states for %u cores\n", 
-+               g_pcm_instance->getNumCores());
++        printf("PCM measurement started successfully, captured BEFORE states for %u cores and %u sockets\n", 
++               num_cores, num_sockets);
 +        return 0;
++    } catch (const std::exception& e) {
++        printf("Error capturing initial PCM states: %s\n", e.what());
++        return -1;
 +    } catch (...) {
-+        printf("Error capturing initial PCM states\n");
++        printf("Unknown error capturing initial PCM states\n");
 +        return -1;
 +    }
 +}
 +
 +int pcm_wrapper_stop_measurement(void) {
 +    if (!g_initialized || !g_pcm_instance) {
++        printf("ERROR: PCM not initialized when trying to stop measurement\n");
 +        return -1;
 +    }
 +    
 +    try {
 +        printf("DEBUG: Stopping PCM measurement - capturing final states\n");
++        printf("DEBUG: PCM Instance details: %u cores, %u sockets\n", 
++               g_pcm_instance->getNumCores(), g_pcm_instance->getNumSockets());
 +        
 +        // Always capture final states regardless of g_measurement_active
 +        g_after_system_state = getSystemCounterState();
 +        
-+        for (uint32_t i = 0; i < g_pcm_instance->getNumCores(); ++i) {
++        uint32_t num_cores = g_pcm_instance->getNumCores();
++        printf("DEBUG: Capturing AFTER states for %u cores\n", num_cores);
++        
++        for (uint32_t i = 0; i < num_cores; ++i) {
 +            g_after_core_states[i] = getCoreCounterState(i);
++            printf("DEBUG: Captured AFTER state for core %u\n", i);
 +        }
 +        
-+        for (uint32_t i = 0; i < g_pcm_instance->getNumSockets(); ++i) {
++        uint32_t num_sockets = g_pcm_instance->getNumSockets();
++        printf("DEBUG: Capturing AFTER states for %u sockets\n", num_sockets);
++        
++        for (uint32_t i = 0; i < num_sockets; ++i) {
 +            g_after_socket_states[i] = getSocketCounterState(i);
++            printf("DEBUG: Captured AFTER state for socket %u\n", i);
 +        }
 +        
 +        g_measurement_active = false;
-+        printf("PCM measurement stopped, captured AFTER states for %u cores\n", 
-+               g_pcm_instance->getNumCores());
++        printf("PCM measurement stopped successfully, captured AFTER states for %u cores and %u sockets\n", 
++               num_cores, num_sockets);
++               
++        // Quick sanity check - test one core calculation
++        if (num_cores > 0) {
++            try {
++                double test_ipc = getIPC(g_before_core_states[0], g_after_core_states[0]);
++                uint64_t test_cycles = getCycles(g_before_core_states[0], g_after_core_states[0]);
++                printf("DEBUG: Sanity check for core 0 - IPC: %.3f, Cycles: %lu\n", test_ipc, test_cycles);
++            } catch (...) {
++                printf("DEBUG: Error in sanity check calculation\n");
++            }
++        }
++        
 +        return 0;
++    } catch (const std::exception& e) {
++        printf("Error capturing final PCM states: %s\n", e.what());
++        return -1;
 +    } catch (...) {
-+        printf("Error capturing final PCM states\n");
++        printf("Unknown error capturing final PCM states\n");
 +        return -1;
 +    }
 +}
@@ -1484,80 +1554,195 @@ index 0000000000..38518923d0
 +    }
 +    
 +    try {
-+        // Get current online CPU info to map DPDK lcore to PCM core
 +        uint32_t num_cores = g_pcm_instance->getNumCores();
 +        uint32_t pcm_core_id = core_id;
 +        
-+        // For DPDK, typically lcore 0-3 maps to first 4 online cores
-+        // But we need to validate the mapping is reasonable
++        // Map DPDK lcore to PCM core with bounds checking
 +        if (pcm_core_id >= num_cores) {
 +            printf("Warning: DPDK lcore %u exceeds PCM cores %u, using modulo mapping\n", 
 +                   core_id, num_cores);
 +            pcm_core_id = core_id % num_cores;
 +        }
 +        
-+        // Use instant measurement approach with short interval
-+        printf("DEBUG: Taking instant PCM measurement for core %u (PCM core %u)\n", core_id, pcm_core_id);
++        // Make sure we have valid before/after states
++        if (g_before_core_states.size() <= pcm_core_id || g_after_core_states.size() <= pcm_core_id) {
++            printf("ERROR: Invalid core state vectors for core %u\n", pcm_core_id);
++            return -1;
++        }
 +        
-+        // Take two consecutive measurements with a small delay
-+        CoreCounterState state1 = getCoreCounterState(pcm_core_id);
-+        usleep(10000); // 10ms delay
-+        CoreCounterState state2 = getCoreCounterState(pcm_core_id);
++        printf("DEBUG: Calculating PCM metrics for core %u (PCM core %u) using before/after states\n", 
++               core_id, pcm_core_id);
 +        
-+        // Use PCM's built-in metric calculation functions directly
-+        double ipc = getIPC(state1, state2);
-+        double freq_ghz = getAverageFrequency(state1, state2) / 1e9;
-+        double util = getActiveRelativeFrequency(state1, state2); // Use relative frequency as utilization proxy
++        // Use the stored before/after states to calculate metrics over the entire measurement period
++        const CoreCounterState& before = g_before_core_states[pcm_core_id];
++        const CoreCounterState& after = g_after_core_states[pcm_core_id];
 +        
-+        // Get cache hit ratios directly
-+        double l2_hit_ratio = getL2CacheHitRatio(state1, state2);
-+        double l3_hit_ratio = getL3CacheHitRatio(state1, state2);
++        // Debug: Print raw counter values to see if there's an overflow issue
++        printf("DEBUG: Raw counter debug for core %u:\n", core_id);
++        
++        // Calculate metrics using PCM's built-in functions with error checking
++        double ipc = 0.0;
++        double freq_ghz = 0.0;
++        double util = 0.0;
++        double l2_hit_ratio = 0.0;
++        double l3_hit_ratio = 0.0;
++        uint64_t cycles = 0;
++        uint64_t instructions = 0;
++        uint64_t l2_hits = 0;
++        uint64_t l2_misses = 0;
++        uint64_t l3_hits = 0;
++        uint64_t l3_misses = 0;
++        
++        try {
++            ipc = getIPC(before, after);
++            if (std::isnan(ipc) || std::isinf(ipc) || ipc < 0 || ipc > 10) {
++                printf("WARNING: Invalid IPC value %.3f, setting to 0\n", ipc);
++                ipc = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate IPC\n");
++            ipc = 0.0;
++        }
++        
++        try {
++            freq_ghz = getAverageFrequency(before, after) / 1e9;
++            if (std::isnan(freq_ghz) || std::isinf(freq_ghz) || freq_ghz < 0 || freq_ghz > 10) {
++                printf("WARNING: Invalid frequency %.3f, setting to 0\n", freq_ghz);
++                freq_ghz = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate frequency\n");
++            freq_ghz = 0.0;
++        }
++        
++        try {
++            util = getActiveRelativeFrequency(before, after);
++            if (std::isnan(util) || std::isinf(util) || util < 0 || util > 2) {
++                printf("WARNING: Invalid utilization %.3f, setting to 0\n", util);
++                util = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate utilization\n");
++            util = 0.0;
++        }
++        
++        try {
++            l2_hit_ratio = getL2CacheHitRatio(before, after);
++            if (std::isnan(l2_hit_ratio) || std::isinf(l2_hit_ratio) || l2_hit_ratio < 0 || l2_hit_ratio > 1) {
++                printf("WARNING: Invalid L2 hit ratio %.3f, setting to 0\n", l2_hit_ratio);
++                l2_hit_ratio = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate L2 hit ratio\n");
++            l2_hit_ratio = 0.0;
++        }
++        
++        try {
++            l3_hit_ratio = getL3CacheHitRatio(before, after);
++            if (std::isnan(l3_hit_ratio) || std::isinf(l3_hit_ratio) || l3_hit_ratio < 0 || l3_hit_ratio > 1) {
++                printf("WARNING: Invalid L3 hit ratio %.3f, setting to 0\n", l3_hit_ratio);
++                l3_hit_ratio = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate L3 hit ratio\n");
++            l3_hit_ratio = 0.0;
++        }
++        
++        // Get raw counter values with overflow protection
++        try {
++            cycles = getCycles(before, after);
++            // Check for reasonable cycle count - allow much higher values for longer measurements
++            if (cycles > 1000000000000ULL) {  // 1T cycles (much higher threshold)
++                printf("WARNING: Suspicious cycle count %lu, setting to 0\n", cycles);
++                cycles = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get cycles\n");
++            cycles = 0;
++        }
++        
++        try {
++            instructions = getInstructionsRetired(before, after);
++            // Adjust threshold for instructions - allow much higher values for longer measurements
++            if (instructions > 1000000000000ULL) {  // 1T instructions (much higher threshold)
++                printf("WARNING: Suspicious instruction count %lu, setting to 0\n", instructions);
++                instructions = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get instructions\n");
++            instructions = 0;
++        }
++        
++        try {
++            l2_hits = getL2CacheHits(before, after);
++            if (l2_hits > 100000000000ULL) {  // 100B threshold
++                printf("WARNING: Suspicious L2 hit count %lu, setting to 0\n", l2_hits);
++                l2_hits = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get L2 hits\n");
++            l2_hits = 0;
++        }
++        
++        try {
++            l2_misses = getL2CacheMisses(before, after);
++            if (l2_misses > 100000000000ULL) {  // 100B threshold
++                printf("WARNING: Suspicious L2 miss count %lu, setting to 0\n", l2_misses);
++                l2_misses = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get L2 misses\n");
++            l2_misses = 0;
++        }
++        
++        try {
++            l3_hits = getL3CacheHits(before, after);
++            if (l3_hits > 100000000000ULL) {  // 100B threshold
++                printf("WARNING: Suspicious L3 hit count %lu, setting to 0\n", l3_hits);
++                l3_hits = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get L3 hits\n");
++            l3_hits = 0;
++        }
++        
++        try {
++            l3_misses = getL3CacheMisses(before, after);
++            if (l3_misses > 100000000000ULL) {  // 100B threshold
++                printf("WARNING: Suspicious L3 miss count %lu, setting to 0\n", l3_misses);
++                l3_misses = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get L3 misses\n");
++            l3_misses = 0;
++        }
 +        
 +        printf("DEBUG: Core %u PCM metrics: IPC=%.3f, Freq=%.2f GHz, Util=%.1f%%, L2Hit=%.1f%%, L3Hit=%.1f%%\n", 
 +               core_id, ipc, freq_ghz, util * 100.0, l2_hit_ratio * 100.0, l3_hit_ratio * 100.0);
++        printf("DEBUG: Core %u raw counters: cycles=%lu, instructions=%lu, l2_misses=%lu, l3_misses=%lu\n",
++               core_id, cycles, instructions, l2_misses, l3_misses);
 +        
-+        // Store the calculated metrics
++        // Store all the calculated metrics
++        counters->cycles = cycles;
++        counters->instructions = instructions;
++        counters->l2_cache_hits = l2_hits;
++        counters->l2_cache_misses = l2_misses;
++        counters->l3_cache_hits = l3_hits;
++        counters->l3_cache_misses = l3_misses;
 +        counters->ipc = ipc;
-+        counters->frequency_ghz = freq_ghz;
-+        counters->cpu_utilization = util;  // Changed from utilization to cpu_utilization
 +        counters->l2_cache_hit_ratio = l2_hit_ratio;
 +        counters->l3_cache_hit_ratio = l3_hit_ratio;
++        counters->frequency_ghz = freq_ghz;
++        counters->cpu_utilization = util;
 +        
-+        // For cycle and instruction counts, use approximation if the values are reasonable
-+        uint64_t cycles_raw = getCycles(state1, state2);
-+        uint64_t instructions_raw = getInstructionsRetired(state1, state2);
-+        
-+        // Only set these if they look reasonable (small positive numbers for 10ms interval)
-+        if (cycles_raw > 0 && cycles_raw < 100000000) { // Less than 100M cycles in 10ms seems reasonable
-+            counters->cycles = cycles_raw;
-+            counters->instructions = instructions_raw;
-+        } else {
-+            // Estimate from frequency and time if raw counters don't work
-+            counters->cycles = (uint64_t)(freq_ghz * 1e9 * 0.01); // 10ms worth
-+            counters->instructions = (uint64_t)(counters->cycles * ipc);
++        // Energy estimation (may need different approach depending on PCM version)
++        try {
++            // For core-level energy, we need to use system-level or socket-level energy
++            // Core-level energy might not be available in all PCM versions
++            counters->energy_joules = 0.0; // Default for core-level
++        } catch (...) {
++            counters->energy_joules = 0.0;
 +        }
-+        
-+        // Cache miss counts - use heuristics if available
-+        uint64_t l2_misses = getL2CacheMisses(state1, state2);
-+        uint64_t l3_misses = getL3CacheMisses(state1, state2);
-+        uint64_t l2_hits = getL2CacheHits(state1, state2);
-+        uint64_t l3_hits = getL3CacheHits(state1, state2);
-+        
-+        // Use reasonable defaults if raw counts are problematic
-+        if (l2_misses < 10000000) counters->l2_cache_misses = l2_misses;
-+        else counters->l2_cache_misses = 0;
-+        
-+        if (l3_misses < 10000000) counters->l3_cache_misses = l3_misses;
-+        else counters->l3_cache_misses = 0;
-+        
-+        if (l2_hits < 10000000) counters->l2_cache_hits = l2_hits;
-+        else counters->l2_cache_hits = 0;
-+        
-+        if (l3_hits < 10000000) counters->l3_cache_hits = l3_hits;
-+        else counters->l3_cache_hits = 0;
-+        
-+        // Energy estimation
-+        counters->energy_joules = 0.0; // Default for now
 +        
 +        return 0;
 +    } catch (const std::exception& e) {
@@ -1693,40 +1878,99 @@ index 0000000000..38518923d0
 +        counters->active_cores = g_pcm_instance->getNumOnlineCores();
 +        
 +        // Energy measurements with overflow protection
-+        double total_energy_raw = getConsumedJoules(g_before_system_state, g_after_system_state);
-+        double dram_energy_raw = getDRAMConsumedJoules(g_before_system_state, g_after_system_state);
++        double total_energy_raw = 0.0;
++        double dram_energy_raw = 0.0;
 +        
-+        printf("DEBUG: System energy raw values: total=%.2f, dram=%.2f\n", 
++        try {
++            total_energy_raw = getConsumedJoules(g_before_system_state, g_after_system_state);
++            if (std::isnan(total_energy_raw) || std::isinf(total_energy_raw) || total_energy_raw < 0 || total_energy_raw > 100000.0) {
++                printf("WARNING: Invalid total energy %.2f, setting to 0\n", total_energy_raw);
++                total_energy_raw = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate total energy\n");
++            total_energy_raw = 0.0;
++        }
++        
++        try {
++            dram_energy_raw = getDRAMConsumedJoules(g_before_system_state, g_after_system_state);
++            if (std::isnan(dram_energy_raw) || std::isinf(dram_energy_raw) || dram_energy_raw < 0 || dram_energy_raw > 100000.0) {
++                printf("WARNING: Invalid DRAM energy %.2f, setting to 0\n", dram_energy_raw);
++                dram_energy_raw = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate DRAM energy\n");
++            dram_energy_raw = 0.0;
++        }
++        
++        printf("DEBUG: System energy values after validation: total=%.2f, dram=%.2f\n", 
 +               total_energy_raw, dram_energy_raw);
 +        
-+        // Check for reasonable energy values - allow much higher values for longer measurements
-+        const double max_energy = 100000.0;  // 100K joules (reasonable for minutes of measurement)
-+        
-+        counters->total_energy_joules = (total_energy_raw > 0 && total_energy_raw < max_energy) ? total_energy_raw : 0.0;
-+        counters->package_energy_joules = counters->total_energy_joules;
-+        counters->dram_energy_joules = (dram_energy_raw > 0 && dram_energy_raw < max_energy) ? dram_energy_raw : 0.0;
++        counters->total_energy_joules = total_energy_raw;
++        counters->package_energy_joules = total_energy_raw;
++        counters->dram_energy_joules = dram_energy_raw;
 +        
 +        // System-wide IPC with overflow protection
-+        double system_ipc_raw = getIPC(g_before_system_state, g_after_system_state);
-+        counters->total_ipc = (system_ipc_raw >= 0.0 && system_ipc_raw <= 10.0) ? system_ipc_raw : 0.0;  // IPC should be reasonable
++        double system_ipc_raw = 0.0;
++        try {
++            system_ipc_raw = getIPC(g_before_system_state, g_after_system_state);
++            if (std::isnan(system_ipc_raw) || std::isinf(system_ipc_raw) || system_ipc_raw < 0.0 || system_ipc_raw > 10.0) {
++                printf("WARNING: Invalid system IPC %.3f, setting to 0\n", system_ipc_raw);
++                system_ipc_raw = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate system IPC\n");
++            system_ipc_raw = 0.0;
++        }
++        counters->total_ipc = system_ipc_raw;
 +        
 +        // Memory bandwidth utilization
-+        uint64_t total_mem_bytes_raw = getBytesReadFromMC(g_before_system_state, g_after_system_state) +
-+                                      getBytesWrittenToMC(g_before_system_state, g_after_system_state);
-+        double elapsed = getExecUsage(g_before_system_state, g_after_system_state);
++        uint64_t total_mem_bytes_raw = 0;
++        double elapsed = 0.0;
 +        
-+        // Check for overflow in memory bandwidth calculation
-+        if (elapsed > 0 && total_mem_bytes_raw > 0 && total_mem_bytes_raw < 1000000000000000ULL) {
++        try {
++            uint64_t read_bytes = getBytesReadFromMC(g_before_system_state, g_after_system_state);
++            uint64_t write_bytes = getBytesWrittenToMC(g_before_system_state, g_after_system_state);
++            
++            if (read_bytes < 1000000000000000ULL && write_bytes < 1000000000000000ULL) {
++                total_mem_bytes_raw = read_bytes + write_bytes;
++            } else {
++                printf("WARNING: Suspicious memory byte counts: read=%lu, write=%lu\n", read_bytes, write_bytes);
++                total_mem_bytes_raw = 0;
++            }
++            
++            elapsed = getExecUsage(g_before_system_state, g_after_system_state);
++            if (std::isnan(elapsed) || std::isinf(elapsed) || elapsed <= 0 || elapsed > 1000.0) {
++                printf("WARNING: Invalid elapsed time %.3f, setting memory BW to 0\n", elapsed);
++                elapsed = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate memory bandwidth\n");
++            total_mem_bytes_raw = 0;
++            elapsed = 0.0;
++        }
++        
++        if (elapsed > 0 && total_mem_bytes_raw > 0) {
 +            counters->memory_bandwidth_utilization = (double)total_mem_bytes_raw / (1024.0 * 1024.0 * 1024.0) / elapsed;  // GB/s
 +        } else {
 +            counters->memory_bandwidth_utilization = 0.0;
 +        }
 +        
 +        // Thermal throttling (approximate) with bounds check
-+        double rel_freq = getRelativeFrequency(g_before_system_state, g_after_system_state);
-+        if (rel_freq >= 0.0 && rel_freq <= 2.0) {
-+            counters->thermal_throttle_ratio = 1.0 - rel_freq;
-+        } else {
++        double rel_freq = 0.0;
++        try {
++            rel_freq = getRelativeFrequency(g_before_system_state, g_after_system_state);
++            if (std::isnan(rel_freq) || std::isinf(rel_freq) || rel_freq < 0.0 || rel_freq > 2.0) {
++                printf("WARNING: Invalid relative frequency %.3f, setting throttle to 0\n", rel_freq);
++                rel_freq = 1.0;  // assume no throttling
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate relative frequency\n");
++            rel_freq = 1.0;  // assume no throttling
++        }
++        
++        counters->thermal_throttle_ratio = (rel_freq > 0) ? (1.0 - rel_freq) : 0.0;
++        if (counters->thermal_throttle_ratio < 0) {
 +            counters->thermal_throttle_ratio = 0.0;
 +        }
 +        
