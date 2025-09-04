@@ -170,7 +170,7 @@ index ac33b51..f6206cd 100644
      if (pktgen.flags & BLINK_PORTS_FLAG) {
          RTE_ETH_FOREACH_DEV(pid)
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..b846b1e 100644
+index 627034d..e71be6f 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -358,7 +358,7 @@ index 627034d..b846b1e 100644
  
          /* Use mempool routines instead of pktmbuf to make sure the mbufs is not altered */
          if (rte_mempool_get_bulk(mp, (void **)pkts, pinfo->tx_burst) == 0) {
-@@ -1057,25 +1192,43 @@ static inline void
+@@ -1057,25 +1192,48 @@ static inline void
  pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  {
      uint16_t nb_rx, nb_pkts = pinfo->rx_burst, pid;
@@ -377,7 +377,13 @@ index 627034d..b846b1e 100644
 +    }
  
      /* Read packets from RX queues and free the mbufs */
-     if (likely((nb_rx = rte_eth_rx_burst(pid, qid, pkts, nb_pkts)) > 0)) {
+-    if (likely((nb_rx = rte_eth_rx_burst(pid, qid, pkts, nb_pkts)) > 0)) {
++    nb_rx = rte_eth_rx_burst(pid, qid, pkts, nb_pkts);
++    
++    /* Analyze RX performance */
++    analyze_rx_performance(lcore_id, pid, nb_rx, nb_pkts);
++    
++    if (likely(nb_rx > 0)) {
          struct rte_eth_stats *qstats = &pinfo->queue_stats;
 +        unsigned int lcore_id = rte_lcore_id();
 +
@@ -406,7 +412,7 @@ index 627034d..b846b1e 100644
  
          if (unlikely(pinfo->dump_count > 0))
              pktgen_packet_dump_bulk(pkts, nb_rx, pid);
-@@ -1122,12 +1275,52 @@ pktgen_tx_workq_setup(uint16_t pid)
+@@ -1122,12 +1280,60 @@ pktgen_tx_workq_setup(uint16_t pid)
  }
  
  static int
@@ -422,8 +428,10 @@ index 627034d..b846b1e 100644
 +                                    &(uint16_t){0}, 1,
 +                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
 +        /* This core won the race - perform the actual setup */
-+        printf("Core %d: Setting up %s workqueue for port %d\n",
++#if PKTGEN_DEBUG_LOGS
++        printf("DEBUG: Core %d: Setting up %s workqueue for port %d\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
++#endif
 +
 +        if (workq_port_arg_set(pid, arg)) {
 +            __atomic_store_n(&workq_setup_done[pid][wqt_idx], 0, __ATOMIC_RELEASE);
@@ -436,26 +444,32 @@ index 627034d..b846b1e 100644
 +            __atomic_store_n(&workq_setup_done[pid][wqt_idx], 0, __ATOMIC_RELEASE);
 +            return ret;
 +        }
-+
-+        printf("Core %d: Successfully set up %s workqueue for port %d\n",
+ 
+-    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++#if PKTGEN_DEBUG_LOGS
++        printf("DEBUG: Core %d: Successfully set up %s workqueue for port %d\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
++#endif
 +    } else {
 +        /* Another core is setting it up - wait for completion */
-+        printf("Core %d: Waiting for %s workqueue setup for port %d\n",
++#if PKTGEN_DEBUG_LOGS
++        printf("DEBUG: Core %d: Waiting for %s workqueue setup for port %d\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
++#endif
 +
 +        while (__atomic_load_n(&workq_setup_done[pid][wqt_idx], __ATOMIC_ACQUIRE) != 1) {
 +            rte_pause();
 +        }
 +
-+        printf("Core %d: %s workqueue for port %d is ready\n",
++#if PKTGEN_DEBUG_LOGS
++        printf("DEBUG: Core %d: %s workqueue for port %d is ready\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
++#endif
 +    }
 +
 +    return 0;
 +}
- 
--    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++
 +static int
 +pktgen_workq_setup(workq_type_t wqt, uint16_t pid, void *arg)
 +{
@@ -463,16 +477,18 @@ index 627034d..b846b1e 100644
  }
  
  /**
-@@ -1280,7 +1473,7 @@ pktgen_main_rx_loop(void)
+@@ -1280,7 +1486,9 @@ pktgen_main_rx_loop(void)
  
      pinfo  = l2p_get_pinfo_by_lcore(lid);
      rx_qid = l2p_get_rxqid(lid);
 -
++#if PKTGEN_DEBUG_LOGS
 +    printf("DEBUG: RX Core Info: lid %3d, rx_qid %2d, cpu_id %2d, pinfo %p\n", lid, rx_qid, sched_getcpu(), pinfo);
++#endif
      printf("RX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, rx_qid,
             l2p_get_rx_mp(pinfo->pid)->name, l2p_get_rx_mp(pinfo->pid));
  
-@@ -1479,3 +1672,348 @@ pktgen_timer_setup(void)
+@@ -1479,3 +1687,383 @@ pktgen_timer_setup(void)
      CPU_SET(rte_get_main_lcore(), cpuset);
      pthread_setaffinity_np(tid, sizeof(cpuset), cpuset);
  }
@@ -731,7 +747,9 @@ index 627034d..b846b1e 100644
 +    analysis->analysis_interval = rte_get_tsc_hz(); /* 1 second interval */
 +    analysis->last_check_time = rte_rdtsc();
 +
-+    printf("RX Drop Analysis initialized for lcore %u\n", lcore_id);
++#if PKTGEN_DEBUG_LOGS
++    printf("DEBUG: RX Drop Analysis initialized for lcore %u\n", lcore_id);
++#endif
 +}
 +
 +/**
@@ -749,10 +767,12 @@ index 627034d..b846b1e 100644
 +    if (nb_rx == 0) {
 +        analysis->zero_rx_count++;
 +        /* Log frequent zero RX events */
++#if PKTGEN_DEBUG_LOGS
 +        if (analysis->zero_rx_count % 10000 == 0) {
-+            printf("WARNING: Lcore %u - %lu consecutive zero RX events\n",
++            printf("DEBUG: Lcore %u - %lu consecutive zero RX events\n",
 +                   lcore_id, analysis->zero_rx_count);
 +        }
++#endif
 +    } else if (nb_rx < expected_rx / 2) {
 +        analysis->small_rx_count++;
 +    } else if (nb_rx == expected_rx) {
@@ -764,19 +784,44 @@ index 627034d..b846b1e 100644
 +        struct rte_eth_stats eth_stats;
 +
 +        if (rte_eth_stats_get(port_id, &eth_stats) == 0) {
-+            uint64_t hw_drops_current = eth_stats.imissed + eth_stats.rx_nombuf + eth_stats.ierrors;
-+            analysis->hw_drops_delta = hw_drops_current - analysis->hw_drops_last;
-+            analysis->hw_drops_last = hw_drops_current;
++            /* Use port-level HW drops but only show on first RX core to avoid duplication */
++            static uint64_t initial_port_hw_drops = 0;
++            static unsigned int first_rx_core = RTE_MAX_LCORE;
++            static bool first_measurement = true;
++            
++            /* Determine the first RX core for this port */
++            if (first_rx_core == RTE_MAX_LCORE) {
++                first_rx_core = lcore_id;
++            }
++            
++            if (lcore_id == first_rx_core) {
++                /* Only the first RX core tracks port-level HW drops */
++                uint64_t hw_drops_current = eth_stats.imissed + eth_stats.rx_nombuf + eth_stats.ierrors;
++                
++                if (first_measurement) {
++                    initial_port_hw_drops = hw_drops_current;
++                    analysis->hw_drops_delta = 0;
++                    first_measurement = false;
++                } else {
++                    /* Show total drops since test started */
++                    analysis->hw_drops_delta = hw_drops_current - initial_port_hw_drops;
++                }
++            } else {
++                /* Other cores show 0 to avoid duplication */
++                analysis->hw_drops_delta = 0;
++            }
 +
++#if PKTGEN_DEBUG_LOGS
 +            /* Log significant drop events */
 +            if (analysis->hw_drops_delta > 1000) {
-+                printf("CRITICAL: Lcore %u Port %u - %lu HW drops in last second!\n",
++                printf("DEBUG: Lcore %u Port %u - %lu total HW drops since start!\n",
 +                       lcore_id, port_id, analysis->hw_drops_delta);
 +                printf("  Zero RX: %lu, Small RX: %lu, Full RX: %lu\n",
 +                       analysis->zero_rx_count, analysis->small_rx_count, analysis->full_rx_count);
 +                printf("  RX Missed: %lu, No MBuf: %lu, Errors: %lu\n",
 +                       eth_stats.imissed, eth_stats.rx_nombuf, eth_stats.ierrors);
 +            }
++#endif
 +        }
 +
 +        analysis->last_check_time = current_time;
@@ -800,29 +845,35 @@ index 627034d..b846b1e 100644
 +    printf("# RX DROP ANALYSIS REPORT\n");
 +    printf("########################################\n");
 +
-+    printf("%-8s %-12s %-12s %-12s %-12s %-12s\n",
-+           "Lcore", "RX Attempts", "Zero RX", "Small RX", "Full RX", "HW Drops");
-+    printf("%-8s %-12s %-12s %-12s %-12s %-12s\n",
-+           "-----", "-----------", "--------", "---------", "--------", "--------");
++    printf("%-8s %-12s %-12s %-12s %-12s\n",
++           "Lcore", "RX Attempts", "Zero RX", "Small RX", "Full RX");
++    printf("%-8s %-12s %-12s %-12s %-12s\n",
++           "-----", "-----------", "--------", "---------", "--------");
++
++    /* Get current HW drops for accurate final measurement */
++    struct rte_eth_stats eth_stats;
++    
++    if (rte_eth_stats_get(0, &eth_stats) == 0) {
++        /* HW stats available but not displayed in this table */
++    }
 +
 +    RTE_LCORE_FOREACH(lcore_id) {
 +        rx_drop_analysis_t *analysis = &rx_analysis[lcore_id];
 +
 +        if (analysis->total_rx_attempts > 0) {
-+            printf("%-8u %-12lu %-12lu %-12lu %-12lu %-12lu\n",
++            printf("%-8u %-12lu %-12lu %-12lu %-12lu\n",
 +                   lcore_id,
 +                   analysis->total_rx_attempts,
 +                   analysis->zero_rx_count,
 +                   analysis->small_rx_count,
-+                   analysis->full_rx_count,
-+                   analysis->hw_drops_delta);
++                   analysis->full_rx_count);
 +        }
 +    }
 +
 +    printf("########################################\n");
 +}
 diff --git a/app/pktgen.h b/app/pktgen.h
-index 5349a31..35d8ee3 100644
+index 5349a31..fd48803 100644
 --- a/app/pktgen.h
 +++ b/app/pktgen.h
 @@ -85,6 +85,8 @@
@@ -834,7 +885,18 @@ index 5349a31..35d8ee3 100644
  #include "pktgen-port-cfg.h"
  #include "pktgen-capture.h"
  #include "pktgen-log.h"
-@@ -351,6 +353,7 @@ void pktgen_input_start(void);
+@@ -103,6 +105,10 @@
+ extern "C" {
+ #endif
+ 
++#ifndef PKTGEN_DEBUG_LOGS
++#define PKTGEN_DEBUG_LOGS 0  /* 0 = disabled, 1 = enabled */
++#endif
++
+ #define MAX_MATRIX_ENTRIES 128
+ #define MAX_STRING         256
+ #define Million            (uint64_t)(1000000UL)
+@@ -351,6 +357,7 @@ void pktgen_input_start(void);
  void stat_timer_dump(void);
  void stat_timer_clear(void);
  void pktgen_timer_setup(void);
