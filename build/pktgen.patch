@@ -141,8 +141,36 @@ index d2b54a6..ef6f7d8 100644
  
      rte_atomic64_t port_flags;       /**< Special send flags for ARP and other */
      rte_atomic64_t transmit_count;   /**< Packets to transmit loaded into current_tx_count */
+diff --git a/app/pktgen-stats.c b/app/pktgen-stats.c
+index ac33b51..f6206cd 100644
+--- a/app/pktgen-stats.c
++++ b/app/pktgen-stats.c
+@@ -266,6 +266,11 @@ pktgen_page_stats(void)
+     char buff[32];
+     int display_cnt;
+ 
++    /* Only display stats if enabled */
++    if (!stats_enabled) {
++        return;
++    }
++
+     if (pktgen.flags & PRINT_LABELS_FLAG)
+         pktgen_print_static_data();
+ 
+@@ -456,6 +461,11 @@ pktgen_process_stats(void)
+     port_info_t *pinfo;
+     static unsigned int counter = 0;
+ 
++    /* Only process stats if enabled */
++    if (!stats_enabled) {
++        return;
++    }
++
+     counter++;
+     if (pktgen.flags & BLINK_PORTS_FLAG) {
+         RTE_ETH_FOREACH_DEV(pid)
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..afc83ba 100644
+index 627034d..b846b1e 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -423,11 +451,11 @@ index 627034d..afc83ba 100644
 +        printf("Core %d: %s workqueue for port %d is ready\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
 +    }
- 
--    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++
 +    return 0;
 +}
-+
+ 
+-    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
 +static int
 +pktgen_workq_setup(workq_type_t wqt, uint16_t pid, void *arg)
 +{
@@ -444,7 +472,7 @@ index 627034d..afc83ba 100644
      printf("RX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, rx_qid,
             l2p_get_rx_mp(pinfo->pid)->name, l2p_get_rx_mp(pinfo->pid));
  
-@@ -1479,3 +1672,343 @@ pktgen_timer_setup(void)
+@@ -1479,3 +1672,348 @@ pktgen_timer_setup(void)
      CPU_SET(rte_get_main_lcore(), cpuset);
      pthread_setaffinity_np(tid, sizeof(cpuset), cpuset);
  }
@@ -465,6 +493,11 @@ index 627034d..afc83ba 100644
 +    uint64_t total_rx = 0, total_tx = 0;
 +    uint64_t current_time = rte_rdtsc();
 +    uint64_t tsc_hz = rte_get_tsc_hz();
++
++    /* Only print statistics if enabled */
++    if (!stats_enabled) {
++        return;
++    }
 +
 +    printf("\n");
 +    printf("=====================================\n");
@@ -789,10 +822,19 @@ index 627034d..afc83ba 100644
 +    printf("########################################\n");
 +}
 diff --git a/app/pktgen.h b/app/pktgen.h
-index 5349a31..9315768 100644
+index 5349a31..35d8ee3 100644
 --- a/app/pktgen.h
 +++ b/app/pktgen.h
-@@ -351,6 +351,7 @@ void pktgen_input_start(void);
+@@ -85,6 +85,8 @@
+ #include "lauxlib.h"
+ #endif
+ 
++static volatile bool stats_enabled = true;
++
+ #include "pktgen-port-cfg.h"
+ #include "pktgen-capture.h"
+ #include "pktgen-log.h"
+@@ -351,6 +353,7 @@ void pktgen_input_start(void);
  void stat_timer_dump(void);
  void stat_timer_clear(void);
  void pktgen_timer_setup(void);
