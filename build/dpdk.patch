@@ -81,7 +81,7 @@ index 0cce3406ee..5d933e661a 100644
  			rte_pktmbuf_free(m_table[ret]);
  		} while (++ret < n);
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..3776cc094d 100644
+index fec0aeb79c..69b9208440 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -299,7 +299,7 @@ index fec0aeb79c..3776cc094d 100644
 +	printf("=====================================\n");
 +	
 +	/* Print PCM performance statistics if available */
-+	if (pcm_monitoring_is_available()) {
++	if (stats_enabled && pcm_monitoring_is_available()) {
 +		/* Collect final statistics BEFORE stopping monitoring */
 +		pcm_monitoring_measure_all();
 +		
@@ -1904,7 +1904,7 @@ index 0000000000..808e6fa7b7
 +
 +#endif /* __L3FWD_PCM_WRAPPER_H__ */
 diff --git a/examples/l3fwd/main.c b/examples/l3fwd/main.c
-index ae3b4f6439..599e3fbf21 100644
+index ae3b4f6439..aeb0d52252 100644
 --- a/examples/l3fwd/main.c
 +++ b/examples/l3fwd/main.c
 @@ -48,6 +48,7 @@
@@ -1947,7 +1947,7 @@ index ae3b4f6439..599e3fbf21 100644
  				signum);
 +		
 +		/* Print PCM statistics before exit */
-+		if (pcm_monitoring_is_available()) {
++		if (stats_enabled && pcm_monitoring_is_available()) {
 +			printf("\n\nReceived signal %d, shutting down...\n", signum);
 +			
 +			printf("\n=== Intel PCM Performance Statistics ===\n");
@@ -2028,7 +2028,7 @@ index ae3b4f6439..599e3fbf21 100644
  	ret = 0;
 +	
 +	/* Start PCM monitoring on all lcores before launching main loops */
-+	if (pcm_monitoring_is_available()) {
++	if (stats_enabled && pcm_monitoring_is_available()) {
 +		printf("Starting PCM monitoring on all lcores...\n");
 +		if (pcm_monitoring_start_all() == 0) {
 +			printf("PCM monitoring started successfully\n");
