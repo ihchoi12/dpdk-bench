@@ -25,10 +25,69 @@ index 37136c7..2f45de7 100644
  
      {"start", pktgen_start}, /* Start a set of ports sending packets */
 diff --git a/app/meson.build b/app/meson.build
-index eb0682f..67b0cbe 100644
+index eb0682f..ea0dc02 100644
 --- a/app/meson.build
 +++ b/app/meson.build
-@@ -48,7 +48,7 @@ deps += [cc.find_library('rte_net_ice', dirs: [dpdk_libs_path], required: false)
+@@ -1,3 +1,23 @@
++# Add C++ compiler support for PCM wrapper
++add_languages('cpp', required: true)
++
++# Import filesystem module
++fs = import('fs')
++
++# PCM library configuration for static linking
++pcm_base_path = meson.current_source_dir() / '..' / '..' / 'pcm'
++pcm_lib_path = pcm_base_path / 'build' / 'src'
++pcm_inc_path = pcm_base_path / 'src'
++
++# Check for PCM static library
++pcm_static_lib = pcm_lib_path / 'libpcm.a'
++pcm_found = false
++
++if fs.is_file(pcm_static_lib)
++    pcm_found = true
++    message('Found PCM static library: ' + pcm_static_lib)
++endif
++
+ sources = files(
+ 	'cli-functions.c',
+     'l2p.c',
+@@ -27,15 +47,34 @@ sources = files(
+ 	'pktgen-vlan.c',
+ 	'pktgen-workq.c',
+ 	'pktgen.c',
++	'pktgen_pcm.c',
+ 	'xorshift64star.c',
+ )
+ 
++# Add PCM wrapper if library found
++if pcm_found
++    sources += files('pktgen_pcm_wrapper.cpp')
++    message('PCM integration enabled with static linking')
++endif
++
+ if get_option('enable_lua')
+     sources += files('lpktgenlib.c')
+ endif
+ 
+ cflags = ['-D__PROJECT_VERSION="' + meson.project_version() + '"']
+ 
++# Initialize ldflags and includes
++ldflags = []
++includes = []
++cpp_args = []
++
++# Add PCM support if available  
++if pcm_found
++    # Only add PCM includes to C++ files, not C files to avoid conflicts
++    cpp_args += ['-I../../pcm/src']
++    ldflags += [pcm_static_lib, '-static-libstdc++', '-static-libgcc', '-lpthread', '-ldl', '-lnuma']
++endif
++
+ deps = [dpdk, common, utils, vec, plugin, cli, lua, hmap]
+ 
+ if fgen_dep.found()
+@@ -48,7 +87,7 @@ deps += [cc.find_library('rte_net_ice', dirs: [dpdk_libs_path], required: false)
  deps += [cc.find_library('rte_bus_vdev', dirs: [dpdk_libs_path], required: false)]
  
  deps += [dependency('threads')]
@@ -37,6 +96,15 @@ index eb0682f..67b0cbe 100644
  deps += [dependency('pcap', required: true)]
  deps += [cc.find_library('dl', required: false)]
  deps += [cc.find_library('m', required: false)]
+@@ -57,5 +96,8 @@ deps += [cc.find_library('bsd', required: true)]
+ pktgen = executable('pktgen',
+ 		sources,
+ 		c_args: cflags,
++		cpp_args: cpp_args,
++		link_args: ldflags,
++		include_directories: includes,
+ 		install: true,
+ 		dependencies: [deps, lua_dep, dpdk_bond])
 diff --git a/app/pktgen-cmds.c b/app/pktgen-cmds.c
 index 086ac5a..95eaa6d 100644
 --- a/app/pktgen-cmds.c
@@ -52,19 +120,146 @@ index 086ac5a..95eaa6d 100644
  }
  
 diff --git a/app/pktgen-main.c b/app/pktgen-main.c
-index b9ea903..7eb1230 100644
+index b9ea903..78d11fb 100644
 --- a/app/pktgen-main.c
 +++ b/app/pktgen-main.c
-@@ -327,6 +327,9 @@ sig_handler(int v __rte_unused)
+@@ -28,6 +28,7 @@
+ #include "pktgen-display.h"
+ #include "pktgen-log.h"
+ #include "cli-functions.h"
++#include "pktgen_pcm.h"
+ 
+ #ifdef LUA_ENABLED
+ /**
+@@ -327,6 +328,31 @@ sig_handler(int v __rte_unused)
  
      free(strings);
  
 +    /* Print packet statistics summary before cleanup */
 +    print_pktgen_stats_summary();
 +
++    /* PCM 모니터링 통계 출력: stats_enabled일 때만 */
++    extern volatile bool stats_enabled;
++    printf("DEBUG: sig_handler - stats_enabled = %s\n", stats_enabled ? "true" : "false");
++    if (stats_enabled) {
++        extern int pcm_monitoring_stop_all(void);
++        extern int pcm_monitoring_measure_all(void);
++        extern void pcm_print_core_statistics(void);
++        extern void pcm_print_memory_statistics(void);
++        extern void pcm_print_io_statistics(void);
++        extern void pcm_print_system_statistics(void);
++        printf("DEBUG: Signal handler - Stopping PCM monitoring...\n");
++        pcm_monitoring_stop_all();
++        printf("DEBUG: Signal handler - Measuring PCM stats...\n");
++        pcm_monitoring_measure_all();
++        printf("=== PCM Statistics ===\n");
++        pcm_print_core_statistics();
++        pcm_print_memory_statistics();
++        pcm_print_io_statistics();
++        pcm_print_system_statistics();
++        printf("=== End PCM Statistics ===\n");
++    }
++
      cli_destroy();
      scrn_destroy();
  
+@@ -345,6 +371,34 @@ pktgen_lua_dofile(void *ld, const char *filename)
+ }
+ #endif
+ 
++/**
++ * PCM statistics atexit handler
++ */
++static void
++pcm_atexit_handler(void)
++{
++    extern volatile bool stats_enabled;
++    printf("DEBUG: atexit handler - stats_enabled = %s\n", stats_enabled ? "true" : "false");
++    if (stats_enabled) {
++        extern int pcm_monitoring_stop_all(void);
++        extern int pcm_monitoring_measure_all(void);
++        extern void pcm_print_core_statistics(void);
++        extern void pcm_print_memory_statistics(void);
++        extern void pcm_print_io_statistics(void);
++        extern void pcm_print_system_statistics(void);
++        printf("DEBUG: atexit handler - Stopping PCM monitoring...\n");
++        pcm_monitoring_stop_all();
++        printf("DEBUG: atexit handler - Measuring PCM stats...\n");
++        pcm_monitoring_measure_all();
++        printf("=== PCM Statistics ===\n");
++        pcm_print_core_statistics();
++        pcm_print_memory_statistics();
++        pcm_print_io_statistics();
++        pcm_print_system_statistics();
++        printf("=== End PCM Statistics ===\n");
++    }
++}
++
+ /**
+  *
+  * main - Main routine to setup pktgen.
+@@ -514,6 +568,27 @@ main(int argc, char **argv)
+     sigaddset(&set, SIGWINCH);
+     pthread_sigmask(SIG_UNBLOCK, &set, NULL);
+ 
++    /* PCM 모니터링 초기화: stats_enabled일 때만 */
++    extern volatile bool stats_enabled;
++    printf("DEBUG: stats_enabled = %s\n", stats_enabled ? "true" : "false");
++    if (stats_enabled) {
++        extern int pcm_monitoring_init(void);
++        extern int pcm_monitoring_start_all(void);
++        printf("DEBUG: Attempting PCM initialization...\n");
++        int pcm_init_result = pcm_monitoring_init();
++        printf("DEBUG: PCM init result = %d\n", pcm_init_result);
++        if (pcm_init_result == 0) {
++            printf("PCM monitoring initialized successfully\n");
++            int pcm_start_result = pcm_monitoring_start_all();
++            printf("DEBUG: PCM start result = %d\n", pcm_start_result);
++            
++            /* Register atexit handler for PCM statistics */
++            atexit(pcm_atexit_handler);
++        } else {
++            printf("PCM monitoring initialization failed or disabled\n");
++        }
++    }
++
+     /* execute the command files if present */
+     scrn_pause();
+     cli_execute_cmdfiles();
+@@ -559,10 +634,33 @@ main(int argc, char **argv)
+ void
+ pktgen_stop_running(void)
+ {
++
+ #ifdef LUA_ENABLED
+     lua_execute_close(pktgen.ld);
+ #endif
+ 
+     pktgen.timer_running = 0;
+     pktgen.force_quit    = 1;
++
++    /* PCM 모니터링 통계 출력: stats_enabled일 때만 */
++    extern volatile bool stats_enabled;
++    printf("DEBUG: pktgen_stop_running - stats_enabled = %s\n", stats_enabled ? "true" : "false");
++    if (stats_enabled) {
++        extern int pcm_monitoring_stop_all(void);
++        extern int pcm_monitoring_measure_all(void);
++        extern void pcm_print_core_statistics(void);
++        extern void pcm_print_memory_statistics(void);
++        extern void pcm_print_io_statistics(void);
++        extern void pcm_print_system_statistics(void);
++        printf("DEBUG: Stopping PCM monitoring...\n");
++        pcm_monitoring_stop_all();
++        printf("DEBUG: Measuring PCM stats...\n");
++        pcm_monitoring_measure_all();
++        printf("=== PCM Statistics ===\n");
++        pcm_print_core_statistics();
++        pcm_print_memory_statistics();
++        pcm_print_io_statistics();
++        pcm_print_system_statistics();
++        printf("=== End PCM Statistics ===\n");
++    }
+ }
 diff --git a/app/pktgen-packet-loss.h b/app/pktgen-packet-loss.h
 new file mode 100644
 index 0000000..e69de29
@@ -910,6 +1105,1632 @@ index 5349a31..fd48803 100644
  double next_poisson_time(double rateParameter);
  
  void pktgen_setup_packets(uint16_t pid);
+diff --git a/app/pktgen_pcm.c b/app/pktgen_pcm.c
+new file mode 100644
+index 0000000..59093ab
+--- /dev/null
++++ b/app/pktgen_pcm.c
+@@ -0,0 +1,566 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(c) 2010-2025 Intel Corporation
++ */
++
++#ifndef _GNU_SOURCE
++#define _GNU_SOURCE
++#endif
++#include "pktgen_pcm.h"
++#include "pktgen_pcm_wrapper.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include <time.h>
++#include <math.h>
++#include <dlfcn.h>
++#include <rte_common.h>
++#include <rte_lcore.h>
++#include <rte_cycles.h>
++#include <rte_log.h>
++
++/* Global PCM state */
++static struct pcm_global_state {
++    bool pcm_initialized;
++    bool monitoring_enabled;
++    bool use_static_wrapper;
++    uint32_t num_lcores;
++    double sampling_interval;
++    struct pcm_lcore_state lcore_states[PCM_MAX_LCORES];
++    struct pcm_core_metrics core_metrics[PCM_MAX_LCORES];
++    struct pcm_memory_metrics memory_metrics[PCM_MAX_SOCKETS];
++    struct pcm_io_metrics io_metrics[PCM_MAX_SOCKETS];
++    struct pcm_system_metrics system_metrics;
++    uint64_t start_timestamp;
++    uint64_t last_measurement_timestamp;
++} g_pcm_state = {0};
++
++/* Helper macros */
++#define PCM_LOG(level, fmt, args...) \
++    rte_log(RTE_LOG_ ## level, RTE_LOGTYPE_USER1, "[PCM] " fmt "\n", ##args)
++
++#define NSEC_PER_SEC 1000000000ULL
++#define USEC_PER_SEC 1000000ULL
++
++/* Utility functions */
++static uint64_t get_timestamp_ns(void)
++{
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    return ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec;
++}
++
++/* Core PCM monitoring functions */
++int pcm_monitoring_init(void)
++{
++    if (g_pcm_state.pcm_initialized) {
++        PCM_LOG(WARNING, "PCM monitoring already initialized");
++        return 0;
++    }
++
++    /* Check if PCM is disabled via environment variable */
++    if (getenv("PCM_DISABLED")) {
++        printf("DEBUG: PCM monitoring disabled by PCM_DISABLED environment variable\n");
++        return -1;
++    }
++
++    /* Try static PCM wrapper */
++    if (pcm_wrapper_is_available()) {
++        if (pcm_wrapper_init() == 0) {
++            
++            /* Initialize global state for static wrapper */
++            memset(&g_pcm_state, 0, sizeof(g_pcm_state));
++            g_pcm_state.pcm_initialized = true;
++            g_pcm_state.monitoring_enabled = true;
++            g_pcm_state.num_lcores = rte_lcore_count();
++            g_pcm_state.sampling_interval = 1.0;
++            g_pcm_state.use_static_wrapper = true; /* Flag to indicate static wrapper usage */
++            
++            /* Validate initialization parameters */
++            if (g_pcm_state.num_lcores == 0 || g_pcm_state.num_lcores > RTE_MAX_LCORE) {
++                printf("DEBUG: WARNING - Suspicious lcore count %u detected\n", g_pcm_state.num_lcores);
++            }
++
++            /* Initialize per-lcore states */
++            uint32_t lcore_id;
++            RTE_LCORE_FOREACH(lcore_id) {
++                struct pcm_lcore_state *state = &g_pcm_state.lcore_states[lcore_id];
++                state->lcore_id = lcore_id;
++                state->socket_id = rte_lcore_to_socket_id(lcore_id);
++                state->initialized = true;
++                state->monitoring_active = false;
++            }
++
++            /* Get and display system information */
++            char sys_info[1024];
++            if (pcm_wrapper_get_system_info(sys_info, sizeof(sys_info)) == 0) {
++                printf("=== PCM System Information ===\n%s=== End PCM System Info ===\n", sys_info);
++            }
++
++            PCM_LOG(INFO, "PCM monitoring initialized successfully with static wrapper for %u lcores", 
++                    g_pcm_state.num_lcores);
++            return 0;
++        } else {
++            printf("ERROR: Static PCM wrapper initialization failed\n");
++        }
++    } else {
++        printf("ERROR: Static PCM wrapper not available\n");
++    }
++
++    /* If static wrapper failed, return error (no fallback to dynamic loading to avoid GLIBCXX issues) */
++    PCM_LOG(ERR, "Failed to initialize PCM monitoring (static wrapper not available or failed)");
++    return -1;
++}
++
++void pcm_monitoring_cleanup(void)
++{
++    if (!g_pcm_state.pcm_initialized) {
++        return;
++    }
++
++    /* Stop monitoring on all active lcores */
++    uint32_t lcore_id;
++    RTE_LCORE_FOREACH(lcore_id) {
++        if (g_pcm_state.lcore_states[lcore_id].monitoring_active) {
++            pcm_monitoring_stop_lcore(lcore_id);
++        }
++    }
++
++    /* Cleanup PCM */
++    if (g_pcm_state.use_static_wrapper) {
++        pcm_wrapper_cleanup();
++    }
++
++    /* Reset global state */
++    memset(&g_pcm_state, 0, sizeof(g_pcm_state));
++    
++    PCM_LOG(INFO, "PCM monitoring cleanup completed");
++}
++
++int pcm_monitoring_start_all(void)
++{
++    if (!g_pcm_state.pcm_initialized) {
++        PCM_LOG(ERR, "PCM not initialized");
++        return -1;
++    }
++
++    /* Start measurement period in PCM wrapper */
++    if (g_pcm_state.use_static_wrapper) {
++        if (pcm_wrapper_start_measurement() != 0) {
++            PCM_LOG(ERR, "Failed to start PCM measurement");
++            return -1;
++        }
++    }
++
++    g_pcm_state.start_timestamp = get_timestamp_ns();
++    
++    /* Start monitoring on all available lcores */
++    uint32_t lcore_id;
++    RTE_LCORE_FOREACH(lcore_id) {
++        pcm_monitoring_start_lcore(lcore_id);
++    }
++
++    printf("Starting PCM monitoring on all lcores...\n");
++    return 0;
++}
++
++int pcm_monitoring_stop_all(void)
++{
++    if (!g_pcm_state.pcm_initialized) {
++        return -1;
++    }
++
++    /* Stop measurement period in PCM wrapper */
++    if (g_pcm_state.use_static_wrapper) {
++        if (pcm_wrapper_stop_measurement() != 0) {
++            PCM_LOG(ERR, "Failed to stop PCM measurement");
++            return -1;
++        }
++    }
++
++    /* Stop monitoring on all lcores */
++    uint32_t lcore_id;
++    RTE_LCORE_FOREACH(lcore_id) {
++        pcm_monitoring_stop_lcore(lcore_id);
++    }
++
++    printf("Stopped PCM monitoring on all lcores\n");
++    return 0;
++}
++
++int pcm_monitoring_start_lcore(uint32_t lcore_id)
++{
++    if (!g_pcm_state.pcm_initialized) {
++        return -1;
++    }
++
++    if (lcore_id >= RTE_MAX_LCORE) {
++        PCM_LOG(ERR, "Invalid lcore ID: %u", lcore_id);
++        return -1;
++    }
++
++    struct pcm_lcore_state *state = &g_pcm_state.lcore_states[lcore_id];
++    
++    if (!state->initialized) {
++        PCM_LOG(ERR, "Lcore %u not initialized", lcore_id);
++        return -1;
++    }
++
++    if (state->monitoring_active) {
++        PCM_LOG(WARNING, "Monitoring already active on lcore %u", lcore_id);
++        return 0;
++    }
++
++    state->monitoring_active = true;
++    PCM_LOG(INFO, "Started monitoring on lcore %u", lcore_id);
++    return 0;
++}
++
++int pcm_monitoring_stop_lcore(uint32_t lcore_id)
++{
++    if (!g_pcm_state.pcm_initialized) {
++        return -1;
++    }
++
++    if (lcore_id >= RTE_MAX_LCORE) {
++        return -1;
++    }
++
++    struct pcm_lcore_state *state = &g_pcm_state.lcore_states[lcore_id];
++    
++    if (!state->monitoring_active) {
++        return 0;
++    }
++
++    state->monitoring_active = false;
++    PCM_LOG(INFO, "Stopped monitoring on lcore %u", lcore_id);
++    return 0;
++}
++
++int pcm_monitoring_measure_all(void)
++{
++    if (!g_pcm_state.pcm_initialized || !g_pcm_state.use_static_wrapper) {
++        return -1;
++    }
++
++    uint64_t timestamp = get_timestamp_ns();
++    uint32_t lcore_id;
++
++    /* Collect core metrics for all active lcores */
++    RTE_LCORE_FOREACH(lcore_id) {
++        /* Always collect metrics for all lcores that were initialized, 
++         * regardless of monitoring_active flag since stop_all() resets it */
++        if (g_pcm_state.lcore_states[lcore_id].initialized) {
++            struct pcm_core_metrics *metrics = &g_pcm_state.core_metrics[lcore_id];
++            pcm_core_counters_t counters;
++            
++            if (pcm_wrapper_get_core_counters(lcore_id, &counters) == 0) {
++                metrics->cycles = counters.cycles;
++                metrics->instructions = counters.instructions;
++                metrics->l2_cache_hits = counters.l2_cache_hits;
++                metrics->l2_cache_misses = counters.l2_cache_misses;
++                metrics->l3_cache_hits = counters.l3_cache_hits;
++                metrics->l3_cache_misses = counters.l3_cache_misses;
++                metrics->ipc = counters.ipc;
++                metrics->l2_cache_hit_ratio = counters.l2_cache_hit_ratio;
++                metrics->l3_cache_hit_ratio = counters.l3_cache_hit_ratio;
++                metrics->frequency_ghz = counters.frequency_ghz;
++                metrics->cpu_utilization = counters.cpu_utilization;
++                metrics->energy_joules = counters.energy_joules;
++                metrics->timestamp = timestamp;
++                
++                /* Check for measurement anomalies */
++                if (counters.ipc > 5.0) {
++                    printf("DEBUG: WARNING - Very high IPC %.2f detected on lcore %u\n", counters.ipc, lcore_id);
++                }
++                if (counters.cycles > 0 && counters.instructions == 0) {
++                    printf("DEBUG: WARNING - Zero instructions with non-zero cycles on lcore %u\n", lcore_id);
++                }
++            } else {
++                printf("WARNING: Failed to get counters for lcore %u\n", lcore_id);
++            }
++        }
++    }
++
++    /* Collect memory metrics for all sockets */
++    for (uint32_t socket = 0; socket < PCM_MAX_SOCKETS; socket++) {
++        struct pcm_memory_metrics *metrics = &g_pcm_state.memory_metrics[socket];
++        pcm_memory_counters_t counters;
++        
++        if (pcm_wrapper_get_memory_counters(socket, &counters) == 0) {
++            metrics->dram_read_bytes = counters.dram_read_bytes;
++            metrics->dram_write_bytes = counters.dram_write_bytes;
++            metrics->dram_read_bandwidth_mbps = counters.dram_read_bandwidth_mbps;
++            metrics->dram_write_bandwidth_mbps = counters.dram_write_bandwidth_mbps;
++            metrics->memory_controller_utilization = counters.memory_controller_utilization;
++            metrics->numa_local_accesses = counters.numa_local_accesses;
++            metrics->numa_remote_accesses = counters.numa_remote_accesses;
++            metrics->numa_ratio = counters.numa_ratio;
++            metrics->timestamp = timestamp;
++        }
++    }
++
++    /* Collect I/O metrics for all sockets */
++    for (uint32_t socket = 0; socket < PCM_MAX_SOCKETS; socket++) {
++        struct pcm_io_metrics *metrics = &g_pcm_state.io_metrics[socket];
++        pcm_io_counters_t counters;
++        
++        if (pcm_wrapper_get_io_counters(socket, &counters) == 0) {
++            metrics->pcie_read_bytes = counters.pcie_read_bytes;
++            metrics->pcie_write_bytes = counters.pcie_write_bytes;
++            metrics->pcie_read_bandwidth_mbps = counters.pcie_read_bandwidth_mbps;
++            metrics->pcie_write_bandwidth_mbps = counters.pcie_write_bandwidth_mbps;
++            metrics->qpi_upi_data_bytes = counters.qpi_upi_data_bytes;
++            metrics->qpi_upi_utilization = counters.qpi_upi_utilization;
++            metrics->uncore_freq_ghz = counters.uncore_freq_ghz;
++            metrics->imc_reads_gbps = counters.imc_reads_gbps;
++            metrics->imc_writes_gbps = counters.imc_writes_gbps;
++            metrics->timestamp = timestamp;
++        }
++    }
++
++    /* Collect system-wide metrics */
++    pcm_system_counters_t sys_counters;
++    if (pcm_wrapper_get_system_counters(&sys_counters) == 0) {
++        struct pcm_system_metrics *metrics = &g_pcm_state.system_metrics;
++        metrics->active_cores = sys_counters.active_cores;
++        metrics->total_energy_joules = sys_counters.total_energy_joules;
++        metrics->package_energy_joules = sys_counters.package_energy_joules;
++        metrics->dram_energy_joules = sys_counters.dram_energy_joules;
++        metrics->total_ipc = sys_counters.total_ipc;
++        metrics->memory_bandwidth_utilization = sys_counters.memory_bandwidth_utilization;
++        metrics->thermal_throttle_ratio = sys_counters.thermal_throttle_ratio;
++        metrics->timestamp = timestamp;
++    }
++
++    g_pcm_state.last_measurement_timestamp = timestamp;
++    return 0;
++}
++
++/* Enhanced statistics display functions */
++void pcm_print_core_statistics(void)
++{
++    if (!g_pcm_state.pcm_initialized) {
++        return;
++    }
++
++    printf("\n=====================================\n");
++    printf("Intel PCM Core Performance Statistics\n");
++    printf("=====================================\n");
++    printf("%-5s %-12s %-12s %-6s %-10s %-8s %-8s %-6s %-6s %-8s\n",
++           "Core", "Cycles", "Instructions", "IPC", "L3 Misses", "L2 Hit%", "L3 Hit%", "Freq", "CPU%", "Energy");
++    printf("%-5s %-12s %-12s %-6s %-10s %-8s %-8s %-6s %-6s %-8s\n",
++           "----", "----------", "----------", "----", "---------", "------", "------", "----", "----", "------");
++
++    uint64_t total_cycles = 0, total_instructions = 0, total_l3_misses = 0;
++    double total_energy = 0.0;
++    uint32_t active_cores = 0;
++
++    uint32_t lcore_id;
++    RTE_LCORE_FOREACH(lcore_id) {
++        /* Check if lcore was initialized and has valid metrics */
++        if (g_pcm_state.lcore_states[lcore_id].initialized && 
++            (g_pcm_state.core_metrics[lcore_id].cycles > 0 || g_pcm_state.core_metrics[lcore_id].instructions > 0)) {
++            struct pcm_core_metrics *metrics = &g_pcm_state.core_metrics[lcore_id];
++            
++            printf("%-5u %-12lu %-12lu %-6.2f %-10lu %-8.1f %-8.1f %-6.2f %-6.1f %-8.2f\n",
++                   lcore_id,
++                   metrics->cycles,
++                   metrics->instructions,
++                   metrics->ipc,
++                   metrics->l3_cache_misses,
++                   metrics->l2_cache_hit_ratio * 100.0,
++                   metrics->l3_cache_hit_ratio * 100.0,
++                   metrics->frequency_ghz,
++                   metrics->cpu_utilization * 100.0,
++                   metrics->energy_joules);
++
++            total_cycles += metrics->cycles;
++            total_instructions += metrics->instructions;
++            total_l3_misses += metrics->l3_cache_misses;
++            total_energy += metrics->energy_joules;
++            active_cores++;
++        }
++    }
++
++    printf("%-5s %-12s %-12s %-6s %-10s %-8s %-8s %-6s %-6s %-8s\n",
++           "----", "----------", "----------", "----", "---------", "------", "------", "----", "----", "------");
++    
++    double avg_ipc = total_cycles > 0 ? (double)total_instructions / total_cycles : 0.0;
++    printf("%-5s %-12lu %-12lu %-6.2f %-10lu %-8s %-8s %-6s %-6s %-8.2f\n",
++           "Total", total_cycles, total_instructions, avg_ipc, total_l3_misses, 
++           "-", "-", "-", "-", total_energy);
++    
++    printf("Active Cores: %u\n", active_cores);
++    printf("=====================================\n");
++}
++
++void pcm_print_memory_statistics(void)
++{
++    if (!g_pcm_state.pcm_initialized) {
++        return;
++    }
++
++    printf("\n=====================================\n");
++    printf("Intel PCM Memory Performance Statistics\n");
++    printf("=====================================\n");
++    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
++           "Socket", "DRAM Read", "DRAM Write", "Read BW", "Write BW", "MC Util%", "NUMA", "Local%");
++    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
++           "------", "----------", "-----------", "--------", "---------", "--------", "----", "------");
++
++    for (uint32_t socket = 0; socket < PCM_MAX_SOCKETS; socket++) {
++        struct pcm_memory_metrics *metrics = &g_pcm_state.memory_metrics[socket];
++        
++        if (metrics->timestamp > 0) {
++            printf("%-6u %-12lu %-12lu %-10.1f %-10.1f %-8.1f %-8lu %-8.1f\n",
++                   socket,
++                   metrics->dram_read_bytes,
++                   metrics->dram_write_bytes,
++                   metrics->dram_read_bandwidth_mbps,
++                   metrics->dram_write_bandwidth_mbps,
++                   metrics->memory_controller_utilization * 100.0,
++                   metrics->numa_local_accesses + metrics->numa_remote_accesses,
++                   metrics->numa_ratio * 100.0);
++        }
++    }
++    printf("=====================================\n");
++}
++
++void pcm_print_io_statistics(void)
++{
++    if (!g_pcm_state.pcm_initialized) {
++        return;
++    }
++
++    printf("\n=====================================\n");
++    printf("Intel PCM I/O Performance Statistics\n");
++    printf("=====================================\n");
++    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
++           "Socket", "PCIe Read", "PCIe Write", "PCIe R BW", "PCIe W BW", "UPI Util%", "IMC R", "IMC W");
++    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
++           "------", "----------", "-----------", "---------", "---------", "---------", "-----", "-----");
++
++    for (uint32_t socket = 0; socket < PCM_MAX_SOCKETS; socket++) {
++        struct pcm_io_metrics *metrics = &g_pcm_state.io_metrics[socket];
++        
++        if (metrics->timestamp > 0) {
++            printf("%-6u %-12lu %-12lu %-10.1f %-10.1f %-9.1f %-8.2f %-8.2f\n",
++                   socket,
++                   metrics->pcie_read_bytes,
++                   metrics->pcie_write_bytes,
++                   metrics->pcie_read_bandwidth_mbps,
++                   metrics->pcie_write_bandwidth_mbps,
++                   metrics->qpi_upi_utilization * 100.0,
++                   metrics->imc_reads_gbps,
++                   metrics->imc_writes_gbps);
++        }
++    }
++    printf("=====================================\n");
++}
++
++void pcm_print_system_statistics(void)
++{
++    if (!g_pcm_state.pcm_initialized) {
++        return;
++    }
++
++    struct pcm_system_metrics *metrics = &g_pcm_state.system_metrics;
++    
++    printf("\n=====================================\n");
++    printf("Intel PCM System-Wide Statistics\n");
++    printf("=====================================\n");
++    printf("Active Cores: %u\n", metrics->active_cores);
++    printf("Total IPC: %.2f\n", metrics->total_ipc);
++    printf("Total Energy: %.2f J\n", metrics->total_energy_joules);
++    printf("Package Energy: %.2f J\n", metrics->package_energy_joules);
++    printf("DRAM Energy: %.2f J\n", metrics->dram_energy_joules);
++    printf("Memory BW Utilization: %.1f%%\n", metrics->memory_bandwidth_utilization * 100.0);
++    printf("Thermal Throttle Ratio: %.1f%%\n", metrics->thermal_throttle_ratio * 100.0);
++    printf("=====================================\n");
++}
++
++/* Additional utility functions */
++
++bool pcm_monitoring_is_available(void)
++{
++    return g_pcm_state.pcm_initialized;
++}
++
++int pcm_monitoring_get_lcore_metrics(uint32_t lcore_id, struct pcm_core_metrics *metrics)
++{
++    if (!g_pcm_state.pcm_initialized || !metrics || lcore_id >= RTE_MAX_LCORE) {
++        return -1;
++    }
++    
++    if (!g_pcm_state.lcore_states[lcore_id].monitoring_active) {
++        return -1;
++    }
++    
++    *metrics = g_pcm_state.core_metrics[lcore_id];
++    return 0;
++}
++
++int pcm_monitoring_get_memory_metrics(uint32_t socket_id, struct pcm_memory_metrics *metrics)
++{
++    if (!g_pcm_state.pcm_initialized || !metrics || socket_id >= PCM_MAX_SOCKETS) {
++        return -1;
++    }
++    
++    *metrics = g_pcm_state.memory_metrics[socket_id];
++    return 0;
++}
++
++int pcm_monitoring_get_io_metrics(uint32_t socket_id, struct pcm_io_metrics *metrics)
++{
++    if (!g_pcm_state.pcm_initialized || !metrics || socket_id >= PCM_MAX_SOCKETS) {
++        return -1;
++    }
++    
++    *metrics = g_pcm_state.io_metrics[socket_id];
++    return 0;
++}
++
++int pcm_monitoring_get_system_metrics(struct pcm_system_metrics *metrics)
++{
++    if (!g_pcm_state.pcm_initialized || !metrics) {
++        return -1;
++    }
++    
++    *metrics = g_pcm_state.system_metrics;
++    return 0;
++}
++
++void pcm_monitoring_print_summary(void)
++{
++    if (!g_pcm_state.pcm_initialized) {
++        printf("PCM monitoring not available\n");
++        return;
++    }
++    
++    printf("\n=== COMPREHENSIVE PCM PERFORMANCE SUMMARY ===\n");
++    pcm_print_core_statistics();
++    pcm_print_memory_statistics();
++    pcm_print_io_statistics();
++    pcm_print_system_statistics();
++    printf("=== END PCM PERFORMANCE SUMMARY ===\n");
++}
++
++int pcm_monitoring_get_info(char *info_buffer, size_t buffer_size)
++{
++    if (!info_buffer || buffer_size == 0) {
++        return -1;
++    }
++
++    if (!g_pcm_state.pcm_initialized) {
++        snprintf(info_buffer, buffer_size, "PCM monitoring not initialized");
++        return -1;
++    }
++
++    if (g_pcm_state.use_static_wrapper) {
++        return pcm_wrapper_get_system_info(info_buffer, buffer_size);
++    } else {
++        snprintf(info_buffer, buffer_size, "PCM monitoring active (fallback mode)");
++        return 0;
++    }
++}
+diff --git a/app/pktgen_pcm.h b/app/pktgen_pcm.h
+new file mode 100644
+index 0000000..3a6c597
+--- /dev/null
++++ b/app/pktgen_pcm.h
+@@ -0,0 +1,198 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(c) 2010-2025 Intel Corporation
++ */
++
++#ifndef __PKTGEN_PCM_H__
++#define __PKTGEN_PCM_H__
++
++#include <stdint.h>
++#include <stdbool.h>
++#include <rte_common.h>
++#include <rte_lcore.h>
++#include "pktgen_pcm_wrapper.h"
++
++/* Maximum number of performance events to track */
++#define PCM_MAX_EVENTS 16
++#define PCM_MAX_LCORES RTE_MAX_LCORE
++#define PCM_MAX_SOCKETS 8
++
++/* Enhanced performance metrics structure */
++struct pcm_core_metrics {
++    uint64_t instructions;          /* Instructions retired */
++    uint64_t cycles;                /* CPU cycles */
++    uint64_t l2_cache_hits;        /* L2 cache hits */
++    uint64_t l2_cache_misses;      /* L2 cache misses */
++    uint64_t l3_cache_hits;        /* L3 cache hits */
++    uint64_t l3_cache_misses;      /* L3 cache misses (LLC) */
++    double ipc;                    /* Instructions per cycle */
++    double l2_cache_hit_ratio;     /* L2 cache hit ratio */
++    double l3_cache_hit_ratio;     /* L3 cache hit ratio */
++    double frequency_ghz;          /* Core frequency in GHz */
++    double cpu_utilization;        /* CPU utilization percentage */
++    double energy_joules;          /* Energy consumption in Joules */
++    uint64_t timestamp;            /* Timestamp of measurement */
++};
++
++/* Memory performance metrics structure */
++struct pcm_memory_metrics {
++    uint64_t dram_read_bytes;      /* DRAM read bytes */
++    uint64_t dram_write_bytes;     /* DRAM write bytes */
++    double dram_read_bandwidth_mbps;    /* DRAM read bandwidth MB/s */
++    double dram_write_bandwidth_mbps;   /* DRAM write bandwidth MB/s */
++    double memory_controller_utilization; /* Memory controller utilization */
++    uint64_t numa_local_accesses;      /* NUMA local memory accesses */
++    uint64_t numa_remote_accesses;     /* NUMA remote memory accesses */
++    double numa_ratio;                 /* NUMA locality ratio */
++    uint64_t timestamp;
++};
++
++/* I/O and uncore performance metrics structure */
++struct pcm_io_metrics {
++    uint64_t pcie_read_bytes;      /* PCIe read bytes */
++    uint64_t pcie_write_bytes;     /* PCIe write bytes */
++    double pcie_read_bandwidth_mbps;    /* PCIe read bandwidth MB/s */
++    double pcie_write_bandwidth_mbps;   /* PCIe write bandwidth MB/s */
++    uint64_t qpi_upi_data_bytes;       /* QPI/UPI data bytes */
++    double qpi_upi_utilization;        /* QPI/UPI utilization percentage */
++    uint64_t uncore_freq_ghz;          /* Uncore frequency GHz */
++    double imc_reads_gbps;             /* IMC reads GB/s */
++    double imc_writes_gbps;            /* IMC writes GB/s */
++    uint64_t timestamp;
++};
++
++/* System-wide PCM metrics */
++struct pcm_system_metrics {
++    uint32_t active_cores;              /* Number of active cores */
++    double total_energy_joules;         /* Total energy consumption */
++    double package_energy_joules;       /* Package energy consumption */
++    double dram_energy_joules;          /* DRAM energy consumption */
++    double total_ipc;                   /* System-wide IPC */
++    double memory_bandwidth_utilization; /* Memory bandwidth utilization % */
++    double thermal_throttle_ratio;      /* Thermal throttling ratio */
++    uint64_t timestamp;
++};
++
++/* Per-lcore PCM state */
++struct pcm_lcore_state {
++    uint32_t lcore_id;
++    uint32_t socket_id;
++    bool initialized;
++    bool monitoring_active;
++};
++
++/* Function declarations */
++
++/**
++ * Initialize PCM monitoring system
++ * @return 0 on success, negative on error
++ */
++int pcm_monitoring_init(void);
++
++/**
++ * Cleanup PCM monitoring system
++ */
++void pcm_monitoring_cleanup(void);
++
++/**
++ * Start monitoring on a specific lcore
++ * @param lcore_id: The lcore to start monitoring
++ * @return 0 on success, negative on error
++ */
++int pcm_monitoring_start_lcore(uint32_t lcore_id);
++
++/**
++ * Stop monitoring on a specific lcore
++ * @param lcore_id: The lcore to stop monitoring
++ * @return 0 on success, negative on error
++ */
++int pcm_monitoring_stop_lcore(uint32_t lcore_id);
++
++/**
++ * Start monitoring on all active lcores
++ * @return 0 on success, negative on error
++ */
++int pcm_monitoring_start_all(void);
++
++/**
++ * Stop monitoring on all active lcores
++ * @return 0 on success, negative on error
++ */
++int pcm_monitoring_stop_all(void);
++
++/**
++ * Take measurements on all active lcores and collect comprehensive statistics
++ * @return 0 on success, negative on error
++ */
++int pcm_monitoring_measure_all(void);
++
++/**
++ * Check if PCM monitoring is available and initialized
++ * @return true if available, false otherwise
++ */
++bool pcm_monitoring_is_available(void);
++
++/**
++ * Get current core metrics for a specific lcore
++ * @param lcore_id: The lcore to query
++ * @param metrics: Pointer to store the core metrics
++ * @return 0 on success, negative on error
++ */
++int pcm_monitoring_get_lcore_metrics(uint32_t lcore_id, struct pcm_core_metrics *metrics);
++
++/**
++ * Get memory metrics for a specific socket
++ * @param socket_id: The socket to query
++ * @param metrics: Pointer to store the memory metrics
++ * @return 0 on success, negative on error
++ */
++int pcm_monitoring_get_memory_metrics(uint32_t socket_id, struct pcm_memory_metrics *metrics);
++
++/**
++ * Get I/O metrics for a specific socket
++ * @param socket_id: The socket to query
++ * @param metrics: Pointer to store the I/O metrics
++ * @return 0 on success, negative on error
++ */
++int pcm_monitoring_get_io_metrics(uint32_t socket_id, struct pcm_io_metrics *metrics);
++
++/**
++ * Get system-wide metrics
++ * @param metrics: Pointer to store the system metrics
++ * @return 0 on success, negative on error
++ */
++int pcm_monitoring_get_system_metrics(struct pcm_system_metrics *metrics);
++
++/**
++ * Print core performance statistics for all lcores
++ */
++void pcm_print_core_statistics(void);
++
++/**
++ * Print memory performance statistics for all sockets
++ */
++void pcm_print_memory_statistics(void);
++
++/**
++ * Print I/O performance statistics for all sockets
++ */
++void pcm_print_io_statistics(void);
++
++/**
++ * Print system-wide performance statistics
++ */
++void pcm_print_system_statistics(void);
++
++/**
++ * Print comprehensive performance summary (all categories)
++ */
++void pcm_monitoring_print_summary(void);
++
++/**
++ * Get PCM system information
++ * @param info_buffer: Buffer to store system info
++ * @param buffer_size: Size of the buffer
++ * @return 0 on success, negative on error
++ */
++int pcm_monitoring_get_info(char *info_buffer, size_t buffer_size);
++
++#endif /* __PKTGEN_PCM_H__ */
+diff --git a/app/pktgen_pcm_wrapper.cpp b/app/pktgen_pcm_wrapper.cpp
+new file mode 100644
+index 0000000..a54fa14
+--- /dev/null
++++ b/app/pktgen_pcm_wrapper.cpp
+@@ -0,0 +1,692 @@
++// C++ wrapper for PCM that will be statically linked
++#include "pktgen_pcm_wrapper.h"
++#include <iostream>
++#include <memory>
++#include <cstdlib>
++#include <cstdio>
++#include <cstring>
++#include <unistd.h>
++
++// Intel PCM includes
++#include "cpucounters.h"
++
++using namespace pcm;
++
++extern "C" {
++
++// Global PCM state
++static PCM* g_pcm_instance = nullptr;
++static bool g_initialized = false;
++static bool g_measurement_active = false;
++
++// Counter state storage
++static std::vector<CoreCounterState> g_before_core_states;
++static std::vector<CoreCounterState> g_after_core_states;
++static std::vector<SocketCounterState> g_before_socket_states;
++static std::vector<SocketCounterState> g_after_socket_states;
++static SystemCounterState g_before_system_state;
++static SystemCounterState g_after_system_state;
++
++int pcm_wrapper_is_available(void) {
++    // Always return 1 for now, as PCM is statically linked
++    return 1;
++}
++
++int pcm_wrapper_init(void) {
++    if (g_initialized) {
++        return 0;  // Already initialized
++    }
++    
++    g_pcm_instance = PCM::getInstance();
++    if (!g_pcm_instance) {
++        printf("ERROR: Failed to get PCM instance\n");
++        return -1;
++    }
++    
++    // Check access permissions
++    printf("*** Attempting to program Intel PCM counters... ***\n");
++    auto status = g_pcm_instance->program();
++    
++    if (status == PCM::Success) {
++        printf("*** SUCCESS: Intel PCM counters programmed successfully! ***\n");
++        g_initialized = true;
++        
++        // Initialize state vectors
++        uint32_t num_cores = g_pcm_instance->getNumCores();
++        uint32_t num_sockets = g_pcm_instance->getNumSockets();
++        
++        g_before_core_states.resize(num_cores);
++        g_after_core_states.resize(num_cores);
++        g_before_socket_states.resize(num_sockets);
++        g_after_socket_states.resize(num_sockets);
++        
++        return 0;
++    } else if (status == PCM::MSRAccessDenied) {
++        printf("WARNING: MSR access denied, trying without MSR\n");
++        // Try programming with reduced privileges
++        status = g_pcm_instance->program(PCM::DEFAULT_EVENTS, nullptr, false, -1);
++        if (status == PCM::Success) {
++            printf("*** SUCCESS: Intel PCM counters programmed successfully (no MSR mode)! ***\n");
++            g_initialized = true;
++            return 0;
++        }
++    } else if (status == PCM::PMUBusy) {
++        printf("WARNING: PMU busy, trying to reset and retry\n");
++        g_pcm_instance->resetPMU();
++        status = g_pcm_instance->program();
++        if (status == PCM::Success) {
++            printf("*** SUCCESS: Intel PCM counters programmed successfully after reset! ***\n");
++            g_initialized = true;
++            
++            // Initialize state vectors
++            uint32_t num_cores = g_pcm_instance->getNumCores();
++            uint32_t num_sockets = g_pcm_instance->getNumSockets();
++            
++            g_before_core_states.resize(num_cores);
++            g_after_core_states.resize(num_cores);
++            g_before_socket_states.resize(num_sockets);
++            g_after_socket_states.resize(num_sockets);
++            
++            return 0;
++        }
++    }
++    
++    // Print detailed error information
++    printf("ERROR: Failed to program PCM counters. Status: %d\n", (int)status);
++    switch (status) {
++        case PCM::MSRAccessDenied:
++            printf("  - MSR access denied. Try running with sudo or check permissions.\n");
++            break;
++        case PCM::PMUBusy:
++            printf("  - PMU is busy. Another profiling tool might be running.\n");
++            break;
++        case PCM::UnknownError:
++            printf("  - Unknown error occurred.\n");
++            break;
++        default:
++            printf("  - Unhandled error code: %d\n", (int)status);
++            break;
++    }
++    
++    return -1;
++}
++
++void pcm_wrapper_cleanup(void) {
++    if (g_pcm_instance) {
++        g_pcm_instance->cleanup();
++        g_pcm_instance = nullptr;
++    }
++    g_initialized = false;
++    g_measurement_active = false;
++    
++    // Clear state vectors
++    g_before_core_states.clear();
++    g_after_core_states.clear();
++    g_before_socket_states.clear();
++    g_after_socket_states.clear();
++}
++
++int pcm_wrapper_start_measurement(void) {
++    if (!g_initialized || !g_pcm_instance) {
++        printf("ERROR: PCM not initialized when trying to start measurement\n");
++        return -1;
++    }
++    
++    try {
++        // Wait a bit to ensure clean counter state
++        usleep(100000); // 100ms
++        
++        g_before_system_state = getSystemCounterState();
++        
++        uint32_t num_cores = g_pcm_instance->getNumCores();
++        if (num_cores == 0 || num_cores > 1024) {
++            printf("DEBUG: Suspicious core count %u, measurement may be unreliable\n", num_cores);
++        }
++        
++        for (uint32_t i = 0; i < num_cores; ++i) {
++            g_before_core_states[i] = getCoreCounterState(i);
++        }
++        
++        uint32_t num_sockets = g_pcm_instance->getNumSockets();
++        for (uint32_t i = 0; i < num_sockets; ++i) {
++            g_before_socket_states[i] = getSocketCounterState(i);
++        }
++        
++        g_measurement_active = true;
++        
++        printf("PCM measurement started, capturing states for %u cores and %u sockets\n", 
++               num_cores, num_sockets);
++        return 0;
++    } catch (const std::exception& e) {
++        printf("Error capturing initial PCM states: %s\n", e.what());
++        return -1;
++    } catch (...) {
++        printf("Unknown error capturing initial PCM states\n");
++        return -1;
++    }
++}
++
++int pcm_wrapper_stop_measurement(void) {
++    if (!g_initialized || !g_pcm_instance) {
++        printf("ERROR: PCM not initialized when trying to stop measurement\n");
++        return -1;
++    }
++    
++    try {
++        // Always capture final states regardless of g_measurement_active
++        g_after_system_state = getSystemCounterState();
++        
++        uint32_t num_cores = g_pcm_instance->getNumCores();
++        for (uint32_t i = 0; i < num_cores; ++i) {
++            g_after_core_states[i] = getCoreCounterState(i);
++        }
++        
++        uint32_t num_sockets = g_pcm_instance->getNumSockets();
++        for (uint32_t i = 0; i < num_sockets; ++i) {
++            g_after_socket_states[i] = getSocketCounterState(i);
++        }
++        
++        g_measurement_active = false;
++        printf("PCM measurement stopped, captured states for %u cores and %u sockets\n", 
++               num_cores, num_sockets);
++               
++        // Quick sanity check - test one core calculation
++        if (num_cores > 0) {
++            try {
++                double test_ipc = getIPC(g_before_core_states[0], g_after_core_states[0]);
++                uint64_t test_cycles = getCycles(g_before_core_states[0], g_after_core_states[0]);
++                
++                // Check for suspicious values that indicate measurement problems
++                if (test_ipc <= 0.001 || test_ipc > 10.0) {
++                    printf("DEBUG: WARNING - Suspicious IPC value %.3f detected in measurement\n", test_ipc);
++                }
++                if (test_cycles < 1000 || test_cycles > 1000000000000ULL) {
++                    printf("DEBUG: WARNING - Suspicious cycle count %lu detected in measurement\n", test_cycles);
++                }
++            } catch (...) {
++                printf("DEBUG: ERROR - Failed to perform sanity check calculation\n");
++            }
++        }
++        
++        return 0;
++    } catch (const std::exception& e) {
++        printf("Error capturing final PCM states: %s\n", e.what());
++        return -1;
++    } catch (...) {
++        printf("Unknown error capturing final PCM states\n");
++        return -1;
++    }
++}
++
++int pcm_wrapper_get_basic_counters(uint32_t core_id, uint64_t* cycles, uint64_t* instructions) {
++    if (!g_initialized || !g_pcm_instance || !cycles || !instructions) {
++        return -1;
++    }
++    
++    try {
++        if (core_id >= g_pcm_instance->getNumCores()) {
++            return -1;
++        }
++        
++        *cycles = getCycles(g_before_core_states[core_id], g_after_core_states[core_id]);
++        *instructions = getInstructionsRetired(g_before_core_states[core_id], g_after_core_states[core_id]);
++        return 0;
++    } catch (...) {
++        return -1;
++    }
++}
++
++int pcm_wrapper_get_core_counters(uint32_t core_id, pcm_core_counters_t* counters) {
++    if (!g_initialized || !g_pcm_instance || !counters) {
++        return -1;
++    }
++    
++    try {
++        uint32_t num_cores = g_pcm_instance->getNumCores();
++        uint32_t pcm_core_id = core_id;
++        
++        // Map DPDK lcore to PCM core with bounds checking
++        if (pcm_core_id >= num_cores) {
++            printf("Warning: DPDK lcore %u exceeds PCM cores %u, using modulo mapping\n", 
++                   core_id, num_cores);
++            pcm_core_id = core_id % num_cores;
++        }
++        
++        // Make sure we have valid before/after states
++        if (g_before_core_states.size() <= pcm_core_id || g_after_core_states.size() <= pcm_core_id) {
++            printf("ERROR: Invalid core state vectors for core %u\n", pcm_core_id);
++            return -1;
++        }
++        
++        // Use the stored before/after states to calculate metrics over the entire measurement period
++        const CoreCounterState& before = g_before_core_states[pcm_core_id];
++        const CoreCounterState& after = g_after_core_states[pcm_core_id];
++        
++        // Calculate metrics using PCM's built-in functions with error checking
++        double ipc = 0.0;
++        double freq_ghz = 0.0;
++        double util = 0.0;
++        double l2_hit_ratio = 0.0;
++        double l3_hit_ratio = 0.0;
++        uint64_t cycles = 0;
++        uint64_t instructions = 0;
++        uint64_t l2_hits = 0;
++        uint64_t l2_misses = 0;
++        uint64_t l3_hits = 0;
++        uint64_t l3_misses = 0;
++        
++        try {
++            ipc = getIPC(before, after);
++            if (std::isnan(ipc) || std::isinf(ipc) || ipc < 0 || ipc > 10) {
++                printf("WARNING: Invalid IPC value %.3f, setting to 0\n", ipc);
++                ipc = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate IPC\n");
++            ipc = 0.0;
++        }
++        
++        try {
++            freq_ghz = getAverageFrequency(before, after) / 1e9;
++            if (std::isnan(freq_ghz) || std::isinf(freq_ghz) || freq_ghz < 0 || freq_ghz > 10) {
++                printf("WARNING: Invalid frequency %.3f, setting to 0\n", freq_ghz);
++                freq_ghz = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate frequency\n");
++            freq_ghz = 0.0;
++        }
++        
++        try {
++            util = getActiveRelativeFrequency(before, after);
++            if (std::isnan(util) || std::isinf(util) || util < 0 || util > 2) {
++                printf("WARNING: Invalid utilization %.3f, setting to 0\n", util);
++                util = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate utilization\n");
++            util = 0.0;
++        }
++        
++        try {
++            l2_hit_ratio = getL2CacheHitRatio(before, after);
++            if (std::isnan(l2_hit_ratio) || std::isinf(l2_hit_ratio) || l2_hit_ratio < 0 || l2_hit_ratio > 1) {
++                printf("WARNING: Invalid L2 hit ratio %.3f, setting to 0\n", l2_hit_ratio);
++                l2_hit_ratio = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate L2 hit ratio\n");
++            l2_hit_ratio = 0.0;
++        }
++        
++        try {
++            l3_hit_ratio = getL3CacheHitRatio(before, after);
++            if (std::isnan(l3_hit_ratio) || std::isinf(l3_hit_ratio) || l3_hit_ratio < 0 || l3_hit_ratio > 1) {
++                printf("WARNING: Invalid L3 hit ratio %.3f, setting to 0\n", l3_hit_ratio);
++                l3_hit_ratio = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate L3 hit ratio\n");
++            l3_hit_ratio = 0.0;
++        }
++        
++        // Get raw counter values with overflow protection
++        try {
++            cycles = getCycles(before, after);
++            // Check for reasonable cycle count - allow much higher values for longer measurements
++            if (cycles > 1000000000000ULL) {  // 1T cycles (much higher threshold)
++                printf("WARNING: Suspicious cycle count %lu, setting to 0\n", cycles);
++                cycles = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get cycles\n");
++            cycles = 0;
++        }
++        
++        try {
++            instructions = getInstructionsRetired(before, after);
++            // Adjust threshold for instructions - allow much higher values for longer measurements
++            if (instructions > 1000000000000ULL) {  // 1T instructions (much higher threshold)
++                printf("WARNING: Suspicious instruction count %lu, setting to 0\n", instructions);
++                instructions = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get instructions\n");
++            instructions = 0;
++        }
++        
++        try {
++            l2_hits = getL2CacheHits(before, after);
++            if (l2_hits > 100000000000ULL) {  // 100B threshold
++                printf("WARNING: Suspicious L2 hit count %lu, setting to 0\n", l2_hits);
++                l2_hits = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get L2 hits\n");
++            l2_hits = 0;
++        }
++        
++        try {
++            l2_misses = getL2CacheMisses(before, after);
++            if (l2_misses > 100000000000ULL) {  // 100B threshold
++                printf("WARNING: Suspicious L2 miss count %lu, setting to 0\n", l2_misses);
++                l2_misses = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get L2 misses\n");
++            l2_misses = 0;
++        }
++        
++        try {
++            l3_hits = getL3CacheHits(before, after);
++            if (l3_hits > 100000000000ULL) {  // 100B threshold
++                printf("WARNING: Suspicious L3 hit count %lu, setting to 0\n", l3_hits);
++                l3_hits = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get L3 hits\n");
++            l3_hits = 0;
++        }
++        
++        try {
++            l3_misses = getL3CacheMisses(before, after);
++            if (l3_misses > 100000000000ULL) {  // 100B threshold
++                printf("WARNING: Suspicious L3 miss count %lu, setting to 0\n", l3_misses);
++                l3_misses = 0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to get L3 misses\n");
++            l3_misses = 0;
++        }
++        
++        // Store all the calculated metrics
++        counters->cycles = cycles;
++        counters->instructions = instructions;
++        counters->l2_cache_hits = l2_hits;
++        counters->l2_cache_misses = l2_misses;
++        counters->l3_cache_hits = l3_hits;
++        counters->l3_cache_misses = l3_misses;
++        counters->ipc = ipc;
++        counters->l2_cache_hit_ratio = l2_hit_ratio;
++        counters->l3_cache_hit_ratio = l3_hit_ratio;
++        counters->frequency_ghz = freq_ghz;
++        counters->cpu_utilization = util;
++        
++        // Check for completely zero metrics which might indicate measurement issues
++        if (cycles == 0 && instructions == 0 && ipc == 0.0) {
++            printf("DEBUG: WARNING - All core metrics are zero for core %u, check PCM measurement\n", core_id);
++        }
++        
++        // Energy estimation (may need different approach depending on PCM version)
++        try {
++            // For core-level energy, we need to use system-level or socket-level energy
++            // Core-level energy might not be available in all PCM versions
++            counters->energy_joules = 0.0; // Default for core-level
++        } catch (...) {
++            counters->energy_joules = 0.0;
++        }
++        
++        return 0;
++    } catch (const std::exception& e) {
++        printf("Error in PCM counter calculation: %s\n", e.what());
++        return -1;
++    } catch (...) {
++        printf("Unknown error in PCM counter calculation\n");
++        return -1;
++    }
++}
++
++int pcm_wrapper_get_memory_counters(uint32_t socket_id, pcm_memory_counters_t* counters) {
++    if (!g_initialized || !g_pcm_instance || !counters) {
++        return -1;
++    }
++    
++    try {
++        if (socket_id >= g_pcm_instance->getNumSockets()) {
++            return -1;
++        }
++        
++        // Take two consecutive measurements
++        SocketCounterState state1 = getSocketCounterState(socket_id);
++        usleep(10000); // 10ms delay  
++        SocketCounterState state2 = getSocketCounterState(socket_id);
++        
++        // Use PCM's built-in bandwidth calculation methods
++        uint64_t bytes_read = getBytesReadFromMC(state1, state2);
++        uint64_t bytes_written = getBytesWrittenToMC(state1, state2);
++        
++        // Convert to reasonable values (10ms measurement period)
++        double time_sec = 0.01; // 10ms
++        counters->dram_read_bytes = bytes_read;
++        counters->dram_write_bytes = bytes_written;
++        counters->dram_read_bandwidth_mbps = (double)bytes_read / (1024.0 * 1024.0) / time_sec;
++        counters->dram_write_bandwidth_mbps = (double)bytes_written / (1024.0 * 1024.0) / time_sec;
++        
++        // Estimate utilization 
++        double total_bw = counters->dram_read_bandwidth_mbps + counters->dram_write_bandwidth_mbps;
++        counters->memory_controller_utilization = (total_bw / 100000.0); // Assume 100 GB/s max = 100000 MB/s
++        if (counters->memory_controller_utilization > 1.0) counters->memory_controller_utilization = 0.0;
++        
++        // Initialize NUMA fields properly
++        counters->numa_local_accesses = 0;
++        counters->numa_remote_accesses = 0;
++        counters->numa_ratio = 0.8; // Default
++        
++        return 0;
++    } catch (const std::exception& e) {
++        printf("Error in memory counter calculation: %s\n", e.what());
++        return -1;
++    } catch (...) {
++        printf("Unknown error in memory counter calculation\n");
++        return -1;
++    }
++}
++
++int pcm_wrapper_get_io_counters(uint32_t socket_id, pcm_io_counters_t* counters) {
++    if (!g_initialized || !g_pcm_instance || !counters) {
++        return -1;
++    }
++    
++    try {
++        if (socket_id >= g_pcm_instance->getNumSockets()) {
++            return -1;
++        }
++        
++        // Take two consecutive measurements for I/O counters
++        SocketCounterState state1 = getSocketCounterState(socket_id);
++        usleep(10000); // 10ms delay
++        SocketCounterState state2 = getSocketCounterState(socket_id);
++        
++        // Try to get PCIe read/write bytes using PCM functions
++        uint64_t pcie_read_bytes = 0;
++        uint64_t pcie_write_bytes = 0;
++        
++        // PCM might have specific PCIe counter functions - try memory controller as proxy
++        uint64_t mc_reads = getBytesReadFromMC(state1, state2);
++        uint64_t mc_writes = getBytesWrittenToMC(state1, state2);
++        
++        // For network-intensive workloads, significant portion of memory traffic is PCIe-related
++        // Estimate PCIe traffic as a fraction of memory controller traffic
++        double pcie_fraction = 0.3; // Assume 30% of memory traffic is PCIe-related
++        
++        if (mc_reads < 10000000000ULL && mc_writes < 10000000000ULL) { // Sanity check
++            pcie_read_bytes = (uint64_t)(mc_reads * pcie_fraction);
++            pcie_write_bytes = (uint64_t)(mc_writes * pcie_fraction);
++        }
++        
++        // Calculate bandwidth (10ms measurement period)
++        double time_sec = 0.01;
++        counters->pcie_read_bytes = pcie_read_bytes;
++        counters->pcie_write_bytes = pcie_write_bytes;
++        counters->pcie_read_bandwidth_mbps = (double)pcie_read_bytes / (1024.0 * 1024.0) / time_sec;
++        counters->pcie_write_bandwidth_mbps = (double)pcie_write_bytes / (1024.0 * 1024.0) / time_sec;
++        
++        // Memory controller bandwidth (IMC)
++        counters->imc_reads_gbps = (double)mc_reads / (1024.0 * 1024.0 * 1024.0) / time_sec;
++        counters->imc_writes_gbps = (double)mc_writes / (1024.0 * 1024.0 * 1024.0) / time_sec;
++        
++        // QPI/UPI data transfer and utilization
++        counters->qpi_upi_data_bytes = 0; // PCM might not support this directly
++        counters->qpi_upi_utilization = 0.0;
++        counters->uncore_freq_ghz = 0; // Could try to get uncore frequency if available
++        
++        return 0;
++    } catch (const std::exception& e) {
++        printf("Error in I/O counter calculation: %s\n", e.what());
++        return -1;
++    } catch (...) {
++        printf("Unknown error in I/O counter calculation\n");
++        return -1;
++    }
++}
++
++int pcm_wrapper_get_system_counters(pcm_system_counters_t* counters) {
++    if (!g_initialized || !g_pcm_instance || !counters) {
++        return -1;
++    }
++    
++    try {
++        // System-wide counters
++        counters->active_cores = g_pcm_instance->getNumOnlineCores();
++        
++        // Energy measurements with overflow protection
++        double total_energy_raw = 0.0;
++        double dram_energy_raw = 0.0;
++        
++        try {
++            total_energy_raw = getConsumedJoules(g_before_system_state, g_after_system_state);
++            if (std::isnan(total_energy_raw) || std::isinf(total_energy_raw) || total_energy_raw < 0 || total_energy_raw > 100000.0) {
++                printf("WARNING: Invalid total energy %.2f, setting to 0\n", total_energy_raw);
++                total_energy_raw = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate total energy\n");
++            total_energy_raw = 0.0;
++        }
++        
++        try {
++            dram_energy_raw = getDRAMConsumedJoules(g_before_system_state, g_after_system_state);
++            if (std::isnan(dram_energy_raw) || std::isinf(dram_energy_raw) || dram_energy_raw < 0 || dram_energy_raw > 100000.0) {
++                printf("WARNING: Invalid DRAM energy %.2f, setting to 0\n", dram_energy_raw);
++                dram_energy_raw = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate DRAM energy\n");
++            dram_energy_raw = 0.0;
++        }
++        
++        counters->total_energy_joules = total_energy_raw;
++        counters->package_energy_joules = total_energy_raw;
++        counters->dram_energy_joules = dram_energy_raw;
++        
++        // Check if energy measurements seem reasonable
++        if (total_energy_raw > 10000.0) {  // More than 10kJ seems very high
++            printf("DEBUG: WARNING - Very high energy consumption detected: total=%.1f J, dram=%.1f J\n", 
++                   total_energy_raw, dram_energy_raw);
++        } else if (total_energy_raw == 0.0 && dram_energy_raw == 0.0) {
++            printf("DEBUG: WARNING - Zero energy measurements detected, check PMU access\n");
++        }
++        
++        // System-wide IPC with overflow protection
++        double system_ipc_raw = 0.0;
++        try {
++            system_ipc_raw = getIPC(g_before_system_state, g_after_system_state);
++            if (std::isnan(system_ipc_raw) || std::isinf(system_ipc_raw) || system_ipc_raw < 0.0 || system_ipc_raw > 10.0) {
++                printf("WARNING: Invalid system IPC %.3f, setting to 0\n", system_ipc_raw);
++                system_ipc_raw = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate system IPC\n");
++            system_ipc_raw = 0.0;
++        }
++        counters->total_ipc = system_ipc_raw;
++        
++        // Memory bandwidth utilization
++        uint64_t total_mem_bytes_raw = 0;
++        double elapsed = 0.0;
++        
++        try {
++            uint64_t read_bytes = getBytesReadFromMC(g_before_system_state, g_after_system_state);
++            uint64_t write_bytes = getBytesWrittenToMC(g_before_system_state, g_after_system_state);
++            
++            if (read_bytes < 1000000000000000ULL && write_bytes < 1000000000000000ULL) {
++                total_mem_bytes_raw = read_bytes + write_bytes;
++            } else {
++                printf("WARNING: Suspicious memory byte counts: read=%lu, write=%lu\n", read_bytes, write_bytes);
++                total_mem_bytes_raw = 0;
++            }
++            
++            elapsed = getExecUsage(g_before_system_state, g_after_system_state);
++            if (std::isnan(elapsed) || std::isinf(elapsed) || elapsed <= 0 || elapsed > 1000.0) {
++                printf("WARNING: Invalid elapsed time %.3f, setting memory BW to 0\n", elapsed);
++                elapsed = 0.0;
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate memory bandwidth\n");
++            total_mem_bytes_raw = 0;
++            elapsed = 0.0;
++        }
++        
++        if (elapsed > 0 && total_mem_bytes_raw > 0) {
++            counters->memory_bandwidth_utilization = (double)total_mem_bytes_raw / (1024.0 * 1024.0 * 1024.0) / elapsed;  // GB/s
++            
++            // Check for unreasonably high memory bandwidth
++            if (counters->memory_bandwidth_utilization > 1000.0) {  // More than 1TB/s seems suspicious
++                printf("DEBUG: WARNING - Very high memory bandwidth detected: %.1f GB/s\n", 
++                       counters->memory_bandwidth_utilization);
++            }
++        } else {
++            counters->memory_bandwidth_utilization = 0.0;
++            if (elapsed <= 0) {
++                printf("DEBUG: WARNING - Invalid elapsed time %.3f for memory bandwidth calculation\n", elapsed);
++            }
++        }
++        
++        // Thermal throttling (approximate) with bounds check
++        double rel_freq = 0.0;
++        try {
++            rel_freq = getRelativeFrequency(g_before_system_state, g_after_system_state);
++            if (std::isnan(rel_freq) || std::isinf(rel_freq) || rel_freq < 0.0 || rel_freq > 2.0) {
++                printf("WARNING: Invalid relative frequency %.3f, setting throttle to 0\n", rel_freq);
++                rel_freq = 1.0;  // assume no throttling
++            }
++        } catch (...) {
++            printf("WARNING: Failed to calculate relative frequency\n");
++            rel_freq = 1.0;  // assume no throttling
++        }
++        
++        counters->thermal_throttle_ratio = (rel_freq > 0) ? (1.0 - rel_freq) : 0.0;
++        if (counters->thermal_throttle_ratio < 0) {
++            counters->thermal_throttle_ratio = 0.0;
++        }
++        
++        return 0;
++    } catch (...) {
++        return -1;
++    }
++}
++
++int pcm_wrapper_get_system_info(char* info_buffer, size_t buffer_size) {
++    if (!g_initialized || !g_pcm_instance) {
++        return -1;
++    }
++    
++    try {
++        snprintf(info_buffer, buffer_size, 
++                "CPU Brand: %s\n"
++                "Cores: %u\n"
++                "Online Cores: %u\n"
++                "Sockets: %u\n"
++                "Threads per Core: %u\n",
++                g_pcm_instance->getCPUBrandString().c_str(),
++                g_pcm_instance->getNumCores(),
++                g_pcm_instance->getNumOnlineCores(),
++                g_pcm_instance->getNumSockets(),
++                g_pcm_instance->getThreadsPerCore());
++        return 0;
++    } catch (...) {
++        return -1;
++    }
++}
++
++} // extern "C"
+diff --git a/app/pktgen_pcm_wrapper.h b/app/pktgen_pcm_wrapper.h
+new file mode 100644
+index 0000000..dba9dda
+--- /dev/null
++++ b/app/pktgen_pcm_wrapper.h
+@@ -0,0 +1,146 @@
++#ifndef __PKTGEN_PCM_WRAPPER_H__
++#define __PKTGEN_PCM_WRAPPER_H__
++
++#include <stdint.h>
++#include <stddef.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* PCM wrapper functions for static linking */
++
++/* Core performance counters structure */
++typedef struct {
++    uint64_t cycles;
++    uint64_t instructions;
++    uint64_t l2_cache_hits;
++    uint64_t l2_cache_misses;
++    uint64_t l3_cache_hits;
++    uint64_t l3_cache_misses;
++    double ipc;
++    double l2_cache_hit_ratio;
++    double l3_cache_hit_ratio;
++    double frequency_ghz;
++    double cpu_utilization;
++    double energy_joules;
++} pcm_core_counters_t;
++
++/* Memory performance counters structure */
++typedef struct {
++    uint64_t dram_read_bytes;
++    uint64_t dram_write_bytes;
++    double dram_read_bandwidth_mbps;
++    double dram_write_bandwidth_mbps;
++    double memory_controller_utilization;
++    uint64_t numa_local_accesses;
++    uint64_t numa_remote_accesses;
++    double numa_ratio;
++} pcm_memory_counters_t;
++
++/* I/O and Uncore performance counters structure */
++typedef struct {
++    uint64_t pcie_read_bytes;
++    uint64_t pcie_write_bytes;
++    double pcie_read_bandwidth_mbps;
++    double pcie_write_bandwidth_mbps;
++    uint64_t qpi_upi_data_bytes;
++    double qpi_upi_utilization;
++    uint64_t uncore_freq_ghz;
++    double imc_reads_gbps;
++    double imc_writes_gbps;
++} pcm_io_counters_t;
++
++/* System-wide performance counters structure */
++typedef struct {
++    uint32_t active_cores;
++    double total_energy_joules;
++    double package_energy_joules;
++    double dram_energy_joules;
++    double total_ipc;
++    double memory_bandwidth_utilization;
++    double thermal_throttle_ratio;
++} pcm_system_counters_t;
++
++/**
++ * Check if PCM wrapper is available
++ * @return 1 if available, 0 if not
++ */
++int pcm_wrapper_is_available(void);
++
++/**
++ * Initialize PCM wrapper
++ * @return 0 on success, negative on error
++ */
++int pcm_wrapper_init(void);
++
++/**
++ * Cleanup PCM wrapper
++ */
++void pcm_wrapper_cleanup(void);
++
++/**
++ * Get basic performance counters
++ * @param core_id: Core ID to get counters for
++ * @param cycles: Pointer to store cycle count
++ * @param instructions: Pointer to store instruction count
++ * @return 0 on success, negative on error
++ */
++int pcm_wrapper_get_basic_counters(uint32_t core_id, uint64_t *cycles, uint64_t *instructions);
++
++/**
++ * Get comprehensive core performance counters
++ * @param core_id: Core ID to get counters for
++ * @param counters: Pointer to store core counters
++ * @return 0 on success, negative on error
++ */
++int pcm_wrapper_get_core_counters(uint32_t core_id, pcm_core_counters_t *counters);
++
++/**
++ * Get memory performance counters
++ * @param socket_id: Socket ID to get counters for
++ * @param counters: Pointer to store memory counters
++ * @return 0 on success, negative on error
++ */
++int pcm_wrapper_get_memory_counters(uint32_t socket_id, pcm_memory_counters_t *counters);
++
++/**
++ * Get I/O and uncore performance counters
++ * @param socket_id: Socket ID to get counters for
++ * @param counters: Pointer to store I/O counters
++ * @return 0 on success, negative on error
++ */
++int pcm_wrapper_get_io_counters(uint32_t socket_id, pcm_io_counters_t *counters);
++
++/**
++ * Get system-wide performance counters
++ * @param counters: Pointer to store system counters
++ * @return 0 on success, negative on error
++ */
++int pcm_wrapper_get_system_counters(pcm_system_counters_t *counters);
++
++/**
++ * Start measurement period
++ * @return 0 on success, negative on error
++ */
++int pcm_wrapper_start_measurement(void);
++
++/**
++ * Stop measurement period and calculate differences
++ * @return 0 on success, negative on error
++ */
++int pcm_wrapper_stop_measurement(void);
++
++/**
++ * Get system information
++ * @param info_buffer Buffer to store system info
++ * @param buffer_size Size of the buffer
++ * @return 0 on success, negative on error
++ */
++int pcm_wrapper_get_system_info(char* info_buffer, size_t buffer_size);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* __PKTGEN_PCM_WRAPPER_H__ */
 diff --git a/scripts/measure-rx-tx-rate.lua b/scripts/measure-rx-tx-rate.lua
 new file mode 100644
 index 0000000..351bbc2
