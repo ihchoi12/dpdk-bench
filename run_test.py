@@ -189,20 +189,39 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
             with open(pktgen_file, "r", encoding='utf-8', errors='ignore') as file:
                 pktgen_text = file.read()
                 
-            # Look for Total RX/TX packets in Pktgen output
-            # Pattern: "Total    257710936    623995552"
-            total_matches = re.findall(r'Total\s+(\d+)\s+(\d+)', pktgen_text)
-            if total_matches:
-                # Use the last occurrence (most recent stats)
-                pktgen_rx_pkts = int(total_matches[-1][0])
-                pktgen_tx_pkts = int(total_matches[-1][1])
+            # Look for Total RX/TX packets in PKTGEN Packet Statistics Summary section only
+            # Pattern: "Total    384740568    611909280                          59.0"
+            # Look for the section between "PKTGEN Packet Statistics Summary" and "====="
+            packet_stats_pattern = r'PKTGEN Packet Statistics Summary.*?Total\s+(\d+)\s+(\d+).*?====='
+            packet_stats_match = re.search(packet_stats_pattern, pktgen_text, re.DOTALL)
+            if packet_stats_match:
+                pktgen_rx_pkts = int(packet_stats_match.group(1))
+                pktgen_tx_pkts = int(packet_stats_match.group(2))
                 pktgen_status = 'success'
-                print(f"DEBUG Pktgen: Found {len(total_matches)} Total lines, using last one: RX={pktgen_rx_pkts}, TX={pktgen_tx_pkts}")
-            elif 'Error' in pktgen_text or 'error' in pktgen_text:
-                pktgen_status = 'error'
+                print(f"DEBUG Pktgen: Found PKTGEN packet statistics Total: RX={pktgen_rx_pkts}, TX={pktgen_tx_pkts}")
             else:
-                pktgen_status = 'running'
-                print(f"DEBUG Pktgen: No Total line found in {pktgen_file}")
+                # If no Total line found, try to sum individual lcore stats
+                # Pattern: "1        50349059     0            10.0       0.0        100.0"
+                lcore_matches = re.findall(r'^\s*(\d+)\s+(\d+)\s+(\d+)\s+[\d\.]+\s+[\d\.]+\s+[\d\.]+', pktgen_text, re.MULTILINE)
+                if lcore_matches:
+                    # Remove duplicates by using unique lcore IDs (take last occurrence of each lcore)
+                    lcore_dict = {}
+                    for match in lcore_matches:
+                        lcore_id = int(match[0])
+                        lcore_dict[lcore_id] = (int(match[1]), int(match[2]))  # (RX, TX)
+                    
+                    pktgen_rx_pkts = sum(rx for rx, tx in lcore_dict.values())
+                    pktgen_tx_pkts = sum(tx for rx, tx in lcore_dict.values())
+                    pktgen_status = 'success'
+                    print(f"DEBUG Pktgen: No Total line found, summed {len(lcore_dict)} unique lcore stats: RX={pktgen_rx_pkts}, TX={pktgen_tx_pkts}")
+                elif 'Error' in pktgen_text or 'error' in pktgen_text:
+                    pktgen_status = 'error'
+                else:
+                    pktgen_status = 'running'
+                    print(f"DEBUG Pktgen: No Total or lcore lines found in {pktgen_file}")
+                    # Debug: show first few lines to understand content
+                    lines = pktgen_text.split('\n')[:10]
+                    print(f"DEBUG Pktgen: First 10 lines: {lines}")
         except Exception as e:
             print(f"ERROR parsing Pktgen file {pktgen_file}: {e}")
             pktgen_status = 'error'
