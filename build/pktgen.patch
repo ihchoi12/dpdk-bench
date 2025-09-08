@@ -3061,10 +3061,10 @@ index 0000000..86cde97
 +print("====================================\n")
 diff --git a/scripts/simple-tx-test.lua b/scripts/simple-tx-test.lua
 new file mode 100644
-index 0000000..23bead8
+index 0000000..87b72c6
 --- /dev/null
 +++ b/scripts/simple-tx-test.lua
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,84 @@
 +-- RX/TX Rate Measurement Script (based on measure-tx-rate.lua)
 +
 +-- Since we run from Pktgen-DPDK directory, just add current directory to path
@@ -3074,6 +3074,7 @@ index 0000000..23bead8
 +
 +local port = 0
 +local sleeptime = tonumber(os.getenv("PKTGEN_DURATION")) or 5
++local packet_size = tonumber(os.getenv("PKTGEN_PACKET_SIZE")) or 64
 +
 +pktgen.stop(port)
 +pktgen.clear(port)
@@ -3081,7 +3082,7 @@ index 0000000..23bead8
 +pktgen.delay(100)
 +
 +-- Configuration (same as measure-tx-rate.lua)
-+pktgen.set(port, "size", 64)
++pktgen.set(port, "size", packet_size)
 +pktgen.set(port, "rate", 100)  -- 100% rate to utilize multiple cores
 +pktgen.set(port, "count", 0)   -- Continuous transmission (0 = infinite)
 +

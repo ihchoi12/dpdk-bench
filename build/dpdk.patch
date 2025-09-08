@@ -2156,7 +2156,7 @@ index 0000000000..86b84086f4
 +
 +#endif /* __L3FWD_PCM_WRAPPER_H__ */
 diff --git a/examples/l3fwd/main.c b/examples/l3fwd/main.c
-index ae3b4f6439..306be4ed0d 100644
+index ae3b4f6439..1e3851dd70 100644
 --- a/examples/l3fwd/main.c
 +++ b/examples/l3fwd/main.c
 @@ -48,6 +48,7 @@
@@ -2366,6 +2366,24 @@ index ae3b4f6439..306be4ed0d 100644
  		force_quit = true;
  	}
  }
+@@ -1340,7 +1503,7 @@ l3fwd_poll_resource_setup(void)
+ 		fflush(stdout);
+ 
+ 		nb_rx_queue = get_port_n_rx_queues(portid);
+-		n_tx_queue = nb_lcores;
++		n_tx_queue = nb_lcores - 1; // exclude core 0
+ 		if (n_tx_queue > MAX_TX_QUEUE_PER_PORT)
+ 			n_tx_queue = MAX_TX_QUEUE_PER_PORT;
+ 		printf("Creating queues: nb_rxq=%d nb_txq=%u... ",
+@@ -1438,7 +1601,7 @@ l3fwd_poll_resource_setup(void)
+ 
+ 		/* init one TX queue per couple (lcore,port) */
+ 		queueid = 0;
+-		for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
++		for (lcore_id = 1; lcore_id < RTE_MAX_LCORE; lcore_id++) { // exclude code 0
+ 			if (rte_lcore_is_enabled(lcore_id) == 0)
+ 				continue;
+ 
 @@ -1448,13 +1611,17 @@ l3fwd_poll_resource_setup(void)
  			else
  				socketid = 0;

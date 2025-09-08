@@ -26,11 +26,11 @@ NODE8_MAC = '08:c0:eb:b6:e8:05'
 L3FWD_CONFIG = {
     "binary_path": f"{DPDK_PATH}/build/examples/dpdk-l3fwd",
     "node": "node8",
-    "lcores": "-l 0-3",
+    "lcores": "-l 0-4",
     "memory_channels": "-n 4", 
     "pci_address": "0000:31:00.1,txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256",
     "port_mask": "-p 0x1",
-    "config": "(0,0,0),(0,1,1),(0,2,2),(0,3,3)",
+    "config": "(0,0,1),(0,1,2),(0,2,3),(0,3,4)",
     "eth_dest": "08:c0:eb:b6:cd:5d"
 }
 
@@ -39,7 +39,6 @@ PKTGEN_CONFIG = {
     "binary_path": f"{PKTGEN_PATH}/build/app/pktgen",
     "working_dir": f"{PKTGEN_PATH}",
     "node": "node7",
-    "duration": 30,
     "lcores": "-l 0-15",
     "memory_channels": "-n 4",
     "pci_address": "0000:31:00.1,txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256",
@@ -52,6 +51,7 @@ PKTGEN_CONFIG = {
 
 ################## TEST CONFIG #####################
 PKTGEN_DURATION = 5  # Duration in seconds for pktgen transmission
+PKTGEN_PACKET_SIZE = 64  # Packet size in bytes
 
 # TX Descriptor test configuration
 # TX_DESC_MULTIPLIERS = [1, 2, 4, 8, 16, 32]  # Will test 1024*1, 1024*2, ..., 1024*32
