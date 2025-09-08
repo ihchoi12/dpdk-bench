@@ -104,6 +104,7 @@ def run_pktgen():
     cmd = [f'cd {PKTGEN_CONFIG["working_dir"]} && '
            f'sudo -E {ENV} '
            f'PKTGEN_DURATION={PKTGEN_DURATION} '
+           f'PKTGEN_PACKET_SIZE={PKTGEN_PACKET_SIZE} '
            f'{PKTGEN_CONFIG["binary_path"]} '
            f'{PKTGEN_CONFIG["lcores"]} '
            f'{PKTGEN_CONFIG["memory_channels"]} '
@@ -237,7 +238,11 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     l3fwd_rx_rate = round(l3fwd_rx_pkts / (duration_sec * 1_000_000), 3)
     l3fwd_tx_rate = round(l3fwd_tx_pkts / (duration_sec * 1_000_000), 3)
     
-    result_str += f'{experiment_id}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {l3fwd_rx_rate}, {l3fwd_tx_rate}\n'
+    # Calculate failure metrics in M pkts (Million packets)
+    l3fwd_tx_fails = round((l3fwd_rx_pkts - l3fwd_tx_pkts) / 1_000_000, 3)
+    pktgen_rx_fails = round((l3fwd_tx_pkts - pktgen_rx_pkts) / 1_000_000, 3)
+    
+    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_rx_fails}\n'
     return result_str
 
 def run_eval():
@@ -283,7 +288,7 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "experiment_id, tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, l3fwd_rx_rate, l3fwd_tx_rate\n"
+    result_header = "experiment_id, pkt_size, tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_rx_fails\n"
         
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
