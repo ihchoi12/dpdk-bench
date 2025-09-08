@@ -120,7 +120,7 @@ index 086ac5a..95eaa6d 100644
  }
  
 diff --git a/app/pktgen-main.c b/app/pktgen-main.c
-index b9ea903..78d11fb 100644
+index b9ea903..139129c 100644
 --- a/app/pktgen-main.c
 +++ b/app/pktgen-main.c
 @@ -28,6 +28,7 @@
@@ -138,7 +138,7 @@ index b9ea903..78d11fb 100644
 +    /* Print packet statistics summary before cleanup */
 +    print_pktgen_stats_summary();
 +
-+    /* PCM 모니터링 통계 출력: stats_enabled일 때만 */
++    /* Print PCM monitoring statistics when stats_enabled is true */
 +    extern volatile bool stats_enabled;
 +    printf("DEBUG: sig_handler - stats_enabled = %s\n", stats_enabled ? "true" : "false");
 +    if (stats_enabled) {
@@ -202,7 +202,7 @@ index b9ea903..78d11fb 100644
      sigaddset(&set, SIGWINCH);
      pthread_sigmask(SIG_UNBLOCK, &set, NULL);
  
-+    /* PCM 모니터링 초기화: stats_enabled일 때만 */
++    /* Initialize PCM monitoring when stats_enabled is true */
 +    extern volatile bool stats_enabled;
 +    printf("DEBUG: stats_enabled = %s\n", stats_enabled ? "true" : "false");
 +    if (stats_enabled) {
@@ -238,7 +238,7 @@ index b9ea903..78d11fb 100644
      pktgen.timer_running = 0;
      pktgen.force_quit    = 1;
 +
-+    /* PCM 모니터링 통계 출력: stats_enabled일 때만 */
++    /* Print PCM monitoring statistics when stats_enabled is true */
 +    extern volatile bool stats_enabled;
 +    printf("DEBUG: pktgen_stop_running - stats_enabled = %s\n", stats_enabled ? "true" : "false");
 +    if (stats_enabled) {

@@ -25,7 +25,7 @@ index a06480a19e..505b282049 100644
  CFLAGS += -I../common
  
 diff --git a/examples/l3fwd/l3fwd.h b/examples/l3fwd/l3fwd.h
-index 0cce3406ee..5d933e661a 100644
+index 0cce3406ee..1f4029b232 100644
 --- a/examples/l3fwd/l3fwd.h
 +++ b/examples/l3fwd/l3fwd.h
 @@ -5,10 +5,18 @@
@@ -47,7 +47,17 @@ index 0cce3406ee..5d933e661a 100644
  #define DO_RFC_1812_CHECKS
  
  #define RTE_LOGTYPE_L3FWD RTE_LOGTYPE_USER1
-@@ -119,6 +127,24 @@ extern uint32_t max_pkt_len;
+@@ -110,6 +118,9 @@ extern xmm_t val_eth[RTE_MAX_ETHPORTS];
+ 
+ extern struct lcore_conf lcore_conf[RTE_MAX_LCORE];
+ 
++/* NIC hardware statistics functions */
++void print_all_nic_hw_stats(void);
++
+ extern struct parm_cfg parm_config;
+ 
+ extern struct acl_algorithms acl_alg[];
+@@ -119,6 +130,24 @@ extern uint32_t max_pkt_len;
  extern uint32_t nb_pkt_per_burst;
  extern uint32_t mb_mempool_cache_size;
  
@@ -72,7 +82,7 @@ index 0cce3406ee..5d933e661a 100644
  /* Send burst of packets on an output interface */
  static inline int
  send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
-@@ -126,12 +152,33 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
+@@ -126,12 +155,33 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
  	struct rte_mbuf **m_table;
  	int ret;
  	uint16_t queueid;
@@ -107,7 +117,7 @@ index 0cce3406ee..5d933e661a 100644
  			rte_pktmbuf_free(m_table[ret]);
  		} while (++ret < n);
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..481b7129e8 100644
+index fec0aeb79c..bb4b6311ae 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -136,7 +146,7 @@ index fec0aeb79c..481b7129e8 100644
  #define IPV4_L3FWD_LPM_MAX_RULES         1024
  #define IPV4_L3FWD_LPM_NUMBER_TBL8S (1 << 8)
  #define IPV6_L3FWD_LPM_MAX_RULES         1024
-@@ -41,6 +50,220 @@
+@@ -41,6 +50,222 @@
  static struct rte_lpm *ipv4_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  static struct rte_lpm6 *ipv6_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  
@@ -324,6 +334,8 @@ index fec0aeb79c..481b7129e8 100644
 +	}
 +	printf("=====================================\n");
 +	
++	print_all_nic_hw_stats();
++
 +	/* Print PCM performance statistics if available */
 +	if (stats_enabled && pcm_monitoring_is_available()) {
 +		/* Stop measurement period FIRST to capture final state */
@@ -357,7 +369,7 @@ index fec0aeb79c..481b7129e8 100644
  /* Performing LPM-based lookups. 8< */
  static inline uint16_t
  lpm_get_ipv4_dst_port(const struct rte_ipv4_hdr *ipv4_hdr,
-@@ -156,6 +379,17 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -156,6 +381,17 @@ lpm_main_loop(__rte_unused void *dummy)
  	lcore_id = rte_lcore_id();
  	qconf = &lcore_conf[lcore_id];
  
@@ -375,7 +387,7 @@ index fec0aeb79c..481b7129e8 100644
  	const uint16_t n_rx_q = qconf->n_rx_queue;
  	const uint16_t n_tx_p = qconf->n_tx_port;
  	if (n_rx_q == 0) {
-@@ -163,17 +397,31 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -163,17 +399,31 @@ lpm_main_loop(__rte_unused void *dummy)
  		return 0;
  	}
  
@@ -411,7 +423,7 @@ index fec0aeb79c..481b7129e8 100644
  	cur_tsc = rte_rdtsc();
  	prev_tsc = cur_tsc;
  
-@@ -189,6 +437,9 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -189,6 +439,9 @@ lpm_main_loop(__rte_unused void *dummy)
  				portid = qconf->tx_port_id[i];
  				if (qconf->tx_mbufs[portid].len == 0)
  					continue;
@@ -421,7 +433,7 @@ index fec0aeb79c..481b7129e8 100644
  				send_burst(qconf,
  					qconf->tx_mbufs[portid].len,
  					portid);
-@@ -209,6 +460,21 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -209,6 +462,21 @@ lpm_main_loop(__rte_unused void *dummy)
  			if (nb_rx == 0)
  				continue;
  
@@ -443,7 +455,7 @@ index fec0aeb79c..481b7129e8 100644
  #if defined RTE_ARCH_X86 || defined __ARM_NEON \
  			 || defined RTE_ARCH_PPC_64
  			l3fwd_lpm_send_packets(nb_rx, pkts_burst,
-@@ -222,6 +488,11 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -222,6 +490,11 @@ lpm_main_loop(__rte_unused void *dummy)
  		cur_tsc = rte_rdtsc();
  	}
  
@@ -2144,7 +2156,7 @@ index 0000000000..86b84086f4
 +
 +#endif /* __L3FWD_PCM_WRAPPER_H__ */
 diff --git a/examples/l3fwd/main.c b/examples/l3fwd/main.c
-index ae3b4f6439..aeb0d52252 100644
+index ae3b4f6439..306be4ed0d 100644
 --- a/examples/l3fwd/main.c
 +++ b/examples/l3fwd/main.c
 @@ -48,6 +48,7 @@
@@ -2181,10 +2193,154 @@ index ae3b4f6439..aeb0d52252 100644
  
  	if (optind >= 0)
  		argv[optind-1] = prgname;
-@@ -1236,6 +1239,28 @@ signal_handler(int signum)
+@@ -1230,12 +1233,172 @@ check_all_ports_link_status(uint32_t port_mask)
+ 	}
+ }
+ 
++/**
++ * print_nic_hw_stats - Print NIC hardware statistics for a specific port
++ *
++ * DESCRIPTION
++ * Print detailed NIC hardware statistics including drops, errors, and buffer states
++ *
++ * RETURNS: N/A
++ */
++static void
++print_nic_hw_stats(uint16_t port_id)
++{
++    struct rte_eth_stats eth_stats;
++    struct rte_eth_xstat *xstats = NULL;
++    struct rte_eth_xstat_name *xstat_names = NULL;
++    int cnt_xstats, ret, i;
++
++    printf("\n=== NIC Hardware Statistics (Port %u) ===\n", port_id);
++
++    /* Get basic ethernet statistics */
++    ret = rte_eth_stats_get(port_id, &eth_stats);
++    if (ret == 0) {
++        printf("Hardware RX Packets:     %"PRIu64"\n", eth_stats.ipackets);
++        printf("Hardware TX Packets:     %"PRIu64"\n", eth_stats.opackets);
++        printf("Hardware RX Bytes:       %"PRIu64"\n", eth_stats.ibytes);
++        printf("Hardware TX Bytes:       %"PRIu64"\n", eth_stats.obytes);
++        printf("Hardware RX Errors:      %"PRIu64"\n", eth_stats.ierrors);
++        printf("Hardware TX Errors:      %"PRIu64"\n", eth_stats.oerrors);
++        printf("Hardware RX Missed:      %"PRIu64" (packets dropped by HW)\n", eth_stats.imissed);
++        printf("Hardware RX No MBuf:     %"PRIu64" (mbuf allocation failed)\n", eth_stats.rx_nombuf);
++
++        /* Print per-queue statistics if available */
++        bool has_queue_stats = false;
++        for (i = 0; i < RTE_ETHDEV_QUEUE_STAT_CNTRS && i < 8; i++) {
++            if (eth_stats.q_ipackets[i] > 0 || eth_stats.q_opackets[i] > 0 || eth_stats.q_errors[i] > 0) {
++                if (!has_queue_stats) {
++                    printf("\nPer-Queue Statistics:\n");
++                    has_queue_stats = true;
++                }
++                printf("  Queue %d: RX=%"PRIu64", TX=%"PRIu64", Errors=%"PRIu64"\n",
++                    i, eth_stats.q_ipackets[i], eth_stats.q_opackets[i], eth_stats.q_errors[i]);
++            }
++        }
++
++        /* Calculate packet loss if any */
++        if (eth_stats.ipackets > 0) {
++            uint64_t total_drops = eth_stats.imissed + eth_stats.rx_nombuf + eth_stats.ierrors;
++            if (total_drops > 0) {
++                double drop_rate = (double)total_drops * 100.0 / (eth_stats.ipackets + total_drops);
++                printf("\nPacket Loss Analysis:\n");
++                printf("  Total Drops:           %"PRIu64"\n", total_drops);
++                printf("  Drop Rate:             %.2f%%\n", drop_rate);
++                printf("  Primary Drop Cause:    ");
++                if (eth_stats.imissed > eth_stats.rx_nombuf && eth_stats.imissed > eth_stats.ierrors) {
++                    printf("HW Ring Full (imissed)\n");
++                } else if (eth_stats.rx_nombuf > eth_stats.ierrors) {
++                    printf("No MBuf Available\n");
++                } else if (eth_stats.ierrors > 0) {
++                    printf("HW Errors\n");
++                } else {
++                    printf("Unknown\n");
++                }
++            }
++        }
++    } else {
++        printf("Failed to get basic statistics for port %u\n", port_id);
++    }
++
++    /* Get extended statistics for detailed drop analysis */
++    cnt_xstats = rte_eth_xstats_get_names(port_id, NULL, 0);
++    if (cnt_xstats > 0) {
++        xstat_names = malloc(sizeof(struct rte_eth_xstat_name) * cnt_xstats);
++        xstats = malloc(sizeof(struct rte_eth_xstat) * cnt_xstats);
++
++        if (xstat_names && xstats) {
++            ret = rte_eth_xstats_get_names(port_id, xstat_names, cnt_xstats);
++            if (ret == cnt_xstats) {
++                ret = rte_eth_xstats_get(port_id, xstats, cnt_xstats);
++                if (ret == cnt_xstats) {
++                    printf("\nDetailed Drop/Error Statistics:\n");
++                    bool found_drops = false;
++                    for (i = 0; i < cnt_xstats; i++) {
++                        const char *name = xstat_names[i].name;
++                        uint64_t value = xstats[i].value;
++
++                        /* Filter for drop/error related statistics */
++                        if (value > 0 && (strstr(name, "drop") || strstr(name, "discard") ||
++                                         strstr(name, "error") || strstr(name, "miss") ||
++                                         strstr(name, "full") || strstr(name, "overflow") ||
++                                         strstr(name, "underrun") || strstr(name, "crc") ||
++                                         strstr(name, "fragment") || strstr(name, "jabber"))) {
++                            printf("  %-30s: %"PRIu64"\n", name, value);
++                            found_drops = true;
++                        }
++                    }
++                    if (!found_drops) {
++                        printf("  No drop/error statistics found\n");
++                    }
++                }
++            }
++        }
++
++        free(xstat_names);
++        free(xstats);
++    }
++    printf("==========================================\n");
++}
++
++/**
++ * print_all_nic_hw_stats - Print NIC hardware statistics for all enabled ports
++ *
++ * DESCRIPTION
++ * Print NIC hardware statistics for all ports currently enabled in l3fwd
++ *
++ * RETURNS: N/A
++ */
++void
++print_all_nic_hw_stats(void)
++{
++    uint16_t portid;
++
++    printf("\n########################################\n");
++    printf("# NIC HARDWARE STATISTICS ANALYSIS\n");
++    printf("########################################\n");
++
++    for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++) {
++        if ((enabled_port_mask & (1 << portid)) != 0) {
++            print_nic_hw_stats(portid);
++        }
++    }
++
++    printf("########################################\n");
++}
++
+ static void
+ signal_handler(int signum)
+ {
  	if (signum == SIGINT || signum == SIGTERM) {
  		printf("\n\nSignal %d received, preparing to exit...\n",
  				signum);
++		
++		/* Print NIC hardware statistics before exit if stats are enabled */
++		if (stats_enabled) {
++			print_all_nic_hw_stats();
++		}
 +		
 +		/* Print PCM statistics before exit */
 +		if (stats_enabled && pcm_monitoring_is_available()) {
@@ -2210,7 +2366,7 @@ index ae3b4f6439..aeb0d52252 100644
  		force_quit = true;
  	}
  }
-@@ -1448,13 +1473,17 @@ l3fwd_poll_resource_setup(void)
+@@ -1448,13 +1611,17 @@ l3fwd_poll_resource_setup(void)
  			else
  				socketid = 0;
  
@@ -2229,7 +2385,7 @@ index ae3b4f6439..aeb0d52252 100644
  			if (ret < 0)
  				rte_exit(EXIT_FAILURE,
  					"rte_eth_tx_queue_setup: err=%d, "
-@@ -1474,7 +1503,7 @@ l3fwd_poll_resource_setup(void)
+@@ -1474,7 +1641,7 @@ l3fwd_poll_resource_setup(void)
  		if (rte_lcore_is_enabled(lcore_id) == 0)
  			continue;
  		qconf = &lcore_conf[lcore_id];
@@ -2238,7 +2394,7 @@ index ae3b4f6439..aeb0d52252 100644
  		fflush(stdout);
  		/* init RX queues */
  		for(queue = 0; queue < qconf->n_rx_queue; ++queue) {
-@@ -1490,7 +1519,7 @@ l3fwd_poll_resource_setup(void)
+@@ -1490,7 +1657,7 @@ l3fwd_poll_resource_setup(void)
  			else
  				socketid = 0;
  
@@ -2247,7 +2403,7 @@ index ae3b4f6439..aeb0d52252 100644
  			fflush(stdout);
  
  			ret = rte_eth_dev_info_get(portid, &dev_info);
-@@ -1635,6 +1664,14 @@ main(int argc, char **argv)
+@@ -1635,6 +1802,14 @@ main(int argc, char **argv)
  	argc -= ret;
  	argv += ret;
  
@@ -2262,7 +2418,7 @@ index ae3b4f6439..aeb0d52252 100644
  	force_quit = false;
  	signal(SIGINT, signal_handler);
  	signal(SIGTERM, signal_handler);
-@@ -1727,6 +1764,17 @@ main(int argc, char **argv)
+@@ -1727,6 +1902,17 @@ main(int argc, char **argv)
  	check_all_ports_link_status(enabled_port_mask);
  
  	ret = 0;
