@@ -230,7 +230,14 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     print(f"L3FWD: RX={l3fwd_rx_pkts:,} TX={l3fwd_tx_pkts:,} ({l3fwd_status})")
     print(f"Pktgen: RX={pktgen_rx_pkts:,} TX={pktgen_tx_pkts:,} ({pktgen_status})")
     
-    result_str += f'{experiment_id}, {tx_desc_value}, {pktgen_rx_pkts}, {pktgen_tx_pkts}, {l3fwd_rx_pkts}, {l3fwd_tx_pkts}\n'
+    # Convert packet counts to Mpps (Million packets per second)
+    duration_sec = PKTGEN_DURATION
+    pktgen_rx_rate = round(pktgen_rx_pkts / (duration_sec * 1_000_000), 3)
+    pktgen_tx_rate = round(pktgen_tx_pkts / (duration_sec * 1_000_000), 3)
+    l3fwd_rx_rate = round(l3fwd_rx_pkts / (duration_sec * 1_000_000), 3)
+    l3fwd_tx_rate = round(l3fwd_tx_pkts / (duration_sec * 1_000_000), 3)
+    
+    result_str += f'{experiment_id}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {l3fwd_rx_rate}, {l3fwd_tx_rate}\n'
     return result_str
 
 def run_eval():
@@ -276,7 +283,7 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "experiment_id, tx_desc_value, pktgen_rx_pkts, pktgen_tx_pkts, l3fwd_rx_pkts, l3fwd_tx_pkts\n"
+    result_header = "experiment_id, tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, l3fwd_rx_rate, l3fwd_tx_rate\n"
         
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
