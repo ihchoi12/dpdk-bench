@@ -136,6 +136,7 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     l3fwd_file = f'{DATA_PATH}/{experiment_id}.l3fwd'
     l3fwd_rx_pkts = 0
     l3fwd_tx_pkts = 0
+    l3fwd_hw_rx_missed = 0
     l3fwd_status = 'unknown'
     
     if os.path.exists(l3fwd_file):
@@ -176,6 +177,12 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
                     # Debug: show first few lines to understand content
                     lines = l3fwd_text.split('\n')[:10]
                     print(f"DEBUG L3FWD: First 10 lines: {lines}")
+                    
+            # Extract Hardware RX Missed from L3FWD
+            hw_rx_missed_match = re.search(r'Hardware RX Missed:\s+(\d+)', l3fwd_text)
+            if hw_rx_missed_match:
+                l3fwd_hw_rx_missed = int(hw_rx_missed_match.group(1))
+                print(f"DEBUG L3FWD: Found Hardware RX Missed: {l3fwd_hw_rx_missed}")
         except Exception as e:
             print(f"ERROR parsing L3FWD file {l3fwd_file}: {e}")
             l3fwd_status = 'error'
@@ -184,6 +191,7 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     pktgen_file = f'{DATA_PATH}/{experiment_id}.pktgen'
     pktgen_rx_pkts = 0
     pktgen_tx_pkts = 0
+    pktgen_hw_rx_missed = 0
     pktgen_status = 'unknown'
     
     if os.path.exists(pktgen_file):
@@ -224,6 +232,12 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
                     # Debug: show first few lines to understand content
                     lines = pktgen_text.split('\n')[:10]
                     print(f"DEBUG Pktgen: First 10 lines: {lines}")
+                    
+            # Extract Hardware RX Missed from Pktgen
+            hw_rx_missed_match = re.search(r'Hardware RX Missed:\s+(\d+)', pktgen_text)
+            if hw_rx_missed_match:
+                pktgen_hw_rx_missed = int(hw_rx_missed_match.group(1))
+                print(f"DEBUG Pktgen: Found Hardware RX Missed: {pktgen_hw_rx_missed}")
         except Exception as e:
             print(f"ERROR parsing Pktgen file {pktgen_file}: {e}")
             pktgen_status = 'error'
@@ -242,7 +256,7 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     l3fwd_tx_fails = round((l3fwd_rx_pkts - l3fwd_tx_pkts) / 1_000_000, 3)
     pktgen_rx_fails = round((l3fwd_tx_pkts - pktgen_rx_pkts) / 1_000_000, 3)
     
-    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_rx_fails}\n'
+    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_rx_fails}, {pktgen_hw_rx_missed}, {l3fwd_hw_rx_missed}\n'
     return result_str
 
 def run_eval():
@@ -288,7 +302,7 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "experiment_id, pkt_size, tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_rx_fails\n"
+    result_header = "experiment_id, pkt_size, tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_rx_fails, pktgen_hw_rx_missed, l3fwd_hw_rx_missed\n"
         
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
