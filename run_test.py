@@ -103,6 +103,7 @@ def run_pktgen():
     host = pyrem.host.RemoteHost(PKTGEN_CONFIG["node"])
     cmd = [f'cd {PKTGEN_CONFIG["working_dir"]} && '
            f'sudo -E {ENV} '
+           f'PKTGEN_DURATION={PKTGEN_DURATION} '
            f'{PKTGEN_CONFIG["binary_path"]} '
            f'{PKTGEN_CONFIG["lcores"]} '
            f'{PKTGEN_CONFIG["memory_channels"]} '
@@ -229,7 +230,7 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     print(f"L3FWD: RX={l3fwd_rx_pkts:,} TX={l3fwd_tx_pkts:,} ({l3fwd_status})")
     print(f"Pktgen: RX={pktgen_rx_pkts:,} TX={pktgen_tx_pkts:,} ({pktgen_status})")
     
-    result_str += f'{experiment_id}, {tx_desc_value}, {l3fwd_rx_pkts}, {l3fwd_tx_pkts}, {pktgen_rx_pkts}, {pktgen_tx_pkts}, {l3fwd_status}, {pktgen_status}\n'
+    result_str += f'{experiment_id}, {tx_desc_value}, {pktgen_rx_pkts}, {pktgen_tx_pkts}, {l3fwd_rx_pkts}, {l3fwd_tx_pkts}\n'
     return result_str
 
 def run_eval():
@@ -275,7 +276,7 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "experiment_id, tx_desc_value, l3fwd_rx_pkts, l3fwd_tx_pkts, pktgen_rx_pkts, pktgen_tx_pkts, l3fwd_status, pktgen_status\n"
+    result_header = "experiment_id, tx_desc_value, pktgen_rx_pkts, pktgen_tx_pkts, l3fwd_rx_pkts, l3fwd_tx_pkts\n"
         
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
