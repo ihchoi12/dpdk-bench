@@ -140,6 +140,10 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     l3fwd_l3_misses = 0
     l3fwd_l2_hit = 0
     l3fwd_l3_hit = 0
+    l3fwd_dram_read = 0
+    l3fwd_dram_write = 0
+    l3fwd_read_bw = 0
+    l3fwd_write_bw = 0
     l3fwd_status = 'unknown'
     
     if os.path.exists(l3fwd_file):
@@ -212,6 +216,33 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
                     l3fwd_l3_hit = round(sum(x[2] for x in l3fwd_cores) / len(l3fwd_cores), 1)
                     
                 print(f"DEBUG L3FWD: Active cores (excluding 0) - L3 Misses: {l3fwd_l3_misses}, L2 Hit%: {l3fwd_l2_hit}, L3 Hit%: {l3fwd_l3_hit}")
+                
+            # Extract Intel PCM Memory Performance Statistics - Socket 1 only  
+            memory_start = l3fwd_text.find('Intel PCM Memory Performance Statistics')
+            l3fwd_dram_read = 0
+            l3fwd_dram_write = 0
+            l3fwd_read_bw = 0
+            l3fwd_write_bw = 0
+            
+            if memory_start != -1:
+                # Look for the next section or end of memory section
+                memory_end = l3fwd_text.find('Intel PCM I/O Performance Statistics', memory_start)
+                if memory_end == -1:
+                    memory_end = memory_start + 1000  # fallback
+                
+                memory_section = l3fwd_text[memory_start:memory_end]
+                # Look for Socket 1 line: "1      849920       1364032      81.1       130.1      0.2      0        80.0"
+                socket1_match = re.search(r'^1\s+(\d+)\s+(\d+)\s+([\d\.]+)\s+([\d\.]+)', memory_section, re.MULTILINE)
+                if socket1_match:
+                    l3fwd_dram_read = int(socket1_match.group(1))
+                    l3fwd_dram_write = int(socket1_match.group(2))
+                    l3fwd_read_bw = float(socket1_match.group(3))
+                    l3fwd_write_bw = float(socket1_match.group(4))
+                    print(f"DEBUG L3FWD: Socket 1 - DRAM Read: {l3fwd_dram_read}, DRAM Write: {l3fwd_dram_write}, Read BW: {l3fwd_read_bw}, Write BW: {l3fwd_write_bw}")
+                else:
+                    print(f"DEBUG L3FWD: Socket 1 memory data not found in section")
+            else:
+                print(f"DEBUG L3FWD: Intel PCM Memory Performance Statistics section not found")
         except Exception as e:
             print(f"ERROR parsing L3FWD file {l3fwd_file}: {e}")
             l3fwd_status = 'error'
@@ -227,6 +258,10 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     pktgen_tx_l3_misses = 0
     pktgen_tx_l2_hit = 0
     pktgen_tx_l3_hit = 0
+    pktgen_dram_read = 0
+    pktgen_dram_write = 0
+    pktgen_read_bw = 0
+    pktgen_write_bw = 0
     pktgen_status = 'unknown'
     
     if os.path.exists(pktgen_file):
@@ -311,6 +346,34 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
                     
                 print(f"DEBUG Pktgen: RX cores (1-8) - L3 Misses: {pktgen_rx_l3_misses}, L2 Hit%: {pktgen_rx_l2_hit}, L3 Hit%: {pktgen_rx_l3_hit}")
                 print(f"DEBUG Pktgen: TX cores (9-15) - L3 Misses: {pktgen_tx_l3_misses}, L2 Hit%: {pktgen_tx_l2_hit}, L3 Hit%: {pktgen_tx_l3_hit}")
+                
+            # Extract Intel PCM Memory Performance Statistics from Pktgen (Socket 1)
+            # Extract Intel PCM Memory Performance Statistics - Socket 1 only
+            memory_start = pktgen_text.find('Intel PCM Memory Performance Statistics')
+            pktgen_dram_read = 0
+            pktgen_dram_write = 0
+            pktgen_read_bw = 0
+            pktgen_write_bw = 0
+            
+            if memory_start != -1:
+                # Look for the next section or end of memory section
+                memory_end = pktgen_text.find('Intel PCM I/O Performance Statistics', memory_start)
+                if memory_end == -1:
+                    memory_end = memory_start + 1000  # fallback
+                
+                memory_section = pktgen_text[memory_start:memory_end]
+                # Look for Socket 1 line: "1      849920       1364032      81.1       130.1      0.2      0        80.0"
+                socket1_match = re.search(r'^1\s+(\d+)\s+(\d+)\s+([\d\.]+)\s+([\d\.]+)', memory_section, re.MULTILINE)
+                if socket1_match:
+                    pktgen_dram_read = int(socket1_match.group(1))
+                    pktgen_dram_write = int(socket1_match.group(2))
+                    pktgen_read_bw = float(socket1_match.group(3))
+                    pktgen_write_bw = float(socket1_match.group(4))
+                    print(f"DEBUG Pktgen: Socket 1 - DRAM Read: {pktgen_dram_read}, DRAM Write: {pktgen_dram_write}, Read BW: {pktgen_read_bw}, Write BW: {pktgen_write_bw}")
+                else:
+                    print(f"DEBUG Pktgen: Socket 1 memory data not found in section")
+            else:
+                print(f"DEBUG Pktgen: Intel PCM Memory Performance Statistics section not found")
         except Exception as e:
             print(f"ERROR parsing Pktgen file {pktgen_file}: {e}")
             pktgen_status = 'error'
@@ -329,7 +392,7 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     l3fwd_tx_fails = round((l3fwd_rx_pkts - l3fwd_tx_pkts) / 1_000_000, 3)
     pktgen_rx_fails = round((l3fwd_tx_pkts - pktgen_rx_pkts) / 1_000_000, 3)
     
-    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_rx_fails}, {pktgen_hw_rx_missed}, {l3fwd_hw_rx_missed}, {pktgen_rx_l3_misses}, {pktgen_rx_l2_hit}, {pktgen_rx_l3_hit}, {pktgen_tx_l3_misses}, {pktgen_tx_l2_hit}, {pktgen_tx_l3_hit}, {l3fwd_l3_misses}, {l3fwd_l2_hit}, {l3fwd_l3_hit}\n'
+    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_rx_fails}, {pktgen_hw_rx_missed}, {l3fwd_hw_rx_missed}, {pktgen_rx_l3_misses}, {pktgen_rx_l2_hit}, {pktgen_rx_l3_hit}, {pktgen_tx_l3_misses}, {pktgen_tx_l2_hit}, {pktgen_tx_l3_hit}, {l3fwd_l3_misses}, {l3fwd_l2_hit}, {l3fwd_l3_hit}, {pktgen_dram_read}, {pktgen_dram_write}, {pktgen_read_bw}, {pktgen_write_bw}, {l3fwd_dram_read}, {l3fwd_dram_write}, {l3fwd_read_bw}, {l3fwd_write_bw}\n'
     return result_str
 
 def run_eval():
@@ -375,7 +438,7 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "experiment_id, pkt_size, tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_rx_fails, pktgen_hw_rx_missed, l3fwd_hw_rx_missed, pktgen_rx_l3_misses, pktgen_rx_l2_hit%, pktgen_rx_l3_hit%, pktgen_tx_l3_misses, pktgen_tx_l2_hit%, pktgen_tx_l3_hit%, l3fwd_l3_misses, l3fwd_l2_hit%, l3fwd_l3_hit%\n"
+    result_header = "experiment_id, pkt_size, tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_rx_fails, pktgen_hw_rx_missed, l3fwd_hw_rx_missed, pktgen_rx_l3_misses, pktgen_rx_l2_hit%, pktgen_rx_l3_hit%, pktgen_tx_l3_misses, pktgen_tx_l2_hit%, pktgen_tx_l3_hit%, l3fwd_l3_misses, l3fwd_l2_hit%, l3fwd_l3_hit%, pktgen_dram_read, pktgen_dram_write, pktgen_read_bw, pktgen_write_bw, l3fwd_dram_read, l3fwd_dram_write, l3fwd_read_bw, l3fwd_write_bw\n"
         
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
