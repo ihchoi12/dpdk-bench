@@ -137,6 +137,9 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     l3fwd_rx_pkts = 0
     l3fwd_tx_pkts = 0
     l3fwd_hw_rx_missed = 0
+    l3fwd_l3_misses = 0
+    l3fwd_l2_hit = 0
+    l3fwd_l3_hit = 0
     l3fwd_status = 'unknown'
     
     if os.path.exists(l3fwd_file):
@@ -183,6 +186,32 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
             if hw_rx_missed_match:
                 l3fwd_hw_rx_missed = int(hw_rx_missed_match.group(1))
                 print(f"DEBUG L3FWD: Found Hardware RX Missed: {l3fwd_hw_rx_missed}")
+                
+            # Extract Intel PCM Core Performance Statistics from L3FWD
+            pcm_core_pattern = r'Intel PCM Core Performance Statistics.*?Core\s+Cycles.*?Instructions.*?IPC.*?L3 Misses.*?L2 Hit%.*?L3 Hit%.*?Freq.*?CPU%.*?Energy.*?----.*?----.*?----.*?----.*?---------.*?------.*?------.*?----.*?----.*?------.*?(.*?)----.*?----.*?---------.*?------.*?------.*?----.*?----.*?------'
+            pcm_match = re.search(pcm_core_pattern, l3fwd_text, re.DOTALL)
+            l3fwd_l3_misses = 0
+            l3fwd_l2_hit = 0
+            l3fwd_l3_hit = 0
+            
+            if pcm_match:
+                pcm_data = pcm_match.group(1)
+                # Extract individual core stats (exclude core 0)
+                core_lines = re.findall(r'(\d+)\s+\d+\s+\d+\s+[\d\.]+\s+(\d+)\s+([\d\.]+)\s+([\d\.]+)', pcm_data)
+                
+                l3fwd_cores = []  # cores excluding 0
+                
+                for core_id, l3_misses, l2_hit, l3_hit in core_lines:
+                    core_num = int(core_id)
+                    if core_num != 0:  # exclude core 0
+                        l3fwd_cores.append((int(l3_misses), float(l2_hit), float(l3_hit)))
+                
+                if l3fwd_cores:
+                    l3fwd_l3_misses = round(sum(x[0] for x in l3fwd_cores) / len(l3fwd_cores), 1)
+                    l3fwd_l2_hit = round(sum(x[1] for x in l3fwd_cores) / len(l3fwd_cores), 1)
+                    l3fwd_l3_hit = round(sum(x[2] for x in l3fwd_cores) / len(l3fwd_cores), 1)
+                    
+                print(f"DEBUG L3FWD: Active cores (excluding 0) - L3 Misses: {l3fwd_l3_misses}, L2 Hit%: {l3fwd_l2_hit}, L3 Hit%: {l3fwd_l3_hit}")
         except Exception as e:
             print(f"ERROR parsing L3FWD file {l3fwd_file}: {e}")
             l3fwd_status = 'error'
@@ -192,6 +221,12 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     pktgen_rx_pkts = 0
     pktgen_tx_pkts = 0
     pktgen_hw_rx_missed = 0
+    pktgen_rx_l3_misses = 0
+    pktgen_rx_l2_hit = 0
+    pktgen_rx_l3_hit = 0
+    pktgen_tx_l3_misses = 0
+    pktgen_tx_l2_hit = 0
+    pktgen_tx_l3_hit = 0
     pktgen_status = 'unknown'
     
     if os.path.exists(pktgen_file):
@@ -238,6 +273,44 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
             if hw_rx_missed_match:
                 pktgen_hw_rx_missed = int(hw_rx_missed_match.group(1))
                 print(f"DEBUG Pktgen: Found Hardware RX Missed: {pktgen_hw_rx_missed}")
+                
+            # Extract Intel PCM Core Performance Statistics from Pktgen
+            pcm_core_pattern = r'Intel PCM Core Performance Statistics.*?Core\s+Cycles.*?Instructions.*?IPC.*?L3 Misses.*?L2 Hit%.*?L3 Hit%.*?Freq.*?CPU%.*?Energy.*?----.*?----.*?----.*?----.*?---------.*?------.*?------.*?----.*?----.*?------.*?(.*?)----.*?----.*?---------.*?------.*?------.*?----.*?----.*?------'
+            pcm_match = re.search(pcm_core_pattern, pktgen_text, re.DOTALL)
+            pktgen_rx_l3_misses = 0
+            pktgen_rx_l2_hit = 0
+            pktgen_rx_l3_hit = 0
+            pktgen_tx_l3_misses = 0
+            pktgen_tx_l2_hit = 0
+            pktgen_tx_l3_hit = 0
+            
+            if pcm_match:
+                pcm_data = pcm_match.group(1)
+                # Extract individual core stats
+                core_lines = re.findall(r'(\d+)\s+\d+\s+\d+\s+[\d\.]+\s+(\d+)\s+([\d\.]+)\s+([\d\.]+)', pcm_data)
+                
+                rx_cores = []  # cores 1-8 for RX
+                tx_cores = []  # cores 9-15 for TX
+                
+                for core_id, l3_misses, l2_hit, l3_hit in core_lines:
+                    core_num = int(core_id)
+                    if 1 <= core_num <= 8:
+                        rx_cores.append((int(l3_misses), float(l2_hit), float(l3_hit)))
+                    elif 9 <= core_num <= 15:
+                        tx_cores.append((int(l3_misses), float(l2_hit), float(l3_hit)))
+                
+                if rx_cores:
+                    pktgen_rx_l3_misses = round(sum(x[0] for x in rx_cores) / len(rx_cores), 1)
+                    pktgen_rx_l2_hit = round(sum(x[1] for x in rx_cores) / len(rx_cores), 1)
+                    pktgen_rx_l3_hit = round(sum(x[2] for x in rx_cores) / len(rx_cores), 1)
+                    
+                if tx_cores:
+                    pktgen_tx_l3_misses = round(sum(x[0] for x in tx_cores) / len(tx_cores), 1)
+                    pktgen_tx_l2_hit = round(sum(x[1] for x in tx_cores) / len(tx_cores), 1)
+                    pktgen_tx_l3_hit = round(sum(x[2] for x in tx_cores) / len(tx_cores), 1)
+                    
+                print(f"DEBUG Pktgen: RX cores (1-8) - L3 Misses: {pktgen_rx_l3_misses}, L2 Hit%: {pktgen_rx_l2_hit}, L3 Hit%: {pktgen_rx_l3_hit}")
+                print(f"DEBUG Pktgen: TX cores (9-15) - L3 Misses: {pktgen_tx_l3_misses}, L2 Hit%: {pktgen_tx_l2_hit}, L3 Hit%: {pktgen_tx_l3_hit}")
         except Exception as e:
             print(f"ERROR parsing Pktgen file {pktgen_file}: {e}")
             pktgen_status = 'error'
@@ -256,7 +329,7 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     l3fwd_tx_fails = round((l3fwd_rx_pkts - l3fwd_tx_pkts) / 1_000_000, 3)
     pktgen_rx_fails = round((l3fwd_tx_pkts - pktgen_rx_pkts) / 1_000_000, 3)
     
-    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_rx_fails}, {pktgen_hw_rx_missed}, {l3fwd_hw_rx_missed}\n'
+    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_rx_fails}, {pktgen_hw_rx_missed}, {l3fwd_hw_rx_missed}, {pktgen_rx_l3_misses}, {pktgen_rx_l2_hit}, {pktgen_rx_l3_hit}, {pktgen_tx_l3_misses}, {pktgen_tx_l2_hit}, {pktgen_tx_l3_hit}, {l3fwd_l3_misses}, {l3fwd_l2_hit}, {l3fwd_l3_hit}\n'
     return result_str
 
 def run_eval():
@@ -302,7 +375,7 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "experiment_id, pkt_size, tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_rx_fails, pktgen_hw_rx_missed, l3fwd_hw_rx_missed\n"
+    result_header = "experiment_id, pkt_size, tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_rx_fails, pktgen_hw_rx_missed, l3fwd_hw_rx_missed, pktgen_rx_l3_misses, pktgen_rx_l2_hit%, pktgen_rx_l3_hit%, pktgen_tx_l3_misses, pktgen_tx_l2_hit%, pktgen_tx_l3_hit%, l3fwd_l3_misses, l3fwd_l2_hit%, l3fwd_l3_hit%\n"
         
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
