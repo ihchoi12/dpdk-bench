@@ -243,6 +243,33 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
                     print(f"DEBUG L3FWD: Socket 1 memory data not found in section")
             else:
                 print(f"DEBUG L3FWD: Intel PCM Memory Performance Statistics section not found")
+                
+            # Extract Intel PCM I/O Performance Statistics - Socket 1 only
+            io_start = l3fwd_text.find('Intel PCM I/O Performance Statistics')
+            l3fwd_pcie_read = 0
+            l3fwd_pcie_write = 0
+            l3fwd_pcie_read_bw = 0
+            l3fwd_pcie_write_bw = 0
+            
+            if io_start != -1:
+                # Look for the next section or end of I/O section
+                io_end = l3fwd_text.find('Intel PCM System-Wide Statistics', io_start)
+                if io_end == -1:
+                    io_end = io_start + 1000  # fallback
+                
+                io_section = l3fwd_text[io_start:io_end]
+                # Look for Socket 1 line: "1      288364       398784       27.5       38.0       0.0       0.09     0.12"
+                socket1_io_match = re.search(r'^1\s+(\d+)\s+(\d+)\s+([\d\.]+)\s+([\d\.]+)', io_section, re.MULTILINE)
+                if socket1_io_match:
+                    l3fwd_pcie_read = int(socket1_io_match.group(1))
+                    l3fwd_pcie_write = int(socket1_io_match.group(2))
+                    l3fwd_pcie_read_bw = float(socket1_io_match.group(3))
+                    l3fwd_pcie_write_bw = float(socket1_io_match.group(4))
+                    print(f"DEBUG L3FWD: Socket 1 - PCIe Read: {l3fwd_pcie_read}, PCIe Write: {l3fwd_pcie_write}, PCIe R BW: {l3fwd_pcie_read_bw}, PCIe W BW: {l3fwd_pcie_write_bw}")
+                else:
+                    print(f"DEBUG L3FWD: Socket 1 I/O data not found in section")
+            else:
+                print(f"DEBUG L3FWD: Intel PCM I/O Performance Statistics section not found")
         except Exception as e:
             print(f"ERROR parsing L3FWD file {l3fwd_file}: {e}")
             l3fwd_status = 'error'
@@ -374,6 +401,33 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
                     print(f"DEBUG Pktgen: Socket 1 memory data not found in section")
             else:
                 print(f"DEBUG Pktgen: Intel PCM Memory Performance Statistics section not found")
+                
+            # Extract Intel PCM I/O Performance Statistics - Socket 1 only
+            io_start = pktgen_text.find('Intel PCM I/O Performance Statistics')
+            pktgen_pcie_read = 0
+            pktgen_pcie_write = 0
+            pktgen_pcie_read_bw = 0
+            pktgen_pcie_write_bw = 0
+            
+            if io_start != -1:
+                # Look for the next section or end of I/O section
+                io_end = pktgen_text.find('Intel PCM System-Wide Statistics', io_start)
+                if io_end == -1:
+                    io_end = io_start + 1000  # fallback
+                
+                io_section = pktgen_text[io_start:io_end]
+                # Look for Socket 1 line: "1      245856       392083       23.4       37.4       0.0       0.08     0.12"
+                socket1_io_match = re.search(r'^1\s+(\d+)\s+(\d+)\s+([\d\.]+)\s+([\d\.]+)', io_section, re.MULTILINE)
+                if socket1_io_match:
+                    pktgen_pcie_read = int(socket1_io_match.group(1))
+                    pktgen_pcie_write = int(socket1_io_match.group(2))
+                    pktgen_pcie_read_bw = float(socket1_io_match.group(3))
+                    pktgen_pcie_write_bw = float(socket1_io_match.group(4))
+                    print(f"DEBUG Pktgen: Socket 1 - PCIe Read: {pktgen_pcie_read}, PCIe Write: {pktgen_pcie_write}, PCIe R BW: {pktgen_pcie_read_bw}, PCIe W BW: {pktgen_pcie_write_bw}")
+                else:
+                    print(f"DEBUG Pktgen: Socket 1 I/O data not found in section")
+            else:
+                print(f"DEBUG Pktgen: Intel PCM I/O Performance Statistics section not found")
         except Exception as e:
             print(f"ERROR parsing Pktgen file {pktgen_file}: {e}")
             pktgen_status = 'error'
@@ -392,7 +446,7 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     l3fwd_tx_fails = round((l3fwd_rx_pkts - l3fwd_tx_pkts) / 1_000_000, 3)
     pktgen_rx_fails = round((l3fwd_tx_pkts - pktgen_rx_pkts) / 1_000_000, 3)
     
-    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_rx_fails}, {pktgen_hw_rx_missed}, {l3fwd_hw_rx_missed}, {pktgen_rx_l3_misses}, {pktgen_rx_l2_hit}, {pktgen_rx_l3_hit}, {pktgen_tx_l3_misses}, {pktgen_tx_l2_hit}, {pktgen_tx_l3_hit}, {l3fwd_l3_misses}, {l3fwd_l2_hit}, {l3fwd_l3_hit}, {pktgen_dram_read}, {pktgen_dram_write}, {pktgen_read_bw}, {pktgen_write_bw}, {l3fwd_dram_read}, {l3fwd_dram_write}, {l3fwd_read_bw}, {l3fwd_write_bw}\n'
+    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_rx_fails}, {pktgen_hw_rx_missed}, {l3fwd_hw_rx_missed}, {pktgen_rx_l3_misses}, {pktgen_rx_l2_hit}, {pktgen_rx_l3_hit}, {pktgen_tx_l3_misses}, {pktgen_tx_l2_hit}, {pktgen_tx_l3_hit}, {l3fwd_l3_misses}, {l3fwd_l2_hit}, {l3fwd_l3_hit}, {pktgen_dram_read}, {pktgen_dram_write}, {pktgen_read_bw}, {pktgen_write_bw}, {l3fwd_dram_read}, {l3fwd_dram_write}, {l3fwd_read_bw}, {l3fwd_write_bw}, {pktgen_pcie_read}, {pktgen_pcie_write}, {pktgen_pcie_read_bw}, {pktgen_pcie_write_bw}, {l3fwd_pcie_read}, {l3fwd_pcie_write}, {l3fwd_pcie_read_bw}, {l3fwd_pcie_write_bw}\n'
     return result_str
 
 def run_eval():
@@ -438,7 +492,7 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "experiment_id, pkt_size, tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_rx_fails, pktgen_hw_rx_missed, l3fwd_hw_rx_missed, pktgen_rx_l3_misses, pktgen_rx_l2_hit%, pktgen_rx_l3_hit%, pktgen_tx_l3_misses, pktgen_tx_l2_hit%, pktgen_tx_l3_hit%, l3fwd_l3_misses, l3fwd_l2_hit%, l3fwd_l3_hit%, pktgen_dram_read, pktgen_dram_write, pktgen_read_bw, pktgen_write_bw, l3fwd_dram_read, l3fwd_dram_write, l3fwd_read_bw, l3fwd_write_bw\n"
+    result_header = "experiment_id, pkt_size, tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_rx_fails, pktgen_hw_rx_missed, l3fwd_hw_rx_missed, pktgen_rx_l3_misses, pktgen_rx_l2_hit%, pktgen_rx_l3_hit%, pktgen_tx_l3_misses, pktgen_tx_l2_hit%, pktgen_tx_l3_hit%, l3fwd_l3_misses, l3fwd_l2_hit%, l3fwd_l3_hit%, pktgen_dram_read, pktgen_dram_write, pktgen_read_bw, pktgen_write_bw, l3fwd_dram_read, l3fwd_dram_write, l3fwd_read_bw, l3fwd_write_bw, pktgen_pcie_read, pktgen_pcie_write, pktgen_pcie_read_bw, pktgen_pcie_write_bw, l3fwd_pcie_read, l3fwd_pcie_write, l3fwd_pcie_read_bw, l3fwd_pcie_write_bw\n"
         
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
