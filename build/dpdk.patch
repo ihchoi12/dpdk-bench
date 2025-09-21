@@ -525,10 +525,10 @@ index 4ee61e8d88..b2f0682abb 100644
  }
 diff --git a/examples/l3fwd/l3fwd_pcm.c b/examples/l3fwd/l3fwd_pcm.c
 new file mode 100644
-index 0000000000..804ac3c717
+index 0000000000..e3831466b5
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm.c
-@@ -0,0 +1,585 @@
+@@ -0,0 +1,583 @@
 +/* SPDX-License-Identifier: BSD-3-Clause
 + * Copyright(c) 2010-2025 Intel Corporation
 + */
@@ -821,9 +821,9 @@ index 0000000000..804ac3c717
 +        if (pcm_wrapper_get_memory_counters(socket, &counters) == 0) {
 +            metrics->dram_read_bytes = counters.dram_read_bytes;
 +            metrics->dram_write_bytes = counters.dram_write_bytes;
-+            metrics->dram_read_bandwidth_mbps = counters.dram_read_bandwidth_mbps;
-+            metrics->dram_write_bandwidth_mbps = counters.dram_write_bandwidth_mbps;
-+            metrics->memory_controller_utilization = counters.memory_controller_utilization;
++            metrics->memory_controller_read_bw_mbps = counters.memory_controller_read_bw_mbps;
++            metrics->memory_controller_write_bw_mbps = counters.memory_controller_write_bw_mbps;
++            metrics->memory_controller_bw_mbps = counters.memory_controller_bw_mbps;
 +            metrics->timestamp = timestamp;
 +        }
 +    }
@@ -944,22 +944,22 @@ index 0000000000..804ac3c717
 +    printf("\n=====================================\n");
 +    printf("Intel PCM Memory Performance Statistics (%lu us)\n", duration_us);
 +    printf("=====================================\n");
-+    printf("%-6s %-12s %-12s %-10s %-10s %-8s\n",
-+           "Socket", "DRAM Read", "DRAM Write", "Read BW", "Write BW", "MC Util%");
-+    printf("%-6s %-12s %-12s %-10s %-10s %-8s\n",
-+           "------", "----------", "-----------", "--------", "---------", "--------");
++    printf("%-6s %-12s %-12s %-12s %-12s %-12s\n",
++           "Socket", "DRAM Read", "DRAM Write", "MC Read BW", "MC Write BW", "MC Total BW");
++    printf("%-6s %-12s %-12s %-12s %-12s %-12s\n",
++           "------", "----------", "-----------", "----------", "-----------", "-----------");
 +
 +    for (uint32_t socket = 0; socket < PCM_MAX_SOCKETS; socket++) {
 +        struct pcm_memory_metrics *metrics = &g_pcm_state.memory_metrics[socket];
 +        
 +        if (metrics->timestamp > 0) {
-+            printf("%-6u %-12lu %-12lu %-10.1f %-10.1f %-8.1f\n",
++            printf("%-6u %-12lu %-12lu %-12.1f %-12.1f %-12.1f\n",
 +                   socket,
 +                   metrics->dram_read_bytes,
 +                   metrics->dram_write_bytes,
-+                   metrics->dram_read_bandwidth_mbps,
-+                   metrics->dram_write_bandwidth_mbps,
-+                   metrics->memory_controller_utilization * 100.0);
++                   metrics->memory_controller_read_bw_mbps,
++                   metrics->memory_controller_write_bw_mbps,
++                   metrics->memory_controller_bw_mbps);
 +        }
 +    }
 +    printf("=====================================\n");
@@ -980,24 +980,22 @@ index 0000000000..804ac3c717
 +    printf("\n=====================================\n");
 +    printf("Intel PCM I/O Performance Statistics (%lu us)\n", duration_us);
 +    printf("=====================================\n");
-+    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
-+           "Socket", "PCIe Read", "PCIe Write", "PCIe R BW", "PCIe W BW", "UPI Util%", "IMC R", "IMC W");
-+    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
-+           "------", "----------", "-----------", "---------", "---------", "---------", "-----", "-----");
++    printf("%-6s %-12s %-12s %-10s %-10s %-8s\n",
++           "Socket", "PCIe Read", "PCIe Write", "PCIe R BW", "PCIe W BW", "UPI Util%");
++    printf("%-6s %-12s %-12s %-10s %-10s %-8s\n",
++           "------", "----------", "-----------", "---------", "---------", "---------");
 +
 +    for (uint32_t socket = 0; socket < PCM_MAX_SOCKETS; socket++) {
 +        struct pcm_io_metrics *metrics = &g_pcm_state.io_metrics[socket];
 +        
 +        if (metrics->timestamp > 0) {
-+            printf("%-6u %-12lu %-12lu %-10.1f %-10.1f %-9.1f %-8.2f %-8.2f\n",
++            printf("%-6u %-12lu %-12lu %-10.1f %-10.1f %-9.1f\n",
 +                   socket,
 +                   metrics->pcie_read_bytes,
 +                   metrics->pcie_write_bytes,
 +                   metrics->pcie_read_bandwidth_mbps,
 +                   metrics->pcie_write_bandwidth_mbps,
-+                   metrics->qpi_upi_utilization * 100.0,
-+                   metrics->imc_reads_gbps,
-+                   metrics->imc_writes_gbps);
++                   metrics->qpi_upi_utilization * 100.0);
 +        }
 +    }
 +    printf("=====================================\n");
@@ -1116,7 +1114,7 @@ index 0000000000..804ac3c717
 +}
 diff --git a/examples/l3fwd/l3fwd_pcm.h b/examples/l3fwd/l3fwd_pcm.h
 new file mode 100644
-index 0000000000..09ef684aa9
+index 0000000000..72c6ca7c7b
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm.h
 @@ -0,0 +1,195 @@
@@ -1159,9 +1157,9 @@ index 0000000000..09ef684aa9
 +struct pcm_memory_metrics {
 +    uint64_t dram_read_bytes;      /* DRAM read bytes */
 +    uint64_t dram_write_bytes;     /* DRAM write bytes */
-+    double dram_read_bandwidth_mbps;    /* DRAM read bandwidth MB/s */
-+    double dram_write_bandwidth_mbps;   /* DRAM write bandwidth MB/s */
-+    double memory_controller_utilization; /* Memory controller utilization */
++    double memory_controller_read_bw_mbps;  /* Memory controller read bandwidth MB/s */
++    double memory_controller_write_bw_mbps; /* Memory controller write bandwidth MB/s */
++    double memory_controller_bw_mbps;       /* Memory controller total bandwidth MB/s */
 +    uint64_t timestamp;
 +};
 +
@@ -1323,10 +1321,10 @@ new file mode 100644
 index 0000000000..e69de29bb2
 diff --git a/examples/l3fwd/l3fwd_pcm_wrapper.cpp b/examples/l3fwd/l3fwd_pcm_wrapper.cpp
 new file mode 100644
-index 0000000000..fcff28550b
+index 0000000000..2dbda4f9e2
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm_wrapper.cpp
-@@ -0,0 +1,697 @@
+@@ -0,0 +1,693 @@
 +// C++ wrapper for PCM that will be statically linked
 +#include "l3fwd_pcm_wrapper.h"
 +#include <iostream>
@@ -1793,13 +1791,9 @@ index 0000000000..fcff28550b
 +        
 +        counters->dram_read_bytes = bytes_read;
 +        counters->dram_write_bytes = bytes_written;
-+        counters->dram_read_bandwidth_mbps = (double)bytes_read / (1024.0 * 1024.0) / elapsed_time;
-+        counters->dram_write_bandwidth_mbps = (double)bytes_written / (1024.0 * 1024.0) / elapsed_time;
-+        
-+        // Estimate utilization 
-+        double total_bw = counters->dram_read_bandwidth_mbps + counters->dram_write_bandwidth_mbps;
-+        counters->memory_controller_utilization = (total_bw / 100000.0); // Assume 100 GB/s max = 100000 MB/s
-+        if (counters->memory_controller_utilization > 1.0) counters->memory_controller_utilization = 0.0;
++        counters->memory_controller_read_bw_mbps = (double)bytes_read / (1024.0 * 1024.0) / elapsed_time;
++        counters->memory_controller_write_bw_mbps = (double)bytes_written / (1024.0 * 1024.0) / elapsed_time;
++        counters->memory_controller_bw_mbps = counters->memory_controller_read_bw_mbps + counters->memory_controller_write_bw_mbps;
 +        
 +        return 0;
 +    } catch (const std::exception& e) {
@@ -2026,7 +2020,7 @@ index 0000000000..fcff28550b
 +} // extern "C"
 diff --git a/examples/l3fwd/l3fwd_pcm_wrapper.h b/examples/l3fwd/l3fwd_pcm_wrapper.h
 new file mode 100644
-index 0000000000..471d66f5e7
+index 0000000000..cb562f5d57
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm_wrapper.h
 @@ -0,0 +1,143 @@
@@ -2062,9 +2056,9 @@ index 0000000000..471d66f5e7
 +typedef struct {
 +    uint64_t dram_read_bytes;
 +    uint64_t dram_write_bytes;
-+    double dram_read_bandwidth_mbps;
-+    double dram_write_bandwidth_mbps;
-+    double memory_controller_utilization;
++    double memory_controller_read_bw_mbps;
++    double memory_controller_write_bw_mbps;
++    double memory_controller_bw_mbps;
 +} pcm_memory_counters_t;
 +
 +/* I/O and Uncore performance counters structure */
