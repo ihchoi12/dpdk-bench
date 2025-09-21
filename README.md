@@ -162,3 +162,34 @@ ToDo:
         counters->qpi_upi_utilization = 0.0;
         counters->uncore_freq_ghz = 0; // Could try to get uncore frequency if available
 ```
+
+
+
+
+# Parameters
+- TX/RX_DESC_DEFAULT: the size of descriptor ring
+  - Smaller: 
+    - [+] lower memory usage, higher cache efficiency
+    - [-] more packet drops (ring full)
+  - Bigger:
+    - [+] less packet drops (better burst handling)
+    - [-] more memory usage, bigger latency (queueing delay)
+- Hardware RX Drops:  NIC RX pkt, but cannot DMA, so drops it
+  - pkt flow: network -> physical port -> NIC HW (RX queue with 8192 entries) -> SW RX ring -> application
+    - rx_phy_discard_packets: drops at physical port
+    - rx_missed_errors: drops at NIC RX queue  
+  - type 1) RX Missed: RX ring (descriptor: pointer to mbuf entry) is full  
+    - Reasons:
+      - slow CPU or application processing
+      - small RX ring
+      - insufficient memory BW (=> bottleneck SW pkt processing => RX ring full)
+  - type 2) RX No MBuf: mbuf (actual pkt data buffer) is full
+
+
+
+
+
+
+
+
+Q. Why rx_missed_errors != (Hardware RX Packets) - (pktgen RX total)?
