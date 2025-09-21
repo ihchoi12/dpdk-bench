@@ -1107,10 +1107,10 @@ index 5349a31..fd48803 100644
  void pktgen_setup_packets(uint16_t pid);
 diff --git a/app/pktgen_pcm.c b/app/pktgen_pcm.c
 new file mode 100644
-index 0000000..6d05973
+index 0000000..88bc0cc
 --- /dev/null
 +++ b/app/pktgen_pcm.c
-@@ -0,0 +1,590 @@
+@@ -0,0 +1,585 @@
 +/* SPDX-License-Identifier: BSD-3-Clause
 + * Copyright(c) 2010-2025 Intel Corporation
 + */
@@ -1406,9 +1406,6 @@ index 0000000..6d05973
 +            metrics->dram_read_bandwidth_mbps = counters.dram_read_bandwidth_mbps;
 +            metrics->dram_write_bandwidth_mbps = counters.dram_write_bandwidth_mbps;
 +            metrics->memory_controller_utilization = counters.memory_controller_utilization;
-+            metrics->numa_local_accesses = counters.numa_local_accesses;
-+            metrics->numa_remote_accesses = counters.numa_remote_accesses;
-+            metrics->numa_ratio = counters.numa_ratio;
 +            metrics->timestamp = timestamp;
 +        }
 +    }
@@ -1529,24 +1526,22 @@ index 0000000..6d05973
 +    printf("\n=====================================\n");
 +    printf("Intel PCM Memory Performance Statistics (%lu us)\n", duration_us);
 +    printf("=====================================\n");
-+    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
-+           "Socket", "DRAM Read", "DRAM Write", "Read BW", "Write BW", "MC Util%", "NUMA", "Local%");
-+    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
-+           "------", "----------", "-----------", "--------", "---------", "--------", "----", "------");
++    printf("%-6s %-12s %-12s %-10s %-10s %-8s\n",
++           "Socket", "DRAM Read", "DRAM Write", "Read BW", "Write BW", "MC Util%");
++    printf("%-6s %-12s %-12s %-10s %-10s %-8s\n",
++           "------", "----------", "-----------", "--------", "---------", "--------");
 +
 +    for (uint32_t socket = 0; socket < PCM_MAX_SOCKETS; socket++) {
 +        struct pcm_memory_metrics *metrics = &g_pcm_state.memory_metrics[socket];
 +        
 +        if (metrics->timestamp > 0) {
-+            printf("%-6u %-12lu %-12lu %-10.1f %-10.1f %-8.1f %-8lu %-8.1f\n",
++            printf("%-6u %-12lu %-12lu %-10.1f %-10.1f %-8.1f\n",
 +                   socket,
 +                   metrics->dram_read_bytes,
 +                   metrics->dram_write_bytes,
 +                   metrics->dram_read_bandwidth_mbps,
 +                   metrics->dram_write_bandwidth_mbps,
-+                   metrics->memory_controller_utilization * 100.0,
-+                   metrics->numa_local_accesses + metrics->numa_remote_accesses,
-+                   metrics->numa_ratio * 100.0);
++                   metrics->memory_controller_utilization * 100.0);
 +        }
 +    }
 +    printf("=====================================\n");
@@ -1703,10 +1698,10 @@ index 0000000..6d05973
 +}
 diff --git a/app/pktgen_pcm.h b/app/pktgen_pcm.h
 new file mode 100644
-index 0000000..3a6c597
+index 0000000..9970d8c
 --- /dev/null
 +++ b/app/pktgen_pcm.h
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,195 @@
 +/* SPDX-License-Identifier: BSD-3-Clause
 + * Copyright(c) 2010-2025 Intel Corporation
 + */
@@ -1749,9 +1744,6 @@ index 0000000..3a6c597
 +    double dram_read_bandwidth_mbps;    /* DRAM read bandwidth MB/s */
 +    double dram_write_bandwidth_mbps;   /* DRAM write bandwidth MB/s */
 +    double memory_controller_utilization; /* Memory controller utilization */
-+    uint64_t numa_local_accesses;      /* NUMA local memory accesses */
-+    uint64_t numa_remote_accesses;     /* NUMA remote memory accesses */
-+    double numa_ratio;                 /* NUMA locality ratio */
 +    uint64_t timestamp;
 +};
 +
@@ -1907,10 +1899,10 @@ index 0000000..3a6c597
 +#endif /* __PKTGEN_PCM_H__ */
 diff --git a/app/pktgen_pcm_wrapper.cpp b/app/pktgen_pcm_wrapper.cpp
 new file mode 100644
-index 0000000..474ab3b
+index 0000000..2263c99
 --- /dev/null
 +++ b/app/pktgen_pcm_wrapper.cpp
-@@ -0,0 +1,702 @@
+@@ -0,0 +1,697 @@
 +// C++ wrapper for PCM that will be statically linked
 +#include "pktgen_pcm_wrapper.h"
 +#include <iostream>
@@ -2385,11 +2377,6 @@ index 0000000..474ab3b
 +        counters->memory_controller_utilization = (total_bw / 100000.0); // Assume 100 GB/s max = 100000 MB/s
 +        if (counters->memory_controller_utilization > 1.0) counters->memory_controller_utilization = 0.0;
 +        
-+        // Initialize NUMA fields properly
-+        counters->numa_local_accesses = 0;
-+        counters->numa_remote_accesses = 0;
-+        counters->numa_ratio = 0.8; // Default
-+        
 +        return 0;
 +    } catch (const std::exception& e) {
 +        printf("Error in memory counter calculation: %s\n", e.what());
@@ -2615,10 +2602,10 @@ index 0000000..474ab3b
 +} // extern "C"
 diff --git a/app/pktgen_pcm_wrapper.h b/app/pktgen_pcm_wrapper.h
 new file mode 100644
-index 0000000..dba9dda
+index 0000000..0b7da52
 --- /dev/null
 +++ b/app/pktgen_pcm_wrapper.h
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,143 @@
 +#ifndef __PKTGEN_PCM_WRAPPER_H__
 +#define __PKTGEN_PCM_WRAPPER_H__
 +
@@ -2654,9 +2641,6 @@ index 0000000..dba9dda
 +    double dram_read_bandwidth_mbps;
 +    double dram_write_bandwidth_mbps;
 +    double memory_controller_utilization;
-+    uint64_t numa_local_accesses;
-+    uint64_t numa_remote_accesses;
-+    double numa_ratio;
 +} pcm_memory_counters_t;
 +
 +/* I/O and Uncore performance counters structure */

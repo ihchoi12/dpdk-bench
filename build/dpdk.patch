@@ -525,10 +525,10 @@ index 4ee61e8d88..b2f0682abb 100644
  }
 diff --git a/examples/l3fwd/l3fwd_pcm.c b/examples/l3fwd/l3fwd_pcm.c
 new file mode 100644
-index 0000000000..3e3f2e885a
+index 0000000000..804ac3c717
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm.c
-@@ -0,0 +1,590 @@
+@@ -0,0 +1,585 @@
 +/* SPDX-License-Identifier: BSD-3-Clause
 + * Copyright(c) 2010-2025 Intel Corporation
 + */
@@ -824,9 +824,6 @@ index 0000000000..3e3f2e885a
 +            metrics->dram_read_bandwidth_mbps = counters.dram_read_bandwidth_mbps;
 +            metrics->dram_write_bandwidth_mbps = counters.dram_write_bandwidth_mbps;
 +            metrics->memory_controller_utilization = counters.memory_controller_utilization;
-+            metrics->numa_local_accesses = counters.numa_local_accesses;
-+            metrics->numa_remote_accesses = counters.numa_remote_accesses;
-+            metrics->numa_ratio = counters.numa_ratio;
 +            metrics->timestamp = timestamp;
 +        }
 +    }
@@ -947,24 +944,22 @@ index 0000000000..3e3f2e885a
 +    printf("\n=====================================\n");
 +    printf("Intel PCM Memory Performance Statistics (%lu us)\n", duration_us);
 +    printf("=====================================\n");
-+    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
-+           "Socket", "DRAM Read", "DRAM Write", "Read BW", "Write BW", "MC Util%", "NUMA", "Local%");
-+    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
-+           "------", "----------", "-----------", "--------", "---------", "--------", "----", "------");
++    printf("%-6s %-12s %-12s %-10s %-10s %-8s\n",
++           "Socket", "DRAM Read", "DRAM Write", "Read BW", "Write BW", "MC Util%");
++    printf("%-6s %-12s %-12s %-10s %-10s %-8s\n",
++           "------", "----------", "-----------", "--------", "---------", "--------");
 +
 +    for (uint32_t socket = 0; socket < PCM_MAX_SOCKETS; socket++) {
 +        struct pcm_memory_metrics *metrics = &g_pcm_state.memory_metrics[socket];
 +        
 +        if (metrics->timestamp > 0) {
-+            printf("%-6u %-12lu %-12lu %-10.1f %-10.1f %-8.1f %-8lu %-8.1f\n",
++            printf("%-6u %-12lu %-12lu %-10.1f %-10.1f %-8.1f\n",
 +                   socket,
 +                   metrics->dram_read_bytes,
 +                   metrics->dram_write_bytes,
 +                   metrics->dram_read_bandwidth_mbps,
 +                   metrics->dram_write_bandwidth_mbps,
-+                   metrics->memory_controller_utilization * 100.0,
-+                   metrics->numa_local_accesses + metrics->numa_remote_accesses,
-+                   metrics->numa_ratio * 100.0);
++                   metrics->memory_controller_utilization * 100.0);
 +        }
 +    }
 +    printf("=====================================\n");
@@ -1121,10 +1116,10 @@ index 0000000000..3e3f2e885a
 +}
 diff --git a/examples/l3fwd/l3fwd_pcm.h b/examples/l3fwd/l3fwd_pcm.h
 new file mode 100644
-index 0000000000..998019c89f
+index 0000000000..09ef684aa9
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm.h
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,195 @@
 +/* SPDX-License-Identifier: BSD-3-Clause
 + * Copyright(c) 2010-2025 Intel Corporation
 + */
@@ -1167,9 +1162,6 @@ index 0000000000..998019c89f
 +    double dram_read_bandwidth_mbps;    /* DRAM read bandwidth MB/s */
 +    double dram_write_bandwidth_mbps;   /* DRAM write bandwidth MB/s */
 +    double memory_controller_utilization; /* Memory controller utilization */
-+    uint64_t numa_local_accesses;      /* NUMA local memory accesses */
-+    uint64_t numa_remote_accesses;     /* NUMA remote memory accesses */
-+    double numa_ratio;                 /* NUMA locality ratio */
 +    uint64_t timestamp;
 +};
 +
@@ -1331,10 +1323,10 @@ new file mode 100644
 index 0000000000..e69de29bb2
 diff --git a/examples/l3fwd/l3fwd_pcm_wrapper.cpp b/examples/l3fwd/l3fwd_pcm_wrapper.cpp
 new file mode 100644
-index 0000000000..3e8d7e0327
+index 0000000000..fcff28550b
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm_wrapper.cpp
-@@ -0,0 +1,702 @@
+@@ -0,0 +1,697 @@
 +// C++ wrapper for PCM that will be statically linked
 +#include "l3fwd_pcm_wrapper.h"
 +#include <iostream>
@@ -1809,11 +1801,6 @@ index 0000000000..3e8d7e0327
 +        counters->memory_controller_utilization = (total_bw / 100000.0); // Assume 100 GB/s max = 100000 MB/s
 +        if (counters->memory_controller_utilization > 1.0) counters->memory_controller_utilization = 0.0;
 +        
-+        // Initialize NUMA fields properly
-+        counters->numa_local_accesses = 0;
-+        counters->numa_remote_accesses = 0;
-+        counters->numa_ratio = 0.8; // Default
-+        
 +        return 0;
 +    } catch (const std::exception& e) {
 +        printf("Error in memory counter calculation: %s\n", e.what());
@@ -2039,10 +2026,10 @@ index 0000000000..3e8d7e0327
 +} // extern "C"
 diff --git a/examples/l3fwd/l3fwd_pcm_wrapper.h b/examples/l3fwd/l3fwd_pcm_wrapper.h
 new file mode 100644
-index 0000000000..86b84086f4
+index 0000000000..471d66f5e7
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm_wrapper.h
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,143 @@
 +#ifndef __L3FWD_PCM_WRAPPER_H__
 +#define __L3FWD_PCM_WRAPPER_H__
 +
@@ -2078,9 +2065,6 @@ index 0000000000..86b84086f4
 +    double dram_read_bandwidth_mbps;
 +    double dram_write_bandwidth_mbps;
 +    double memory_controller_utilization;
-+    uint64_t numa_local_accesses;
-+    uint64_t numa_remote_accesses;
-+    double numa_ratio;
 +} pcm_memory_counters_t;
 +
 +/* I/O and Uncore performance counters structure */
