@@ -525,10 +525,10 @@ index 4ee61e8d88..b2f0682abb 100644
  }
 diff --git a/examples/l3fwd/l3fwd_pcm.c b/examples/l3fwd/l3fwd_pcm.c
 new file mode 100644
-index 0000000000..4cc9ceb1d2
+index 0000000000..3e3f2e885a
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm.c
-@@ -0,0 +1,566 @@
+@@ -0,0 +1,590 @@
 +/* SPDX-License-Identifier: BSD-3-Clause
 + * Copyright(c) 2010-2025 Intel Corporation
 + */
@@ -875,8 +875,14 @@ index 0000000000..4cc9ceb1d2
 +        return;
 +    }
 +
++    /* Calculate measurement duration in microseconds */
++    uint64_t duration_us = 0;
++    if (g_pcm_state.last_measurement_timestamp > g_pcm_state.start_timestamp) {
++        duration_us = (g_pcm_state.last_measurement_timestamp - g_pcm_state.start_timestamp) / 1000;
++    }
++
 +    printf("\n=====================================\n");
-+    printf("Intel PCM Core Performance Statistics\n");
++    printf("Intel PCM Core Performance Statistics (%lu us)\n", duration_us);
 +    printf("=====================================\n");
 +    printf("%-5s %-12s %-12s %-6s %-10s %-8s %-8s %-6s %-6s %-8s\n",
 +           "Core", "Cycles", "Instructions", "IPC", "L3 Misses", "L2 Hit%", "L3 Hit%", "Freq", "CPU%", "Energy");
@@ -932,8 +938,14 @@ index 0000000000..4cc9ceb1d2
 +        return;
 +    }
 +
++    /* Calculate measurement duration in microseconds */
++    uint64_t duration_us = 0;
++    if (g_pcm_state.last_measurement_timestamp > g_pcm_state.start_timestamp) {
++        duration_us = (g_pcm_state.last_measurement_timestamp - g_pcm_state.start_timestamp) / 1000;
++    }
++
 +    printf("\n=====================================\n");
-+    printf("Intel PCM Memory Performance Statistics\n");
++    printf("Intel PCM Memory Performance Statistics (%lu us)\n", duration_us);
 +    printf("=====================================\n");
 +    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
 +           "Socket", "DRAM Read", "DRAM Write", "Read BW", "Write BW", "MC Util%", "NUMA", "Local%");
@@ -964,8 +976,14 @@ index 0000000000..4cc9ceb1d2
 +        return;
 +    }
 +
++    /* Calculate measurement duration in microseconds */
++    uint64_t duration_us = 0;
++    if (g_pcm_state.last_measurement_timestamp > g_pcm_state.start_timestamp) {
++        duration_us = (g_pcm_state.last_measurement_timestamp - g_pcm_state.start_timestamp) / 1000;
++    }
++
 +    printf("\n=====================================\n");
-+    printf("Intel PCM I/O Performance Statistics\n");
++    printf("Intel PCM I/O Performance Statistics (%lu us)\n", duration_us);
 +    printf("=====================================\n");
 +    printf("%-6s %-12s %-12s %-10s %-10s %-8s %-8s %-8s\n",
 +           "Socket", "PCIe Read", "PCIe Write", "PCIe R BW", "PCIe W BW", "UPI Util%", "IMC R", "IMC W");
@@ -998,8 +1016,14 @@ index 0000000000..4cc9ceb1d2
 +
 +    struct pcm_system_metrics *metrics = &g_pcm_state.system_metrics;
 +    
++    /* Calculate measurement duration in microseconds */
++    uint64_t duration_us = 0;
++    if (g_pcm_state.last_measurement_timestamp > g_pcm_state.start_timestamp) {
++        duration_us = (g_pcm_state.last_measurement_timestamp - g_pcm_state.start_timestamp) / 1000;
++    }
++
 +    printf("\n=====================================\n");
-+    printf("Intel PCM System-Wide Statistics\n");
++    printf("Intel PCM System-Wide Statistics (%lu us)\n", duration_us);
 +    printf("=====================================\n");
 +    printf("Active Cores: %u\n", metrics->active_cores);
 +    printf("Total IPC: %.2f\n", metrics->total_ipc);
@@ -1307,10 +1331,10 @@ new file mode 100644
 index 0000000000..e69de29bb2
 diff --git a/examples/l3fwd/l3fwd_pcm_wrapper.cpp b/examples/l3fwd/l3fwd_pcm_wrapper.cpp
 new file mode 100644
-index 0000000000..b9b52a9f15
+index 0000000000..3e8d7e0327
 --- /dev/null
 +++ b/examples/l3fwd/l3fwd_pcm_wrapper.cpp
-@@ -0,0 +1,692 @@
+@@ -0,0 +1,702 @@
 +// C++ wrapper for PCM that will be statically linked
 +#include "l3fwd_pcm_wrapper.h"
 +#include <iostream>
@@ -1759,21 +1783,26 @@ index 0000000000..b9b52a9f15
 +            return -1;
 +        }
 +        
-+        // Take two consecutive measurements
-+        SocketCounterState state1 = getSocketCounterState(socket_id);
-+        usleep(10000); // 10ms delay  
-+        SocketCounterState state2 = getSocketCounterState(socket_id);
++        // Use stored before/after states to calculate metrics over the entire measurement period
++        const SocketCounterState& before = g_before_socket_states[socket_id];
++        const SocketCounterState& after = g_after_socket_states[socket_id];
 +        
 +        // Use PCM's built-in bandwidth calculation methods
-+        uint64_t bytes_read = getBytesReadFromMC(state1, state2);
-+        uint64_t bytes_written = getBytesWrittenToMC(state1, state2);
++        uint64_t bytes_read = getBytesReadFromMC(before, after);
++        uint64_t bytes_written = getBytesWrittenToMC(before, after);
 +        
-+        // Convert to reasonable values (10ms measurement period)
-+        double time_sec = 0.01; // 10ms
++        // Calculate elapsed time for the entire measurement period
++        double elapsed_time = getExecUsage(g_before_system_state, g_after_system_state);
++        if (elapsed_time <= 0) {
++            printf("ERROR: Invalid elapsed time %.6f seconds in memory counter calculation!\n", elapsed_time);
++            printf("ERROR: This indicates PCM measurement was not properly initialized or captured.\n");
++            return -1;
++        }
++        
 +        counters->dram_read_bytes = bytes_read;
 +        counters->dram_write_bytes = bytes_written;
-+        counters->dram_read_bandwidth_mbps = (double)bytes_read / (1024.0 * 1024.0) / time_sec;
-+        counters->dram_write_bandwidth_mbps = (double)bytes_written / (1024.0 * 1024.0) / time_sec;
++        counters->dram_read_bandwidth_mbps = (double)bytes_read / (1024.0 * 1024.0) / elapsed_time;
++        counters->dram_write_bandwidth_mbps = (double)bytes_written / (1024.0 * 1024.0) / elapsed_time;
 +        
 +        // Estimate utilization 
 +        double total_bw = counters->dram_read_bandwidth_mbps + counters->dram_write_bandwidth_mbps;
@@ -1805,18 +1834,17 @@ index 0000000000..b9b52a9f15
 +            return -1;
 +        }
 +        
-+        // Take two consecutive measurements for I/O counters
-+        SocketCounterState state1 = getSocketCounterState(socket_id);
-+        usleep(10000); // 10ms delay
-+        SocketCounterState state2 = getSocketCounterState(socket_id);
++        // Use stored before/after states to calculate metrics over the entire measurement period
++        const SocketCounterState& before = g_before_socket_states[socket_id];
++        const SocketCounterState& after = g_after_socket_states[socket_id];
 +        
 +        // Try to get PCIe read/write bytes using PCM functions
 +        uint64_t pcie_read_bytes = 0;
 +        uint64_t pcie_write_bytes = 0;
 +        
 +        // PCM might have specific PCIe counter functions - try memory controller as proxy
-+        uint64_t mc_reads = getBytesReadFromMC(state1, state2);
-+        uint64_t mc_writes = getBytesWrittenToMC(state1, state2);
++        uint64_t mc_reads = getBytesReadFromMC(before, after);
++        uint64_t mc_writes = getBytesWrittenToMC(before, after);
 +        
 +        // For network-intensive workloads, significant portion of memory traffic is PCIe-related
 +        // Estimate PCIe traffic as a fraction of memory controller traffic
@@ -1827,16 +1855,22 @@ index 0000000000..b9b52a9f15
 +            pcie_write_bytes = (uint64_t)(mc_writes * pcie_fraction);
 +        }
 +        
-+        // Calculate bandwidth (10ms measurement period)
-+        double time_sec = 0.01;
++        // Calculate elapsed time for the entire measurement period
++        double elapsed_time = getExecUsage(g_before_system_state, g_after_system_state);
++        if (elapsed_time <= 0) {
++            printf("ERROR: Invalid elapsed time %.6f seconds in I/O counter calculation!\n", elapsed_time);
++            printf("ERROR: This indicates PCM measurement was not properly initialized or captured.\n");
++            return -1;
++        }
++        
 +        counters->pcie_read_bytes = pcie_read_bytes;
 +        counters->pcie_write_bytes = pcie_write_bytes;
-+        counters->pcie_read_bandwidth_mbps = (double)pcie_read_bytes / (1024.0 * 1024.0) / time_sec;
-+        counters->pcie_write_bandwidth_mbps = (double)pcie_write_bytes / (1024.0 * 1024.0) / time_sec;
++        counters->pcie_read_bandwidth_mbps = (double)pcie_read_bytes / (1024.0 * 1024.0) / elapsed_time;
++        counters->pcie_write_bandwidth_mbps = (double)pcie_write_bytes / (1024.0 * 1024.0) / elapsed_time;
 +        
 +        // Memory controller bandwidth (IMC)
-+        counters->imc_reads_gbps = (double)mc_reads / (1024.0 * 1024.0 * 1024.0) / time_sec;
-+        counters->imc_writes_gbps = (double)mc_writes / (1024.0 * 1024.0 * 1024.0) / time_sec;
++        counters->imc_reads_gbps = (double)mc_reads / (1024.0 * 1024.0 * 1024.0) / elapsed_time;
++        counters->imc_writes_gbps = (double)mc_writes / (1024.0 * 1024.0 * 1024.0) / elapsed_time;
 +        
 +        // QPI/UPI data transfer and utilization
 +        counters->qpi_upi_data_bytes = 0; // PCM might not support this directly
