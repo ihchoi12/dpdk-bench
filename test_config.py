@@ -22,32 +22,62 @@ NODE8_MAC = '08:c0:eb:b6:e8:05'
 
 
 ################## DPDK CONFIG #####################
-# L3FWD Configuration
-L3FWD_CONFIG = {
-    "binary_path": f"{DPDK_PATH}/build/examples/dpdk-l3fwd",
-    "node": "node8",
-    "lcores": "-l 0-4",
-    "memory_channels": "-n 4", 
-    "pci_address": "0000:31:00.1,txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256",
-    "port_mask": "-p 0x1",
-    "config": "(0,0,1),(0,1,2),(0,2,3),(0,3,4)",
-    "eth_dest": "08:c0:eb:b6:cd:5d"
-}
 
-# Pktgen Configuration  
-PKTGEN_CONFIG = {
-    "binary_path": f"{PKTGEN_PATH}/build/app/pktgen",
-    "working_dir": f"{PKTGEN_PATH}",
-    "node": "node7",
-    "lcores": "-l 0-15",
-    "memory_channels": "-n 4",
-    "pci_address": "0000:31:00.1,txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256",
-    "proc_type": "--proc-type auto",
-    "file_prefix": "pktgen1", 
-    "port_map": "[1-8:9-15].0",
-    "app_args": "-P -T",
-    "script_file": "scripts/simple-tx-test.lua"
-}
+def get_l3fwd_config(lcore_count):
+    """Generate L3FWD configuration for given lcore count"""
+    # L3FWD uses cores 1 to lcore_count (core 0 is main)
+    lcores = f"-l 0-{lcore_count}"
+    
+    # Generate config string: (port,queue,lcore) for each working core
+    config_parts = []
+    for i in range(1, lcore_count + 1):
+        queue_id = i - 1  # Queue starts from 0
+        config_parts.append(f"(0,{queue_id},{i})")
+    config = ",".join(config_parts)
+    
+    return {
+        "binary_path": f"{DPDK_PATH}/build/examples/dpdk-l3fwd",
+        "node": "node8", 
+        "lcores": lcores,
+        "memory_channels": "-n 4",
+        "pci_address": "0000:31:00.1,txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256",
+        "port_mask": "-p 0x1",
+        "config": config,
+        "eth_dest": "08:c0:eb:b6:cd:5d"
+    }
+
+def get_pktgen_config(lcore_count):
+    """Generate PKTGEN configuration for given lcore count"""
+    # PKTGEN uses core 0 as main, then splits remaining cores into RX:TX
+    # For lcore_count N: cores 0-(N) where core 0 is main, 1 to N/2 are RX, N/2+1 to N are TX
+    lcores = f"-l 0-{lcore_count}"
+    
+    # Split cores for RX and TX (excluding core 0)
+    rx_start = 1
+    rx_end = lcore_count // 2
+    tx_start = rx_end + 1 
+    tx_end = lcore_count
+    
+    # Generate port_map: [RX_start-RX_end:TX_start-TX_end].port
+    port_map = f"[{rx_start}-{rx_end}:{tx_start}-{tx_end}].0"
+    
+    return {
+        "binary_path": f"{PKTGEN_PATH}/build/app/pktgen",
+        "working_dir": f"{PKTGEN_PATH}",
+        "node": "node7",
+        "lcores": lcores,
+        "memory_channels": "-n 4", 
+        "pci_address": "0000:31:00.1,txqs_min_inline=0",
+        "proc_type": "--proc-type auto",
+        "file_prefix": "pktgen1",
+        "port_map": port_map,
+        "app_args": "-P -T",
+        "script_file": "scripts/simple-tx-test.lua"
+    }
+
+# Default configurations (for backward compatibility)
+L3FWD_CONFIG = get_l3fwd_config(4)  # Default to 4 lcores
+PKTGEN_CONFIG = get_pktgen_config(14)  # Default to 14 lcores
 
 ################## TEST CONFIG #####################
 PKTGEN_DURATION = 5  # Duration in seconds for pktgen transmission
@@ -56,7 +86,20 @@ PKTGEN_PACKET_SIZE = 64  # Packet size in bytes
 # TX Descriptor test configuration
 # TX_DESC_MULTIPLIERS = [1, 2, 4, 8, 16, 32]  # Will test 1024*1, 1024*2, ..., 1024*32
 TX_DESC_MULTIPLIERS = list(range(1, 2))  # Will test 1024*1, 1024*2, ..., 1024*32
-TX_DESC_VALUES = [128 * m for m in TX_DESC_MULTIPLIERS]  # [1024, 2048, 4096, 8192, 16384, 32768]
+TX_DESC_VALUES = [1024 * m for m in TX_DESC_MULTIPLIERS]  # [1024, 2048, 4096, 8192, 16384, 32768]
+
+# LCORE test configuration  
+# L3FWD LCORE configuration - can use any number of cores
+L3FWD_LCORE_COUNTS = [1]  # L3FWD core counts to test
+L3FWD_LCORE_VALUES = L3FWD_LCORE_COUNTS
+
+# PKTGEN LCORE configuration - must use even numbers for balanced RX:TX splitting
+PKTGEN_LCORE_COUNTS = [16, 18, 20, 22, 24, 26, 28, 30]  # Even numbers only for balanced RX:TX splitting
+PKTGEN_LCORE_VALUES = PKTGEN_LCORE_COUNTS
+
+# For backward compatibility, use L3FWD values as default
+LCORE_COUNTS = L3FWD_LCORE_COUNTS
+LCORE_VALUES = L3FWD_LCORE_VALUES
 
 ################## BUILD CONFIG #####################
 LIBOS = 'dpdk'  # DPDK-based applications

@@ -66,27 +66,30 @@ def setup_arp_tables():
         arp_task.append(task)
     pyrem.task.Parallel(arp_task, aggregate=True).start(wait=True)
 
-def run_l3fwd(tx_desc_value=None):
+def run_l3fwd(tx_desc_value=None, l3fwd_config=None):
     """Run l3fwd on node8"""
     global experiment_id
     print(f'RUNNING L3FWD on node8 with TX_DESC={tx_desc_value}')
     
-    host = pyrem.host.RemoteHost(L3FWD_CONFIG["node"])
+    # Use provided config or default
+    config = l3fwd_config if l3fwd_config else L3FWD_CONFIG
+    
+    host = pyrem.host.RemoteHost(config["node"])
     
     # Build tx-queue-size argument if specified
     tx_queue_arg = ""
     if tx_desc_value:
         tx_queue_arg = f" --tx-queue-size={tx_desc_value}"
     
-    cmd = [f'cd {os.path.dirname(L3FWD_CONFIG["binary_path"])} && '
+    cmd = [f'cd {os.path.dirname(config["binary_path"])} && '
            f'sudo -E {ENV} ' 
-           f'{L3FWD_CONFIG["binary_path"]} '
-           f'{L3FWD_CONFIG["lcores"]} '
-           f'{L3FWD_CONFIG["memory_channels"]} '
-           f'-a {L3FWD_CONFIG["pci_address"]} '
-           f'-- {L3FWD_CONFIG["port_mask"]} '
-           f'--config="{L3FWD_CONFIG["config"]}" '
-           f'--eth-dest=0,{L3FWD_CONFIG["eth_dest"]}'
+           f'{config["binary_path"]} '
+           f'{config["lcores"]} '
+           f'{config["memory_channels"]} '
+           f'-a {config["pci_address"]} '
+           f'-- {config["port_mask"]} '
+           f'--config="{config["config"]}" '
+           f'--eth-dest=0,{config["eth_dest"]}'
            f'{tx_queue_arg} '
            f'> {DATA_PATH}/{experiment_id}.l3fwd 2>&1']
     
@@ -95,25 +98,28 @@ def run_l3fwd(tx_desc_value=None):
     pyrem.task.Parallel([task], aggregate=True).start(wait=False)
     time.sleep(3)
 
-def run_pktgen():
+def run_pktgen(pktgen_config=None):
     """Run pktgen on node7"""
     global experiment_id
     print('RUNNING PKTGEN on node7')
     
-    host = pyrem.host.RemoteHost(PKTGEN_CONFIG["node"])
-    cmd = [f'cd {PKTGEN_CONFIG["working_dir"]} && '
+    # Use provided config or default
+    config = pktgen_config if pktgen_config else PKTGEN_CONFIG
+    
+    host = pyrem.host.RemoteHost(config["node"])
+    cmd = [f'cd {config["working_dir"]} && '
            f'sudo -E {ENV} '
            f'PKTGEN_DURATION={PKTGEN_DURATION} '
            f'PKTGEN_PACKET_SIZE={PKTGEN_PACKET_SIZE} '
-           f'{PKTGEN_CONFIG["binary_path"]} '
-           f'{PKTGEN_CONFIG["lcores"]} '
-           f'{PKTGEN_CONFIG["memory_channels"]} '
-           f'-a {PKTGEN_CONFIG["pci_address"]} '
-           f'{PKTGEN_CONFIG["proc_type"]} '
-           f'--file-prefix={PKTGEN_CONFIG["file_prefix"]} '
-           f'-- -m "{PKTGEN_CONFIG["port_map"]}" '
-           f'{PKTGEN_CONFIG["app_args"]} '
-           f'-f {PKTGEN_CONFIG["script_file"]} '
+           f'{config["binary_path"]} '
+           f'{config["lcores"]} '
+           f'{config["memory_channels"]} '
+           f'-a {config["pci_address"]} '
+           f'{config["proc_type"]} '
+           f'--file-prefix={config["file_prefix"]} '
+           f'-- -m "{config["port_map"]}" '
+           f'{config["app_args"]} '
+           f'-f {config["script_file"]} '
            f'> {DATA_PATH}/{experiment_id}.pktgen 2>&1']
     
     task = host.run(cmd, quiet=False)
@@ -128,7 +134,7 @@ def run_pktgen():
     
     # time.sleep(3)
 
-def parse_dpdk_results(experiment_id, tx_desc_value=None):
+def parse_dpdk_results(experiment_id, tx_desc_value=None, l3fwd_lcore_count=None, pktgen_lcore_count=None):
     """Parse DPDK test results from l3fwd and pktgen"""
     result_str = ''
     
@@ -446,7 +452,7 @@ def parse_dpdk_results(experiment_id, tx_desc_value=None):
     l3fwd_tx_fails = round((l3fwd_rx_pkts - l3fwd_tx_pkts) / 1_000_000, 3)
     pktgen_rx_fails = round((l3fwd_tx_pkts - pktgen_rx_pkts) / 1_000_000, 3)
     
-    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {tx_desc_value}, {pktgen_rx_rate}, {pktgen_tx_rate}, {pktgen_rx_fails}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_hw_rx_missed}, {l3fwd_hw_rx_missed}, {pktgen_rx_l3_misses}, {pktgen_rx_l2_hit}, {pktgen_rx_l3_hit}, {pktgen_tx_l3_misses}, {pktgen_tx_l2_hit}, {pktgen_tx_l3_hit}, {l3fwd_l3_misses}, {l3fwd_l2_hit}, {l3fwd_l3_hit}, {pktgen_dram_read}, {pktgen_dram_write}, {pktgen_read_bw}, {pktgen_write_bw}, {l3fwd_dram_read}, {l3fwd_dram_write}, {l3fwd_read_bw}, {l3fwd_write_bw}, {pktgen_pcie_read}, {pktgen_pcie_write}, {pktgen_pcie_read_bw}, {pktgen_pcie_write_bw}, {l3fwd_pcie_read}, {l3fwd_pcie_write}, {l3fwd_pcie_read_bw}, {l3fwd_pcie_write_bw}\n'
+    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {tx_desc_value}, {l3fwd_lcore_count}, {pktgen_lcore_count}, {pktgen_rx_rate}, {pktgen_tx_rate}, {pktgen_rx_fails}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_hw_rx_missed}, {l3fwd_hw_rx_missed}, {pktgen_rx_l3_misses}, {pktgen_rx_l2_hit}, {pktgen_rx_l3_hit}, {pktgen_tx_l3_misses}, {pktgen_tx_l2_hit}, {pktgen_tx_l3_hit}, {l3fwd_l3_misses}, {l3fwd_l2_hit}, {l3fwd_l3_hit}, {pktgen_dram_read}, {pktgen_dram_write}, {pktgen_read_bw}, {pktgen_write_bw}, {l3fwd_dram_read}, {l3fwd_dram_write}, {l3fwd_read_bw}, {l3fwd_write_bw}, {pktgen_pcie_read}, {pktgen_pcie_write}, {pktgen_pcie_read_bw}, {pktgen_pcie_write_bw}, {l3fwd_pcie_read}, {l3fwd_pcie_write}, {l3fwd_pcie_read_bw}, {l3fwd_pcie_write_bw}\n'
     return result_str
 
 def run_eval():
@@ -454,35 +460,46 @@ def run_eval():
     global experiment_id
     global final_result
     
-    print("Starting DPDK TX Descriptor Tests")
+    print("Starting DPDK TX Descriptor and LCORE Tests")
     print(f"Testing TX descriptor values: {TX_DESC_VALUES}")
+    print(f"Testing L3FWD LCORE counts: {L3FWD_LCORE_VALUES}")
+    print(f"Testing PKTGEN LCORE counts: {PKTGEN_LCORE_VALUES}")
     
-    for tx_desc_value in TX_DESC_VALUES:
-        print(f'\n================ TESTING TX_DESC={tx_desc_value} =================')
-        
-        kill_procs()
-        experiment_id = datetime.datetime.now().strftime('%Y%m%d-%H%M%S.%f')
-        print(f'EXPTID: {experiment_id}')
-        
-        setup_arp_tables()
-        
-        # Run L3FWD with specific TX descriptor value
-        run_l3fwd(tx_desc_value)
-        
-        # Run Pktgen
-        run_pktgen()
-        
-        # Stop processes
-        kill_procs()
-        time.sleep(3)
-        
-        # Parse results
-        print(f'================ {experiment_id} TEST COMPLETE =================')
-        res = parse_dpdk_results(experiment_id, tx_desc_value)
-        final_result = final_result + f'{res}'
-        
-        # Wait a bit between tests
-        time.sleep(5)
+    for l3fwd_lcore_count in L3FWD_LCORE_VALUES:
+        for pktgen_lcore_count in PKTGEN_LCORE_VALUES:
+            for tx_desc_value in TX_DESC_VALUES:
+                print(f'\n================ TESTING L3FWD_LCORE={l3fwd_lcore_count}, PKTGEN_LCORE={pktgen_lcore_count}, TX_DESC={tx_desc_value} =================')
+                
+                kill_procs()
+                experiment_id = datetime.datetime.now().strftime('%Y%m%d-%H%M%S.%f')
+                print(f'EXPTID: {experiment_id}')
+                
+                setup_arp_tables()
+                
+                # Generate configurations for current lcore counts
+                l3fwd_config = get_l3fwd_config(l3fwd_lcore_count)
+                pktgen_config = get_pktgen_config(pktgen_lcore_count)
+                
+                print(f'L3FWD Config: lcores={l3fwd_config["lcores"]}, config="{l3fwd_config["config"]}"')
+                print(f'PKTGEN Config: lcores={pktgen_config["lcores"]}, port_map="{pktgen_config["port_map"]}"')
+                
+                # Run L3FWD with specific TX descriptor value and lcore config
+                run_l3fwd(tx_desc_value, l3fwd_config)
+                
+                # Run Pktgen with lcore config
+                run_pktgen(pktgen_config)
+                
+                # Stop processes
+                kill_procs()
+                time.sleep(3)
+                
+                # Parse results - pass both lcore counts
+                print(f'================ {experiment_id} TEST COMPLETE =================')
+                res = parse_dpdk_results(experiment_id, tx_desc_value, l3fwd_lcore_count, pktgen_lcore_count)
+                final_result = final_result + f'{res}'
+                
+                # Wait a bit between tests
+                time.sleep(5)
     
         
 
@@ -492,7 +509,7 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "experiment_id, pkt_size, l3fwd_tx_desc_value, pktgen_rx_rate, pktgen_tx_rate, pktgen_rx_fails, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_hw_rx_missed, l3fwd_hw_rx_missed, pktgen_rx_l3_misses, pktgen_rx_l2_hit%, pktgen_rx_l3_hit%, pktgen_tx_l3_misses, pktgen_tx_l2_hit%, pktgen_tx_l3_hit%, l3fwd_l3_misses, l3fwd_l2_hit%, l3fwd_l3_hit%, pktgen_dram_read, pktgen_dram_write, pktgen_read_bw, pktgen_write_bw, l3fwd_dram_read, l3fwd_dram_write, l3fwd_read_bw, l3fwd_write_bw, pktgen_pcie_read, pktgen_pcie_write, pktgen_pcie_read_bw, pktgen_pcie_write_bw, l3fwd_pcie_read, l3fwd_pcie_write, l3fwd_pcie_read_bw, l3fwd_pcie_write_bw\n"
+    result_header = "experiment_id, pkt_size, l3fwd_tx_desc_value, l3fwd_lcore_count, pktgen_lcore_count, pktgen_rx_rate, pktgen_tx_rate, pktgen_rx_fails, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_hw_rx_missed, l3fwd_hw_rx_missed, pktgen_rx_l3_misses, pktgen_rx_l2_hit%, pktgen_rx_l3_hit%, pktgen_tx_l3_misses, pktgen_tx_l2_hit%, pktgen_tx_l3_hit%, l3fwd_l3_misses, l3fwd_l2_hit%, l3fwd_l3_hit%, pktgen_dram_read, pktgen_dram_write, pktgen_read_bw, pktgen_write_bw, l3fwd_dram_read, l3fwd_dram_write, l3fwd_read_bw, l3fwd_write_bw, pktgen_pcie_read, pktgen_pcie_write, pktgen_pcie_read_bw, pktgen_pcie_write_bw, l3fwd_pcie_read, l3fwd_pcie_write, l3fwd_pcie_read_bw, l3fwd_pcie_write_bw\n"
         
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
