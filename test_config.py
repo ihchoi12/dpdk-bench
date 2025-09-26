@@ -40,7 +40,7 @@ def get_l3fwd_config(lcore_count):
         "node": "node8", 
         "lcores": lcores,
         "memory_channels": "-n 4",
-        "pci_address": "0000:31:00.1,txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256",
+        "pci_address": "0000:31:00.1,txqs_min_inline=0",
         "port_mask": "-p 0x1",
         "config": config,
         "eth_dest": "08:c0:eb:b6:cd:5d"
