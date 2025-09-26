@@ -91,23 +91,19 @@ PKTGEN_PACKET_SIZE = 64  # Packet size in bytes
 L3FWD_TX_DESC_VALUES = [1024]  # L3FWD TX descriptor sizes
 
 # PKTGEN TX Descriptor configuration  
-PKTGEN_TX_DESC_VALUES = [128, 1024, 1024*4, 1024*16, 1024*32]  # PKTGEN TX descriptor sizes - simplified for testing
+PKTGEN_TX_DESC_VALUES = [1024]  # PKTGEN TX descriptor sizes - simplified for testing
 
 # For backward compatibility, use L3FWD values as default
 TX_DESC_VALUES = L3FWD_TX_DESC_VALUES
 
 # LCORE test configuration  
 # L3FWD LCORE configuration - can use any number of cores
-L3FWD_LCORE_COUNTS = [1]  # L3FWD core counts to test
+L3FWD_LCORE_COUNTS = [15, 15]  # L3FWD core counts to test
 L3FWD_LCORE_VALUES = L3FWD_LCORE_COUNTS
 
 # PKTGEN LCORE configuration - must use even numbers for balanced RX:TX splitting
-PKTGEN_LCORE_COUNTS = [16]  # Even numbers only for balanced RX:TX splitting
+PKTGEN_LCORE_COUNTS = [14]  # Even numbers only for balanced RX:TX splitting
 PKTGEN_LCORE_VALUES = PKTGEN_LCORE_COUNTS
-
-# For backward compatibility, use L3FWD values as default
-LCORE_COUNTS = L3FWD_LCORE_COUNTS
-LCORE_VALUES = L3FWD_LCORE_VALUES
 
 ################## BUILD CONFIG #####################
 LIBOS = 'dpdk'  # DPDK-based applications
