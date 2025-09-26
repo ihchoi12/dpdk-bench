@@ -3073,10 +3073,10 @@ index 0000000..86cde97
 +print("====================================\n")
 diff --git a/scripts/simple-tx-test.lua b/scripts/simple-tx-test.lua
 new file mode 100644
-index 0000000..87b72c6
+index 0000000..fc81586
 --- /dev/null
 +++ b/scripts/simple-tx-test.lua
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,91 @@
 +-- RX/TX Rate Measurement Script (based on measure-tx-rate.lua)
 +
 +-- Since we run from Pktgen-DPDK directory, just add current directory to path
@@ -3156,7 +3156,14 @@ index 0000000..87b72c6
 +local delay_ms = sleeptime * 1000
 +pktgen.delay(delay_ms)
 +
-+-- Print packet statistics summary before exit
++-- Stop transmission BEFORE reading statistics
++print("Stopping packet transmission...")
++pktgen.stop(port)
++
++-- Wait a bit for any remaining packets to be transmitted by hardware
++pktgen.delay(100)
++
++-- Print packet statistics summary after stopping
 +print("\nPrinting packet statistics summary...")
 +pktgen.print_stats()
 +
