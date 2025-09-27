@@ -83,22 +83,16 @@ PKTGEN_CONFIG = get_pktgen_config(14)  # Default to 14 lcores
 PKTGEN_DURATION = 5  # Duration in seconds for pktgen transmission
 PKTGEN_PACKET_SIZE = 64  # Packet size in bytes
 
-# TX Descriptor test configuration
-# TX_DESC_MULTIPLIERS = [1, 2, 4, 8, 16, 32]  # Will test 1024*1, 1024*2, ..., 1024*32
-# TX_DESC_MULTIPLIERS = [1, 10, 32] #list(range(1, 2))
-
-# L3FWD TX Descriptor configuration
-L3FWD_TX_DESC_VALUES = [1024]  # L3FWD TX descriptor sizes
+# L3FWD Descriptor configuration
+L3FWD_TX_DESC_VALUES = [128, 512, 1024, 1024*2, 1024*4, 1024*8, 1024*16, 1024*32]  # L3FWD TX descriptor sizes
+L3FWD_RX_DESC_VALUES = [1024]  # L3FWD RX descriptor sizes
 
 # PKTGEN TX Descriptor configuration  
 PKTGEN_TX_DESC_VALUES = [1024]  # PKTGEN TX descriptor sizes - simplified for testing
 
-# For backward compatibility, use L3FWD values as default
-TX_DESC_VALUES = L3FWD_TX_DESC_VALUES
-
 # LCORE test configuration  
 # L3FWD LCORE configuration - can use any number of cores
-L3FWD_LCORE_COUNTS = [15, 15]  # L3FWD core counts to test
+L3FWD_LCORE_COUNTS = [2]  # L3FWD core counts to test
 L3FWD_LCORE_VALUES = L3FWD_LCORE_COUNTS
 
 # PKTGEN LCORE configuration - must use even numbers for balanced RX:TX splitting

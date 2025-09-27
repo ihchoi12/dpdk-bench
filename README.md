@@ -137,35 +137,6 @@ References:
 
 
 
-ToDo:
-- [Both pktgen & l3fwd]: check code block below
-  - if 10ms interval measurement makes sense?
-  - is it better to use memory controller utilization? 
-```
-  // Convert to reasonable values (10ms measurement period)
-        double time_sec = 0.01; // 10ms
-        counters->dram_read_bytes = bytes_read;
-        counters->dram_write_bytes = bytes_written;
-        counters->dram_read_bandwidth_mbps = (double)bytes_read / (1024.0 * 1024.0) / time_sec;
-        counters->dram_write_bandwidth_mbps = (double)bytes_written / (1024.0 * 1024.0) / time_sec;
-```
-
-
-- check other stats and try to simplify types of stats
-```
-// Memory controller bandwidth (IMC)
-        counters->imc_reads_gbps = (double)mc_reads / (1024.0 * 1024.0 * 1024.0) / time_sec;
-        counters->imc_writes_gbps = (double)mc_writes / (1024.0 * 1024.0 * 1024.0) / time_sec;
-        
-        // QPI/UPI data transfer and utilization
-        counters->qpi_upi_data_bytes = 0; // PCM might not support this directly
-        counters->qpi_upi_utilization = 0.0;
-        counters->uncore_freq_ghz = 0; // Could try to get uncore frequency if available
-```
-
-
-
-
 # Parameters
 - TX/RX_DESC_DEFAULT: the size of descriptor ring
   - Smaller: 
