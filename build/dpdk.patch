@@ -25,7 +25,7 @@ index a06480a19e..505b282049 100644
  CFLAGS += -I../common
  
 diff --git a/examples/l3fwd/l3fwd.h b/examples/l3fwd/l3fwd.h
-index 0cce3406ee..e12ad2c339 100644
+index 0cce3406ee..1ed8d30820 100644
 --- a/examples/l3fwd/l3fwd.h
 +++ b/examples/l3fwd/l3fwd.h
 @@ -5,10 +5,18 @@
@@ -57,7 +57,7 @@ index 0cce3406ee..e12ad2c339 100644
  extern struct parm_cfg parm_config;
  
  extern struct acl_algorithms acl_alg[];
-@@ -119,6 +130,25 @@ extern uint32_t max_pkt_len;
+@@ -119,6 +130,27 @@ extern uint32_t max_pkt_len;
  extern uint32_t nb_pkt_per_burst;
  extern uint32_t mb_mempool_cache_size;
  
@@ -66,6 +66,7 @@ index 0cce3406ee..e12ad2c339 100644
 +	uint64_t rx_packets;
 +	uint64_t tx_packets;
 +	uint64_t filtered_rx_packets;   /* RX packets excluding unwanted traffic like DHCP */
++	uint64_t filtered_tx_packets;   /* TX packets excluding unwanted traffic like DHCP */
 +	uint64_t start_time;
 +	/* Drop counters */
 +	uint64_t dropped_invalid_ipv4;
@@ -79,11 +80,12 @@ index 0cce3406ee..e12ad2c339 100644
 +
 +/* Function declarations */
 +void analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction, uint16_t queue_id);
++int is_dhcp_packet(struct rte_mbuf *pkt);
 +
  /* Send burst of packets on an output interface */
  static inline int
  send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
-@@ -126,12 +156,33 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
+@@ -126,12 +158,51 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
  	struct rte_mbuf **m_table;
  	int ret;
  	uint16_t queueid;
@@ -92,17 +94,35 @@ index 0cce3406ee..e12ad2c339 100644
  	queueid = qconf->tx_queue_id[port];
  	m_table = (struct rte_mbuf **)qconf->tx_mbufs[port].m_table;
  
-+#if L3FWD_DEBUG_LOGS
-+	/* Analyze TX packets for debugging only when debug is enabled */
-+	for (int i = 0; i < n; i++) {
-+		analyze_packet(m_table[i], lcore_id, "TX", queueid);
-+	}
-+#endif
-+
  	ret = rte_eth_tx_burst(port, queueid, m_table, n);
 +
-+	/* Update TX statistics */
-+	lcore_stats[lcore_id].tx_packets += ret;
++	/* Single iteration through successfully transmitted packets */
++	if (stats_enabled) {
++		uint64_t filtered_count = 0;
++		
++		for (int i = 0; i < ret; i++) {
++			/* Filter out unwanted packets (DHCP etc.) for statistics */
++			if (!is_dhcp_packet(m_table[i])) {
++				filtered_count++;
++			}
++
++#if L3FWD_DEBUG_LOGS
++			/* Analyze packet for debugging */
++			analyze_packet(m_table[i], lcore_id, "TX", queueid);
++#endif
++		}
++
++		lcore_stats[lcore_id].tx_packets += ret;
++		lcore_stats[lcore_id].filtered_tx_packets += filtered_count;
++	} else {
++		lcore_stats[lcore_id].tx_packets += ret;
++#if L3FWD_DEBUG_LOGS
++		/* Analyze packets for debugging even when stats disabled */
++		for (int i = 0; i < ret; i++) {
++			analyze_packet(m_table[i], lcore_id, "TX", queueid);
++		}
++#endif
++	}
 +
  	if (unlikely(ret < n)) {
 +		/* Count failed TX packets */
@@ -118,7 +138,7 @@ index 0cce3406ee..e12ad2c339 100644
  			rte_pktmbuf_free(m_table[ret]);
  		} while (++ret < n);
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..493d12ed88 100644
+index fec0aeb79c..455c6d7756 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -147,7 +167,7 @@ index fec0aeb79c..493d12ed88 100644
  #define IPV4_L3FWD_LPM_MAX_RULES         1024
  #define IPV4_L3FWD_LPM_NUMBER_TBL8S (1 << 8)
  #define IPV6_L3FWD_LPM_MAX_RULES         1024
-@@ -41,6 +50,262 @@
+@@ -41,6 +50,271 @@
  static struct rte_lpm *ipv4_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  static struct rte_lpm6 *ipv6_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  
@@ -155,7 +175,7 @@ index fec0aeb79c..493d12ed88 100644
 +struct lcore_packet_stats lcore_stats[RTE_MAX_LCORE];
 +
 +/* Check if a packet is a DHCP packet (UDP ports 67/68) */
-+static inline int
++int
 +is_dhcp_packet(struct rte_mbuf *pkt)
 +{
 +    struct rte_ether_hdr *eth_hdr;
@@ -283,20 +303,20 @@ index fec0aeb79c..493d12ed88 100644
 +			uint64_t duration = current_time - lcore_stats[lcore_id].start_time;
 +			double elapsed_sec = (double)duration / tsc_hz;
 +			double rx_rate = elapsed_sec > 0 ? lcore_stats[lcore_id].filtered_rx_packets / elapsed_sec : 0;
-+			double tx_rate = elapsed_sec > 0 ? lcore_stats[lcore_id].tx_packets / elapsed_sec : 0;
++			double tx_rate = elapsed_sec > 0 ? lcore_stats[lcore_id].filtered_tx_packets / elapsed_sec : 0;
 +			double loss_rate = lcore_stats[lcore_id].filtered_rx_packets > 0 ?
-+				(double)(lcore_stats[lcore_id].filtered_rx_packets - lcore_stats[lcore_id].tx_packets) * 100.0 / lcore_stats[lcore_id].filtered_rx_packets : 0.0;
++				(double)(lcore_stats[lcore_id].filtered_rx_packets - lcore_stats[lcore_id].filtered_tx_packets) * 100.0 / lcore_stats[lcore_id].filtered_rx_packets : 0.0;
 +
 +			printf("%-8u %-12" PRIu64 " %-12" PRIu64 " %-10.1f %-10.1f %-8.1f\n",
 +				lcore_id,
 +				lcore_stats[lcore_id].filtered_rx_packets,
-+				lcore_stats[lcore_id].tx_packets,
++				lcore_stats[lcore_id].filtered_tx_packets,
 +				rx_rate / 1000000.0,  /* Convert to Mpps */
 +				tx_rate / 1000000.0,
 +				loss_rate);
 +
 +			total_rx += lcore_stats[lcore_id].filtered_rx_packets;
-+			total_tx += lcore_stats[lcore_id].tx_packets;
++			total_tx += lcore_stats[lcore_id].filtered_tx_packets;
 +			total_dropped_invalid_ipv4 += lcore_stats[lcore_id].dropped_invalid_ipv4;
 +			total_dropped_no_route += lcore_stats[lcore_id].dropped_no_route;
 +			total_dropped_tx_failed += lcore_stats[lcore_id].dropped_tx_failed;
@@ -306,13 +326,15 @@ index fec0aeb79c..493d12ed88 100644
 +	}
 +
 +	/* Calculate total excluded packets (unwanted traffic like DHCP) */
-+	uint64_t total_raw_rx = 0, total_excluded = 0;
++	uint64_t total_raw_rx = 0, total_raw_tx = 0, total_excluded_rx = 0, total_excluded_tx = 0;
 +	RTE_LCORE_FOREACH(lcore_id) {
 +		if (lcore_stats[lcore_id].start_time > 0) {
 +			total_raw_rx += lcore_stats[lcore_id].rx_packets;
++			total_raw_tx += lcore_stats[lcore_id].tx_packets;
 +		}
 +	}
-+	total_excluded = total_raw_rx - total_rx;
++	total_excluded_rx = total_raw_rx - total_rx;
++	total_excluded_tx = total_raw_tx - total_tx;
 +
 +	double total_loss_rate = total_rx > 0 ? (double)(total_rx - total_tx) * 100.0 / total_rx : 0.0;
 +
@@ -323,8 +345,15 @@ index fec0aeb79c..493d12ed88 100644
 +	printf("=====================================\n");
 +	printf("ANALYSIS: RX/TX difference = %" PRIu64 " packets (%.1f%% loss)\n",
 +		total_rx - total_tx, total_loss_rate);
-+	printf("FILTERING: %" PRIu64 " unwanted packets excluded from counting (%.1f%% of total received)\n\n\n",
-+		total_excluded, total_raw_rx > 0 ? (double)total_excluded * 100.0 / total_raw_rx : 0.0);
++
++	printf("FILTERING: %" PRIu64 " RX + %" PRIu64 " TX unwanted packets excluded from counting\n\n\n",
++		total_excluded_rx, total_excluded_tx);
++	// if (total_raw_rx > 0 && total_raw_tx > 0) {
++	// 	printf("           (%.1f%% of total RX, %.1f%% of total TX)\n",
++	// 		(double)total_excluded_rx * 100.0 / total_raw_rx,
++	// 		(double)total_excluded_tx * 100.0 / total_raw_tx);
++	// }
++	
 +
 +	/* Print detailed drop analysis */
 +	if (total_rx - total_tx > 0) {
@@ -410,7 +439,7 @@ index fec0aeb79c..493d12ed88 100644
  /* Performing LPM-based lookups. 8< */
  static inline uint16_t
  lpm_get_ipv4_dst_port(const struct rte_ipv4_hdr *ipv4_hdr,
-@@ -156,6 +421,18 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -156,6 +430,19 @@ lpm_main_loop(__rte_unused void *dummy)
  	lcore_id = rte_lcore_id();
  	qconf = &lcore_conf[lcore_id];
  
@@ -418,6 +447,7 @@ index fec0aeb79c..493d12ed88 100644
 +	lcore_stats[lcore_id].rx_packets = 0;
 +	lcore_stats[lcore_id].tx_packets = 0;
 +	lcore_stats[lcore_id].filtered_rx_packets = 0;
++	lcore_stats[lcore_id].filtered_tx_packets = 0;
 +	lcore_stats[lcore_id].start_time = rte_rdtsc();
 +
 +	/* Install signal handlers only on master lcore */
@@ -429,7 +459,7 @@ index fec0aeb79c..493d12ed88 100644
  	const uint16_t n_rx_q = qconf->n_rx_queue;
  	const uint16_t n_tx_p = qconf->n_tx_port;
  	if (n_rx_q == 0) {
-@@ -163,17 +440,31 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -163,17 +450,31 @@ lpm_main_loop(__rte_unused void *dummy)
  		return 0;
  	}
  
@@ -465,7 +495,7 @@ index fec0aeb79c..493d12ed88 100644
  	cur_tsc = rte_rdtsc();
  	prev_tsc = cur_tsc;
  
-@@ -189,6 +480,9 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -189,6 +490,9 @@ lpm_main_loop(__rte_unused void *dummy)
  				portid = qconf->tx_port_id[i];
  				if (qconf->tx_mbufs[portid].len == 0)
  					continue;
@@ -475,7 +505,7 @@ index fec0aeb79c..493d12ed88 100644
  				send_burst(qconf,
  					qconf->tx_mbufs[portid].len,
  					portid);
-@@ -209,6 +503,35 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -209,6 +513,35 @@ lpm_main_loop(__rte_unused void *dummy)
  			if (nb_rx == 0)
  				continue;
  
@@ -511,7 +541,7 @@ index fec0aeb79c..493d12ed88 100644
  #if defined RTE_ARCH_X86 || defined __ARM_NEON \
  			 || defined RTE_ARCH_PPC_64
  			l3fwd_lpm_send_packets(nb_rx, pkts_burst,
-@@ -222,6 +545,11 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -222,6 +555,11 @@ lpm_main_loop(__rte_unused void *dummy)
  		cur_tsc = rte_rdtsc();
  	}
  
