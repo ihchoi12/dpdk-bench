@@ -365,7 +365,7 @@ index ac33b51..f6206cd 100644
      if (pktgen.flags & BLINK_PORTS_FLAG) {
          RTE_ETH_FOREACH_DEV(pid)
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..7abb11f 100644
+index 627034d..2658fc2 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -665,8 +665,7 @@ index 627034d..7abb11f 100644
 +        printf("DEBUG: Core %d: Setting up %s workqueue for port %d\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
 +#endif
- 
--    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++
 +        if (workq_port_arg_set(pid, arg)) {
 +            __atomic_store_n(&workq_setup_done[pid][wqt_idx], 0, __ATOMIC_RELEASE);
 +            return -1;
@@ -678,7 +677,8 @@ index 627034d..7abb11f 100644
 +            __atomic_store_n(&workq_setup_done[pid][wqt_idx], 0, __ATOMIC_RELEASE);
 +            return ret;
 +        }
-+
+ 
+-    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
 +#if PKTGEN_DEBUG_LOGS
 +        printf("DEBUG: Core %d: Successfully set up %s workqueue for port %d\n",
 +               rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
@@ -721,7 +721,7 @@ index 627034d..7abb11f 100644
      printf("RX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, rx_qid,
             l2p_get_rx_mp(pinfo->pid)->name, l2p_get_rx_mp(pinfo->pid));
  
-@@ -1479,3 +1722,396 @@ pktgen_timer_setup(void)
+@@ -1479,3 +1722,394 @@ pktgen_timer_setup(void)
      CPU_SET(rte_get_main_lcore(), cpuset);
      pthread_setaffinity_np(tid, sizeof(cpuset), cpuset);
  }
@@ -832,10 +832,8 @@ index 627034d..7abb11f 100644
 +    printf("=====================================\n");
 +    printf("ANALYSIS: RX/TX difference = %+" PRId64 " packets (%.1f%% %s)\n",
 +        difference, rate, rate_type);
-+    if (total_excluded > 0) {
-+        printf("FILTERING: %" PRIu64 " unwanted packets excluded from counting (%.1f%% of total received)\n",
-+            total_excluded, total_raw_rx > 0 ? (double)total_excluded * 100.0 / total_raw_rx : 0.0);
-+    }
++    printf("FILTERING: %" PRIu64 " unwanted packets excluded from counting (%.1f%% of total received)\n",
++        total_excluded, total_raw_rx > 0 ? (double)total_excluded * 100.0 / total_raw_rx : 0.0);
 +    printf("=====================================\n");
 +
 +    /* Print NIC hardware statistics */
