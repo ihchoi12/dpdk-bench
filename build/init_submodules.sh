@@ -78,13 +78,55 @@ build_dpdk() {
   pushd "$DPDK_DIR" >/dev/null
   rm -rf build
   mkdir -p build
-  meson setup build \
-    -Dprefix="$PWD/build" \
-    -Ddisable_drivers="$DISABLE_DRIVERS" \
-    $DPDK_MESON_FLAGS
-  ninja -C build -j"$CORES"
-  ninja -C build examples/dpdk-l3fwd
-  ninja -C build install
+  
+  # Prepare debug flags if environment variables are set
+  DEBUG_CFLAGS=""
+  if [ "${RTE_ETHDEV_DEBUG_TX:-}" = "1" ]; then
+    DEBUG_CFLAGS="${DEBUG_CFLAGS} -DRTE_LIBRTE_ETHDEV_DEBUG"
+    echo ">> ETHDEV debug enabled (TX + RX)"
+  fi
+  if [ "${RTE_ETHDEV_DEBUG_RX:-}" = "1" ]; then
+    DEBUG_CFLAGS="${DEBUG_CFLAGS} -DRTE_LIBRTE_ETHDEV_DEBUG"
+    echo ">> ETHDEV debug enabled (TX + RX)"
+  fi
+  
+  # Set default log level to DEBUG for debug builds and disable optimization
+  # if [ -n "$DEBUG_CFLAGS" ]; then
+  #   DEBUG_CFLAGS="${DEBUG_CFLAGS} -O0 -g -fno-inline"
+  #   echo ">> Setting debug build options and disabling optimization"
+  # fi
+  
+  # Setup meson with debug flags if any
+  if [ -n "$DEBUG_CFLAGS" ]; then
+    echo ">> Building with debug flags: $DEBUG_CFLAGS"
+    
+    # Set environment variables for meson/ninja
+    export CFLAGS="$DEBUG_CFLAGS"
+    export CPPFLAGS="$DEBUG_CFLAGS"
+    
+    meson setup build \
+      -Dprefix="$PWD/build" \
+      -Ddisable_drivers="$DISABLE_DRIVERS" \
+      -Dc_args="$DEBUG_CFLAGS" \
+      -Dcpp_args="$DEBUG_CFLAGS" \
+      $DPDK_MESON_FLAGS
+    
+    # Build with environment variables set
+    CFLAGS="$DEBUG_CFLAGS" CPPFLAGS="$DEBUG_CFLAGS" ninja -C build -j"$CORES"
+    CFLAGS="$DEBUG_CFLAGS" CPPFLAGS="$DEBUG_CFLAGS" ninja -C build examples/dpdk-l3fwd
+    CFLAGS="$DEBUG_CFLAGS" CPPFLAGS="$DEBUG_CFLAGS" ninja -C build install
+    
+    unset CFLAGS CPPFLAGS
+  else
+    meson setup build \
+      -Dprefix="$PWD/build" \
+      -Ddisable_drivers="$DISABLE_DRIVERS" \
+      $DPDK_MESON_FLAGS
+    
+    ninja -C build -j"$CORES"
+    ninja -C build examples/dpdk-l3fwd
+    ninja -C build install
+  fi
   popd >/dev/null
   echo ">> done. libdpdk installed under: $DPDK_PREFIX"
 }
@@ -154,14 +196,36 @@ build_pktgen() {
   export_dpdk_env
   pushd "$PKTGEN_DIR" >/dev/null
 
+  # Check if debug flags should be applied to Pktgen too
+  DEBUG_CFLAGS=""
+  if [ "${RTE_ETHDEV_DEBUG_TX:-}" = "1" ] || [ "${RTE_ETHDEV_DEBUG_RX:-}" = "1" ]; then
+    DEBUG_CFLAGS="-DRTE_LIBRTE_ETHDEV_DEBUG -O0 -g -fno-inline"
+    echo ">> Building Pktgen with ETHDEV debug flags: $DEBUG_CFLAGS"
+  fi
+
   # Use local 'build' dir inside Pktgen-DPDK
   if [ ! -f "build/meson-private/coredata.dat" ]; then
-    meson setup build $PKTGEN_MESON_FLAGS
+    if [ -n "$DEBUG_CFLAGS" ]; then
+      meson setup build $PKTGEN_MESON_FLAGS -Dc_args="$DEBUG_CFLAGS" -Dcpp_args="$DEBUG_CFLAGS"
+    else
+      meson setup build $PKTGEN_MESON_FLAGS
+    fi
   else
-    meson setup build $PKTGEN_MESON_FLAGS --reconfigure
+    if [ -n "$DEBUG_CFLAGS" ]; then
+      meson setup build $PKTGEN_MESON_FLAGS --reconfigure -Dc_args="$DEBUG_CFLAGS" -Dcpp_args="$DEBUG_CFLAGS"
+    else
+      meson setup build $PKTGEN_MESON_FLAGS --reconfigure
+    fi
   fi
+  
   meson configure build -Denable_lua=true
-  ninja -C build -j"$CORES"
+  
+  # Build with debug flags if needed
+  if [ -n "$DEBUG_CFLAGS" ]; then
+    CFLAGS="$DEBUG_CFLAGS" CPPFLAGS="$DEBUG_CFLAGS" ninja -C build -j"$CORES"
+  else
+    ninja -C build -j"$CORES"
+  fi
 
   popd >/dev/null
   echo ">> done. pktgen binary at: ${PKTGEN_DIR}/build/app/pktgen"

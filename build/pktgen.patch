@@ -365,7 +365,7 @@ index ac33b51..f6206cd 100644
      if (pktgen.flags & BLINK_PORTS_FLAG) {
          RTE_ETH_FOREACH_DEV(pid)
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..598895c 100644
+index 627034d..19af5dd 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -852,7 +852,7 @@ index 627034d..598895c 100644
 +    printf("=====================================\n");
 +    printf("ANALYSIS: RX/TX difference = %+" PRId64 " packets (%.1f%% %s)\n",
 +        difference, rate, rate_type);
-+    
++
 +    printf("FILTERING: %" PRIu64 " RX + %" PRIu64 " TX unwanted packets excluded from counting\n",
 +        total_excluded_rx, total_excluded_tx);
 +    // if (total_raw_rx > 0 && total_raw_tx > 0) {

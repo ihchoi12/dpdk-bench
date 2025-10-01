@@ -5,11 +5,15 @@ ROOT_PATH        := .
 BUILD_DIR        ?= $(ROOT_PATH)/build
 DPDK_DIR ?= dpdk
 
-.PHONY: submodules submodules-clean l3fwd
+.PHONY: submodules submodules-debug submodules-clean l3fwd
 .DEFAULT_GOAL := submodules
 
 submodules:
 	@bash $(BUILD_DIR)/init_submodules.sh build
+
+submodules-debug:
+	@echo ">> Building submodules with TX/RX debug enabled..."
+	@RTE_ETHDEV_DEBUG_TX=1 RTE_ETHDEV_DEBUG_RX=1 bash $(BUILD_DIR)/init_submodules.sh build
 
 submodules-clean:
 	@bash $(BUILD_DIR)/init_submodules.sh clean
