@@ -14,7 +14,7 @@ PROC_TYPE="${PROC_TYPE:-${PKTGEN_PROC_TYPE:---proc-type auto}}"
 APP_ARGS="${APP_ARGS:-${PKTGEN_APP_ARGS:--P -T}}"
 
 # Script file to execute (can be overridden by command line argument or environment)
-SCRIPT_FILE="${1:-${SCRIPT_FILE:-${REPO_ROOT}/Pktgen-DPDK/scripts/measure-rx-tx-rate.lua}}"
+SCRIPT_FILE="${1:-${SCRIPT_FILE:-${REPO_ROOT}/Pktgen-DPDK/scripts/tx-pkts.lua}}"
 
 # Convert to relative path from Pktgen-DPDK directory
 SCRIPT_REL_PATH=$(realpath --relative-to="${REPO_ROOT}/Pktgen-DPDK" "${SCRIPT_FILE}")
