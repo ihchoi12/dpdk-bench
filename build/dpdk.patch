@@ -25,7 +25,7 @@ index a06480a19e..505b282049 100644
  CFLAGS += -I../common
  
 diff --git a/examples/l3fwd/l3fwd.h b/examples/l3fwd/l3fwd.h
-index 0cce3406ee..1ed8d30820 100644
+index 0cce3406ee..4fd3c704d8 100644
 --- a/examples/l3fwd/l3fwd.h
 +++ b/examples/l3fwd/l3fwd.h
 @@ -5,10 +5,18 @@
@@ -40,7 +40,7 @@ index 0cce3406ee..1ed8d30820 100644
 +/* Debug logging control - MAIN CONFIGURATION */
 +/* Set to 1 to enable debug logs, 0 to disable for better performance */
 +#ifndef L3FWD_DEBUG_LOGS
-+#define L3FWD_DEBUG_LOGS 0  /* 0 = disabled, 1 = enabled */
++#define L3FWD_DEBUG_LOGS 1  /* 0 = disabled, 1 = enabled */
 +#endif
 +static volatile bool stats_enabled = true;
 +
@@ -2610,3 +2610,15 @@ index 74144c7979..b10568d0f4 100644
 +    includes += include_directories('../../../pcm/src')
 +    ldflags += [pcm_static_lib, '-static-libstdc++', '-static-libgcc', '-lpthread', '-ldl', '-lnuma']
 +endif
+diff --git a/lib/ethdev/rte_ethdev.h b/lib/ethdev/rte_ethdev.h
+index f9fb6ae549..5050a91518 100644
+--- a/lib/ethdev/rte_ethdev.h
++++ b/lib/ethdev/rte_ethdev.h
+@@ -6649,6 +6649,7 @@ rte_eth_tx_burst(uint16_t port_id, uint16_t queue_id,
+ {
+ 	struct rte_eth_fp_ops *p;
+ 	void *qd;
++	printf("TEST rte_eth_tx_burst() called\n");
+ 
+ #ifdef RTE_ETHDEV_DEBUG_TX
+ 	if (port_id >= RTE_MAX_ETHPORTS ||

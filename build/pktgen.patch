@@ -365,7 +365,7 @@ index ac33b51..f6206cd 100644
      if (pktgen.flags & BLINK_PORTS_FLAG) {
          RTE_ETH_FOREACH_DEV(pid)
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..ac58570 100644
+index 627034d..598895c 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -533,7 +533,7 @@ index 627034d..ac58570 100644
  double
  next_poisson_time(double rateParameter)
  {
-@@ -280,11 +424,36 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
+@@ -280,15 +424,41 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
  {
      if (nb_pkts) {
          uint16_t sent, to_send = nb_pkts;
@@ -572,7 +572,12 @@ index 627034d..ac58570 100644
          if (pktgen_tst_port_flags(pinfo, SEND_RANDOM_PKTS))
              pktgen_rnd_bits_apply(pinfo, pkts, to_send, NULL);
  
-@@ -973,7 +1142,7 @@ void
+         do {
++            PKTGEN_DEBUG_LOG("[1] rte_eth_tx_burst()");
+             sent = rte_eth_tx_burst(pinfo->pid, qid, pkts, to_send);
+             to_send -= sent;
+             pkts += sent;
+@@ -973,7 +1143,7 @@ void
  pktgen_send_pkts(port_info_t *pinfo, uint16_t qid, struct rte_mempool *mp)
  {
      uint64_t txCnt;
@@ -581,7 +586,7 @@ index 627034d..ac58570 100644
  
      if (!pktgen_tst_port_flags(pinfo, SEND_FOREVER)) {
          txCnt = pkt_atomic64_tx_count(&pinfo->current_tx_count, pinfo->tx_burst);
-@@ -1027,7 +1196,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
+@@ -1027,7 +1197,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
  {
      if (pktgen_tst_port_flags(pinfo, SENDING_PACKETS)) {
          struct rte_mempool *mp = l2p_get_tx_mp(pinfo->pid);
@@ -590,7 +595,7 @@ index 627034d..ac58570 100644
  
          /* Use mempool routines instead of pktmbuf to make sure the mbufs is not altered */
          if (rte_mempool_get_bulk(mp, (void **)pkts, pinfo->tx_burst) == 0) {
-@@ -1057,25 +1226,61 @@ static inline void
+@@ -1057,25 +1227,61 @@ static inline void
  pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  {
      uint16_t nb_rx, nb_pkts = pinfo->rx_burst, pid;
@@ -658,7 +663,7 @@ index 627034d..ac58570 100644
  
          if (unlikely(pinfo->dump_count > 0))
              pktgen_packet_dump_bulk(pkts, nb_rx, pid);
-@@ -1122,12 +1327,60 @@ pktgen_tx_workq_setup(uint16_t pid)
+@@ -1122,12 +1328,60 @@ pktgen_tx_workq_setup(uint16_t pid)
  }
  
  static int
@@ -723,7 +728,7 @@ index 627034d..ac58570 100644
  }
  
  /**
-@@ -1280,7 +1533,9 @@ pktgen_main_rx_loop(void)
+@@ -1280,7 +1534,9 @@ pktgen_main_rx_loop(void)
  
      pinfo  = l2p_get_pinfo_by_lcore(lid);
      rx_qid = l2p_get_rxqid(lid);
@@ -734,7 +739,7 @@ index 627034d..ac58570 100644
      printf("RX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, rx_qid,
             l2p_get_rx_mp(pinfo->pid)->name, l2p_get_rx_mp(pinfo->pid));
  
-@@ -1479,3 +1734,402 @@ pktgen_timer_setup(void)
+@@ -1479,3 +1735,402 @@ pktgen_timer_setup(void)
      CPU_SET(rte_get_main_lcore(), cpuset);
      pthread_setaffinity_np(tid, sizeof(cpuset), cpuset);
  }
@@ -1138,7 +1143,7 @@ index 627034d..ac58570 100644
 +    printf("########################################\n");
 +}
 diff --git a/app/pktgen.h b/app/pktgen.h
-index 5349a31..edc5aca 100644
+index 5349a31..8e184ec 100644
 --- a/app/pktgen.h
 +++ b/app/pktgen.h
 @@ -103,6 +103,19 @@
@@ -1146,7 +1151,7 @@ index 5349a31..edc5aca 100644
  #endif
  
 +#ifndef PKTGEN_DEBUG_LOGS
-+#define PKTGEN_DEBUG_LOGS 0  /* 0 = disabled, 1 = enabled */
++#define PKTGEN_DEBUG_LOGS 1  /* 0 = disabled, 1 = enabled */
 +#endif
 +
 +#if PKTGEN_DEBUG_LOGS
@@ -3234,7 +3239,7 @@ index 0000000..fc81586
 +os.exit(0)
 diff --git a/scripts/tx-pkts.lua b/scripts/tx-pkts.lua
 new file mode 100644
-index 0000000..959d825
+index 0000000..ae7f622
 --- /dev/null
 +++ b/scripts/tx-pkts.lua
 @@ -0,0 +1,89 @@
@@ -3257,7 +3262,7 @@ index 0000000..959d825
 +-- Configuration (same as measure-tx-rate.lua)
 +pktgen.set(port, "size", packet_size)
 +pktgen.set(port, "rate", 100)  -- 100% rate to utilize multiple cores
-+pktgen.set(port, "count", 10)   -- Continuous transmission (0 = infinite)
++pktgen.set(port, "count", 1)   -- Continuous transmission (0 = infinite)
 +
 +-- Set MAC addresses (same as measure-tx-rate.lua)
 +pktgen.set_mac(port, "src", "08:c0:eb:b6:cd:5d")
@@ -3313,7 +3318,7 @@ index 0000000..959d825
 +print("Starting packet transmission for")
 +pktgen.start(port)
 +
-+pktgen.delay(3000) -- sleep time in milliseconds
++pktgen.delay(100) -- sleep time in milliseconds
 +
 +-- Stop transmission BEFORE reading statistics
 +print("Stopping packet transmission...")
