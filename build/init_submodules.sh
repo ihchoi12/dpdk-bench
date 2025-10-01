@@ -81,20 +81,10 @@ build_dpdk() {
   
   # Prepare debug flags if environment variables are set
   DEBUG_CFLAGS=""
-  if [ "${RTE_ETHDEV_DEBUG_TX:-}" = "1" ]; then
+  if [ "${RTE_LIBRTE_ETHDEV_DEBUG:-}" = "1" ]; then
     DEBUG_CFLAGS="${DEBUG_CFLAGS} -DRTE_LIBRTE_ETHDEV_DEBUG"
     echo ">> ETHDEV debug enabled (TX + RX)"
   fi
-  if [ "${RTE_ETHDEV_DEBUG_RX:-}" = "1" ]; then
-    DEBUG_CFLAGS="${DEBUG_CFLAGS} -DRTE_LIBRTE_ETHDEV_DEBUG"
-    echo ">> ETHDEV debug enabled (TX + RX)"
-  fi
-  
-  # Set default log level to DEBUG for debug builds and disable optimization
-  # if [ -n "$DEBUG_CFLAGS" ]; then
-  #   DEBUG_CFLAGS="${DEBUG_CFLAGS} -O0 -g -fno-inline"
-  #   echo ">> Setting debug build options and disabling optimization"
-  # fi
   
   # Setup meson with debug flags if any
   if [ -n "$DEBUG_CFLAGS" ]; then
@@ -198,8 +188,8 @@ build_pktgen() {
 
   # Check if debug flags should be applied to Pktgen too
   DEBUG_CFLAGS=""
-  if [ "${RTE_ETHDEV_DEBUG_TX:-}" = "1" ] || [ "${RTE_ETHDEV_DEBUG_RX:-}" = "1" ]; then
-    DEBUG_CFLAGS="-DRTE_LIBRTE_ETHDEV_DEBUG -O0 -g -fno-inline"
+  if [ "${RTE_LIBRTE_ETHDEV_DEBUG:-}" = "1" ]; then
+    DEBUG_CFLAGS="-DRTE_LIBRTE_ETHDEV_DEBUG"
     echo ">> Building Pktgen with ETHDEV debug flags: $DEBUG_CFLAGS"
   fi
 

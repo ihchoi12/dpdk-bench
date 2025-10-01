@@ -2611,35 +2611,15 @@ index 74144c7979..b10568d0f4 100644
 +    ldflags += [pcm_static_lib, '-static-libstdc++', '-static-libgcc', '-lpthread', '-ldl', '-lnuma']
 +endif
 diff --git a/lib/ethdev/rte_ethdev.h b/lib/ethdev/rte_ethdev.h
-index f9fb6ae549..b70beee2b9 100644
+index f9fb6ae549..842713c68c 100644
 --- a/lib/ethdev/rte_ethdev.h
 +++ b/lib/ethdev/rte_ethdev.h
-@@ -6649,8 +6649,28 @@ rte_eth_tx_burst(uint16_t port_id, uint16_t queue_id,
- {
- 	struct rte_eth_fp_ops *p;
+@@ -6651,6 +6651,8 @@ rte_eth_tx_burst(uint16_t port_id, uint16_t queue_id,
  	void *qd;
-+	printf("DEFINITELY_CALLED_TX_BURST port=%u queue=%u nb_pkts=%u\n", port_id, queue_id, nb_pkts);
  
  #ifdef RTE_ETHDEV_DEBUG_TX
-+	RTE_ETHDEV_LOG_LINE(ERR, "ETHDEV_TX_BURST_CALLED port=%u queue=%u nb_pkts=%u", port_id, queue_id, nb_pkts);
-+	printf("PRINTF_TX_BURST_CALLED port=%u queue=%u nb_pkts=%u\n", port_id, queue_id, nb_pkts);
-+#endif
-+
-+	RTE_ETHDEV_LOG_LINE(ERR,
-+			"ERR1 Invalid port_id=%u or queue_id=%u",
-+			port_id, queue_id);
-+	RTE_ETHDEV_LOG_LINE(DEBUG,
-+			"DEBUG1 Invalid port_id=%u or queue_id=%u",
-+			port_id, queue_id);
-+	printf("TEST1");
-+#ifdef RTE_ETHDEV_DEBUG_TX
-+	RTE_ETHDEV_LOG_LINE(ERR,
-+			"ERR2 Invalid port_id=%u or queue_id=%u",
-+			port_id, queue_id);
-+	RTE_ETHDEV_LOG_LINE(DEBUG,
-+			"DEBUG2 Invalid port_id=%u or queue_id=%u",
-+			port_id, queue_id);
-+	printf("TEST2");
++	RTE_ETHDEV_LOG_LINE(INFO,
++			"INFO LOG");
  	if (port_id >= RTE_MAX_ETHPORTS ||
  			queue_id >= RTE_MAX_QUEUES_PER_PORT) {
  		RTE_ETHDEV_LOG_LINE(ERR,
