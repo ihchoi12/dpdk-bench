@@ -1,5 +1,5 @@
 diff --git a/drivers/net/mlx5/mlx5_tx.h b/drivers/net/mlx5/mlx5_tx.h
-index 16307206e2..51eddd76bb 100644
+index 16307206e2..aa0f560f5a 100644
 --- a/drivers/net/mlx5/mlx5_tx.h
 +++ b/drivers/net/mlx5/mlx5_tx.h
 @@ -22,6 +22,9 @@
@@ -39,7 +39,7 @@ index 16307206e2..51eddd76bb 100644
  		ret = mlx5_tx_burst_single_send(txq, pkts, pkts_n, loc, olx);
  		MLX5_ASSERT(ret != MLX5_TXCMP_CODE_SINGLE);
  		if (ret != MLX5_TXCMP_CODE_EMPW)
-@@ -3560,10 +3569,16 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3560,18 +3569,30 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	enum mlx5_txcmp_code ret;
  	unsigned int part;
  
@@ -54,18 +54,70 @@ index 16307206e2..51eddd76bb 100644
 +		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX BURST END: No packets to send");
  		return 0;
 +	}
++
++	/* Initialize local transmission context */
  	if (MLX5_TXOFF_CONFIG(INLINE))
  		loc.mbuf_free = 0;
  	loc.pkts_sent = 0;
-@@ -3580,6 +3595,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 	loc.pkts_copy = 0;
+ 	loc.wqe_last = NULL;
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Local context initialized - inline=%s",
++		MLX5_TXOFF_CONFIG(INLINE) ? "enabled" : "disabled");
+ 
+ send_loop:
+ 	loc.pkts_loop = loc.pkts_sent;
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Starting send loop iteration - pkts_sent=%u, pkts_total=%u",
++		loc.pkts_sent, pkts_n);
+ 	/*
+ 	 * Check if there are some CQEs, if any:
+ 	 * - process an encountered errors
+@@ -3580,7 +3601,27 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	 * - doorbell the NIC about processed CQEs
  	 */
  	rte_prefetch0(*(pkts + loc.pkts_sent));
++
++#ifdef RTE_LIBRTE_ETHDEV_DEBUG
++	/* Log completion queue state before processing */
++	uint16_t cq_ci_before = txq->cq_ci;
++	uint16_t elts_tail_before = txq->elts_tail;
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Before completion - cq_ci=%u, elts_tail=%u, pending_cqes=%u",
++		cq_ci_before, elts_tail_before, (uint16_t)(txq->wqe_ci - txq->cq_ci));
++#endif
++
 +	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Calling mlx5_tx_handle_completion");
  	mlx5_tx_handle_completion(txq, olx);
++
++#ifdef RTE_LIBRTE_ETHDEV_DEBUG
++	/* Log how many completions were actually processed */
++	uint16_t cq_ci_after = txq->cq_ci;
++	uint16_t elts_tail_after = txq->elts_tail;
++	uint16_t completions_processed = cq_ci_after - cq_ci_before;
++	uint16_t mbufs_freed = elts_tail_after - elts_tail_before;
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Completion processed - cqes_handled=%u, mbufs_freed=%u, remaining_pending=%u",
++		completions_processed, mbufs_freed, (uint16_t)(txq->wqe_ci - txq->cq_ci));
++#endif
  	/*
  	 * Calculate the number of available resources - elts and WQEs.
-@@ -3612,6 +3628,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 	 * There are two possible different scenarios:
+@@ -3595,6 +3636,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 	MLX5_ASSERT(txq->wqe_s >= (uint16_t)(txq->wqe_ci - txq->wqe_pi));
+ 	loc.wqe_free = txq->wqe_s -
+ 				(uint16_t)(txq->wqe_ci - txq->wqe_pi);
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Resource check - elts_free=%u, wqe_free=%u",
++		loc.elts_free, loc.wqe_free);
+ 	if (unlikely(!loc.elts_free || !loc.wqe_free))
+ 		goto burst_exit;
+ 	for (;;) {
+@@ -3603,6 +3646,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 		 * packet in series of multi/single segment packets.
+ 		 */
+ 		loc.mbuf = *(pkts + loc.pkts_sent);
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Processing packet[%u] - pkt_len=%u, nb_segs=%u",
++			loc.pkts_sent, loc.mbuf->pkt_len, NB_SEGS(loc.mbuf));
+ 		/* Dedicated branch for multi-segment packets. */
+ 		if (MLX5_TXOFF_CONFIG(MULTI) &&
+ 		    unlikely(NB_SEGS(loc.mbuf) > 1)) {
+@@ -3612,6 +3657,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  			 * with SEND/TSO opcodes, one packet
  			 * per WQE, do it in dedicated routine.
  			 */
@@ -74,7 +126,48 @@ index 16307206e2..51eddd76bb 100644
  enter_send_multi:
  			MLX5_ASSERT(loc.pkts_sent >= loc.pkts_copy);
  			part = loc.pkts_sent - loc.pkts_copy;
-@@ -3681,6 +3699,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3629,6 +3676,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 			}
+ 			MLX5_ASSERT(pkts_n > loc.pkts_sent);
+ 			ret = mlx5_tx_burst_mseg(txq, pkts, pkts_n, &loc, olx);
++			AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Multi-segment burst completed - ret=%d, pkts_sent=%u",
++				ret, loc.pkts_sent);
+ 			if (!MLX5_TXOFF_CONFIG(INLINE))
+ 				loc.pkts_copy = loc.pkts_sent;
+ 			/*
+@@ -3641,6 +3690,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 				 * all packets are sent or there is no
+ 				 * enough resources to complete request.
+ 				 */
++				AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Multi-segment exit - all packets sent or no resources");
+ 				break;
+ 			}
+ 			if (ret == MLX5_TXCMP_CODE_ERROR) {
+@@ -3648,6 +3698,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 				 * The routine returns this code when some error
+ 				 * in the incoming packets format occurred.
+ 				 */
++				AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Multi-segment error - packet format issue");
+ 				txq->stats.oerrors++;
+ 				break;
+ 			}
+@@ -3657,6 +3708,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 				 * in the array, try to send it with the
+ 				 * best optimized way, possible engaging eMPW.
+ 				 */
++				AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Multi->Single transition detected");
+ 				goto enter_send_single;
+ 			}
+ 			if (MLX5_TXOFF_CONFIG(TSO) &&
+@@ -3665,6 +3717,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 				 * The single-segment TSO packet was
+ 				 * encountered in the array.
+ 				 */
++				AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Multi->TSO transition detected");
+ 				goto enter_send_tso;
+ 			}
+ 			/* We must not get here. Something is going wrong. */
+@@ -3681,10 +3734,14 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  			 * MLX5_OPCODE_TSO opcode only, provide this
  			 * in dedicated branch.
  			 */
@@ -83,7 +176,21 @@ index 16307206e2..51eddd76bb 100644
  enter_send_tso:
  			MLX5_ASSERT(NB_SEGS(loc.mbuf) == 1);
  			MLX5_ASSERT(pkts_n > loc.pkts_sent);
-@@ -3718,6 +3738,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 			ret = mlx5_tx_burst_tso(txq, pkts, pkts_n, &loc, olx);
++			AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: TSO burst completed - ret=%d, pkts_sent=%u",
++				ret, loc.pkts_sent);
+ 			/*
+ 			 * These returned code checks are supposed
+ 			 * to be optimized out due to routine inlining.
+@@ -3703,6 +3760,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 				 * The multi-segment packet was
+ 				 * encountered in the array.
+ 				 */
++				AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: TSO->Multi transition detected");
+ 				goto enter_send_multi;
+ 			}
+ 			/* We must not get here. Something is going wrong. */
+@@ -3718,9 +3776,12 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  		 * the TSO or multi-segment packet (in case if these
  		 * offloads are requested at SQ configuration time).
  		 */
@@ -91,7 +198,50 @@ index 16307206e2..51eddd76bb 100644
  enter_send_single:
  		MLX5_ASSERT(pkts_n > loc.pkts_sent);
  		ret = mlx5_tx_burst_single(txq, pkts, pkts_n, &loc, olx);
-@@ -3795,6 +3816,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Single-segment burst completed - ret=%d, pkts_sent=%u",
++			ret, loc.pkts_sent);
+ 		/*
+ 		 * These returned code checks are supposed
+ 		 * to be optimized out due to routine inlining.
+@@ -3728,6 +3789,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 		if (ret == MLX5_TXCMP_CODE_EXIT)
+ 			break;
+ 		if (ret == MLX5_TXCMP_CODE_ERROR) {
++			AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Single-segment error - packet format issue");
+ 			txq->stats.oerrors++;
+ 			break;
+ 		}
+@@ -3737,6 +3799,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 			 * The multi-segment packet was
+ 			 * encountered in the array.
+ 			 */
++			AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Single->Multi transition detected");
+ 			goto enter_send_multi;
+ 		}
+ 		if (MLX5_TXOFF_CONFIG(TSO) &&
+@@ -3745,6 +3808,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 			 * The single-segment TSO packet was
+ 			 * encountered in the array.
+ 			 */
++			AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Single->TSO transition detected");
+ 			goto enter_send_tso;
+ 		}
+ 		/* We must not get here. Something is going wrong. */
+@@ -3761,8 +3825,12 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 	MLX5_ASSERT(MLX5_TXOFF_CONFIG(INLINE) ||
+ 		    loc.pkts_sent >= loc.pkts_copy);
+ 	/* Take a shortcut if nothing is sent. */
+-	if (unlikely(loc.pkts_sent == loc.pkts_loop))
++	if (unlikely(loc.pkts_sent == loc.pkts_loop)) {
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: No packets sent in this loop iteration");
+ 		goto burst_exit;
++	}
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Main loop completed - pkts_sent=%u, pkts_copy=%u",
++		loc.pkts_sent, loc.pkts_copy);
+ 	/* Request CQE generation if limits are reached. */
+ 	if (MLX5_TXOFF_CONFIG(TXPP) && __rte_trace_point_fp_is_enabled())
+ 		mlx5_tx_request_completion_trace(txq, &loc, olx);
+@@ -3795,6 +3863,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	 *   packets are coming and the write barrier will be issued on
  	 *   the next burst (after descriptor writing, at least).
  	 */
@@ -100,7 +250,34 @@ index 16307206e2..51eddd76bb 100644
  	mlx5_doorbell_ring(mlx5_tx_bfreg(txq),
  			   *(volatile uint64_t *)loc.wqe_last, txq->wqe_ci,
  			   txq->qp_db, !txq->db_nc &&
-@@ -3834,6 +3857,11 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3810,6 +3880,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 		 * Unfortunately if inlining is enabled the gaps in pointer
+ 		 * array may happen due to early freeing of the inlined mbufs.
+ 		 */
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Copying remaining mbufs to elts - count=%u", part);
+ 		mlx5_tx_copy_elts(txq, pkts + loc.pkts_copy, part, olx);
+ 		loc.pkts_copy = loc.pkts_sent;
+ 	}
+@@ -3821,19 +3892,29 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+ 		 * fetched from completion queue and no enough resources
+ 		 * freed to send all the packets.
+ 		 */
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: More packets to send - continuing loop, remaining=%u",
++			pkts_n - loc.pkts_sent);
+ 		goto send_loop;
+ 	}
+ burst_exit:
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Burst exit - final cleanup starting");
+ #ifdef MLX5_PMD_SOFT_COUNTERS
+ 	/* Increment sent packets counter. */
+ 	txq->stats.opackets += loc.pkts_sent;
+ #endif
+-	if (MLX5_TXOFF_CONFIG(INLINE) && loc.mbuf_free)
++	if (MLX5_TXOFF_CONFIG(INLINE) && loc.mbuf_free) {
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Freeing inline mbufs - count=%u", loc.mbuf_free);
+ 		__mlx5_tx_free_mbuf(txq, pkts, loc.mbuf_free, olx);
++	}
+ 	/* Trace productive bursts only. */
  	if (__rte_trace_point_fp_is_enabled() && loc.pkts_sent)
  		rte_pmd_mlx5_trace_tx_exit(mlx5_read_pcibar_clock_from_txq(txq),
  					   loc.pkts_sent, pkts_n);
