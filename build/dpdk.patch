@@ -1,111 +1,112 @@
 diff --git a/drivers/net/mlx5/mlx5_tx.h b/drivers/net/mlx5/mlx5_tx.h
-index 16307206e2..472f2a9a29 100644
+index 16307206e2..51eddd76bb 100644
 --- a/drivers/net/mlx5/mlx5_tx.h
 +++ b/drivers/net/mlx5/mlx5_tx.h
-@@ -23,6 +23,8 @@
+@@ -22,6 +22,9 @@
+ #include "mlx5_autoconf.h"
  #include "mlx5_rxtx.h"
  #include "mlx5_trace.h"
- 
-+/* Note: Using RTE_DEBUG_LOG_LINE for unified logging with ethdev layer */
++#include "../../../ak_debug_log.h"
 +
++/* Note: Using AK_DEBUG_LOG_LINE for unified logging with ethdev layer */
+ 
  /* TX burst subroutines return codes. */
  enum mlx5_txcmp_code {
- 	MLX5_TXCMP_CODE_EXIT = 0,
-@@ -3216,6 +3218,9 @@ mlx5_tx_burst_single_send(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3216,6 +3219,9 @@ mlx5_tx_burst_single_send(struct mlx5_txq_data *__rte_restrict txq,
  	 * Subroutine is the part of mlx5_tx_burst_single()
  	 * and sends single-segment packet with SEND opcode.
  	 */
-+	RTE_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: mlx5_tx_burst_single_send called, pkts_n=%u, pkts_sent=%u",
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: mlx5_tx_burst_single_send called, pkts_n=%u, pkts_sent=%u",
 +		pkts_n, loc->pkts_sent);
 +
  	MLX5_ASSERT(loc->elts_free && loc->wqe_free);
  	MLX5_ASSERT(pkts_n > loc->pkts_sent);
  	pkts += loc->pkts_sent + 1;
-@@ -3506,6 +3511,8 @@ mlx5_tx_burst_single(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3506,6 +3512,8 @@ mlx5_tx_burst_single(struct mlx5_txq_data *__rte_restrict txq,
  {
  	enum mlx5_txcmp_code ret;
  
-+	RTE_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: mlx5_tx_burst_single called, pkts_n=%u", pkts_n);
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: mlx5_tx_burst_single called, pkts_n=%u", pkts_n);
 +
  	ret = mlx5_tx_able_to_empw(txq, loc, olx, false);
  	if (ret == MLX5_TXCMP_CODE_SINGLE)
  		goto ordinary_send;
-@@ -3522,6 +3529,7 @@ mlx5_tx_burst_single(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3522,6 +3530,7 @@ mlx5_tx_burst_single(struct mlx5_txq_data *__rte_restrict txq,
  		/* The resources to send one packet should remain. */
  		MLX5_ASSERT(loc->elts_free && loc->wqe_free);
  ordinary_send:
-+		RTE_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Calling mlx5_tx_burst_single_send");
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Calling mlx5_tx_burst_single_send");
  		ret = mlx5_tx_burst_single_send(txq, pkts, pkts_n, loc, olx);
  		MLX5_ASSERT(ret != MLX5_TXCMP_CODE_SINGLE);
  		if (ret != MLX5_TXCMP_CODE_EMPW)
-@@ -3560,10 +3568,16 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3560,10 +3569,16 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	enum mlx5_txcmp_code ret;
  	unsigned int part;
  
 +	/* MLX5 TX BURST LOG: Function entry */
-+	RTE_DEBUG_LOG_LINE(NOTICE, "MLX5 TX BURST START: txq=%p, pkts_n=%u, olx=0x%x",
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX BURST START: txq=%p, pkts_n=%u, olx=0x%x",
 +		txq, pkts_n, olx);
 +
  	MLX5_ASSERT(txq->elts_s >= (uint16_t)(txq->elts_head - txq->elts_tail));
  	MLX5_ASSERT(txq->wqe_s >= (uint16_t)(txq->wqe_ci - txq->wqe_pi));
 -	if (unlikely(!pkts_n))
 +	if (unlikely(!pkts_n)) {
-+		RTE_DEBUG_LOG_LINE(NOTICE, "MLX5 TX BURST END: No packets to send");
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX BURST END: No packets to send");
  		return 0;
 +	}
  	if (MLX5_TXOFF_CONFIG(INLINE))
  		loc.mbuf_free = 0;
  	loc.pkts_sent = 0;
-@@ -3580,6 +3594,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3580,6 +3595,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	 * - doorbell the NIC about processed CQEs
  	 */
  	rte_prefetch0(*(pkts + loc.pkts_sent));
-+	RTE_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Calling mlx5_tx_handle_completion");
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Calling mlx5_tx_handle_completion");
  	mlx5_tx_handle_completion(txq, olx);
  	/*
  	 * Calculate the number of available resources - elts and WQEs.
-@@ -3612,6 +3627,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3612,6 +3628,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  			 * with SEND/TSO opcodes, one packet
  			 * per WQE, do it in dedicated routine.
  			 */
-+			RTE_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Entering multi-segment path, nb_segs=%u",
++			AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Entering multi-segment path, nb_segs=%u",
 +				NB_SEGS(loc.mbuf));
  enter_send_multi:
  			MLX5_ASSERT(loc.pkts_sent >= loc.pkts_copy);
  			part = loc.pkts_sent - loc.pkts_copy;
-@@ -3681,6 +3698,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3681,6 +3699,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  			 * MLX5_OPCODE_TSO opcode only, provide this
  			 * in dedicated branch.
  			 */
-+			RTE_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Entering TSO path, tso_segsz=%u",
++			AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Entering TSO path, tso_segsz=%u",
 +				loc.mbuf->tso_segsz);
  enter_send_tso:
  			MLX5_ASSERT(NB_SEGS(loc.mbuf) == 1);
  			MLX5_ASSERT(pkts_n > loc.pkts_sent);
-@@ -3718,6 +3737,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3718,6 +3738,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  		 * the TSO or multi-segment packet (in case if these
  		 * offloads are requested at SQ configuration time).
  		 */
-+		RTE_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Entering single-segment path");
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Entering single-segment path");
  enter_send_single:
  		MLX5_ASSERT(pkts_n > loc.pkts_sent);
  		ret = mlx5_tx_burst_single(txq, pkts, pkts_n, &loc, olx);
-@@ -3795,6 +3815,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3795,6 +3816,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	 *   packets are coming and the write barrier will be issued on
  	 *   the next burst (after descriptor writing, at least).
  	 */
-+	RTE_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Ringing doorbell, wqe_ci=%u, sent=%u",
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Ringing doorbell, wqe_ci=%u, sent=%u",
 +		txq->wqe_ci, loc.pkts_sent);
  	mlx5_doorbell_ring(mlx5_tx_bfreg(txq),
  			   *(volatile uint64_t *)loc.wqe_last, txq->wqe_ci,
  			   txq->qp_db, !txq->db_nc &&
-@@ -3834,6 +3856,11 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3834,6 +3857,11 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	if (__rte_trace_point_fp_is_enabled() && loc.pkts_sent)
  		rte_pmd_mlx5_trace_tx_exit(mlx5_read_pcibar_clock_from_txq(txq),
  					   loc.pkts_sent, pkts_n);
 +
 +	/* MLX5 TX BURST LOG: Function exit */
-+	RTE_DEBUG_LOG_LINE(NOTICE, "MLX5 TX BURST END: packets_sent=%u, total_requested=%u",
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX BURST END: packets_sent=%u, total_requested=%u",
 +		loc.pkts_sent, pkts_n);
 +
  	return loc.pkts_sent;
@@ -138,10 +139,10 @@ index a06480a19e..505b282049 100644
  CFLAGS += -I../common
  
 diff --git a/examples/l3fwd/l3fwd.h b/examples/l3fwd/l3fwd.h
-index 0cce3406ee..8cdeaf140f 100644
+index 0cce3406ee..37627c5464 100644
 --- a/examples/l3fwd/l3fwd.h
 +++ b/examples/l3fwd/l3fwd.h
-@@ -5,10 +5,18 @@
+@@ -5,10 +5,16 @@
  #ifndef __L3_FWD_H__
  #define __L3_FWD_H__
  
@@ -150,17 +151,15 @@ index 0cce3406ee..8cdeaf140f 100644
  #include <rte_vect.h>
  #include <rte_acl.h>
  
-+/* Debug logging control - MAIN CONFIGURATION */
-+/* Set to 1 to enable debug logs, 0 to disable for better performance */
-+#ifndef L3FWD_DEBUG_LOGS
-+#define L3FWD_DEBUG_LOGS 1  /* 0 = disabled, 1 = enabled */
-+#endif
++/* Include unified debug logging system */
++#include "../../../ak_debug_log.h"
++
 +static volatile bool stats_enabled = true;
 +
  #define DO_RFC_1812_CHECKS
  
  #define RTE_LOGTYPE_L3FWD RTE_LOGTYPE_USER1
-@@ -110,6 +118,9 @@ extern xmm_t val_eth[RTE_MAX_ETHPORTS];
+@@ -110,6 +116,9 @@ extern xmm_t val_eth[RTE_MAX_ETHPORTS];
  
  extern struct lcore_conf lcore_conf[RTE_MAX_LCORE];
  
@@ -170,7 +169,7 @@ index 0cce3406ee..8cdeaf140f 100644
  extern struct parm_cfg parm_config;
  
  extern struct acl_algorithms acl_alg[];
-@@ -119,6 +130,27 @@ extern uint32_t max_pkt_len;
+@@ -119,6 +128,29 @@ extern uint32_t max_pkt_len;
  extern uint32_t nb_pkt_per_burst;
  extern uint32_t mb_mempool_cache_size;
  
@@ -192,13 +191,15 @@ index 0cce3406ee..8cdeaf140f 100644
 +extern struct lcore_packet_stats lcore_stats[RTE_MAX_LCORE];
 +
 +/* Function declarations */
++#ifdef RTE_LIBRTE_ETHDEV_DEBUG
 +void analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction, uint16_t queue_id);
++#endif
 +int is_dhcp_packet(struct rte_mbuf *pkt);
 +
  /* Send burst of packets on an output interface */
  static inline int
  send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
-@@ -126,12 +158,51 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
+@@ -126,12 +158,52 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
  	struct rte_mbuf **m_table;
  	int ret;
  	uint16_t queueid;
@@ -218,9 +219,9 @@ index 0cce3406ee..8cdeaf140f 100644
 +			if (!is_dhcp_packet(m_table[i])) {
 +				filtered_count++;
 +			}
-+
-+#if L3FWD_DEBUG_LOGS
-+			/* Analyze packet for debugging */
++#ifdef RTE_LIBRTE_ETHDEV_DEBUG
++			/* Analyze packet for debugging using unified system */
++			AK_DEBUG_LOG_L3FWD("TX packet analysis on lcore %u, queue %u", lcore_id, queueid);
 +			analyze_packet(m_table[i], lcore_id, "TX", queueid);
 +#endif
 +		}
@@ -229,9 +230,10 @@ index 0cce3406ee..8cdeaf140f 100644
 +		lcore_stats[lcore_id].filtered_tx_packets += filtered_count;
 +	} else {
 +		lcore_stats[lcore_id].tx_packets += ret;
-+#if L3FWD_DEBUG_LOGS
++#ifdef RTE_LIBRTE_ETHDEV_DEBUG
 +		/* Analyze packets for debugging even when stats disabled */
 +		for (int i = 0; i < ret; i++) {
++			AK_DEBUG_LOG_L3FWD("TX packet analysis (stats disabled) on lcore %u, queue %u", lcore_id, queueid);
 +			analyze_packet(m_table[i], lcore_id, "TX", queueid);
 +		}
 +#endif
@@ -242,8 +244,8 @@ index 0cce3406ee..8cdeaf140f 100644
 +		lcore_stats[lcore_id].dropped_tx_failed += (n - ret);
 +
 +		/* Log TX congestion for debugging */
-+		if (L3FWD_DEBUG_LOGS && (lcore_stats[lcore_id].dropped_tx_failed % 1000 == 0)) {
-+			RTE_LOG(WARNING, L3FWD, "TX congestion on port %u: tried %u, sent %d, failed %u (total failed: %" PRIu64 ")\n",
++		if (lcore_stats[lcore_id].dropped_tx_failed % 1000 == 0) {
++			AK_DEBUG_LOG_L3FWD("TX congestion on port %u: tried %u, sent %d, failed %u (total failed: %" PRIu64 ")",
 +				port, n, ret, (n - ret), lcore_stats[lcore_id].dropped_tx_failed);
 +		}
 +
@@ -251,7 +253,7 @@ index 0cce3406ee..8cdeaf140f 100644
  			rte_pktmbuf_free(m_table[ret]);
  		} while (++ret < n);
 diff --git a/examples/l3fwd/l3fwd_lpm.c b/examples/l3fwd/l3fwd_lpm.c
-index fec0aeb79c..c113e67a83 100644
+index fec0aeb79c..c41c9b0927 100644
 --- a/examples/l3fwd/l3fwd_lpm.c
 +++ b/examples/l3fwd/l3fwd_lpm.c
 @@ -15,6 +15,8 @@
@@ -263,7 +265,7 @@ index fec0aeb79c..c113e67a83 100644
  
  #include <rte_debug.h>
  #include <rte_ether.h>
-@@ -30,9 +32,16 @@
+@@ -30,6 +32,7 @@
  #include "l3fwd.h"
  #include "l3fwd_common.h"
  #include "l3fwd_event.h"
@@ -271,16 +273,7 @@ index fec0aeb79c..c113e67a83 100644
  
  #include "lpm_route_parse.c"
  
-+#if L3FWD_DEBUG_LOGS
-+#define L3FWD_DEBUG_LOG(fmt, args...) RTE_LOG(INFO, L3FWD, fmt, ##args)
-+#else
-+#define L3FWD_DEBUG_LOG(fmt, args...) do {} while(0)
-+#endif
-+
- #define IPV4_L3FWD_LPM_MAX_RULES         1024
- #define IPV4_L3FWD_LPM_NUMBER_TBL8S (1 << 8)
- #define IPV6_L3FWD_LPM_MAX_RULES         1024
-@@ -41,6 +50,271 @@
+@@ -41,6 +44,265 @@
  static struct rte_lpm *ipv4_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  static struct rte_lpm6 *ipv6_l3fwd_lpm_lookup_struct[NB_SOCKETS];
  
@@ -316,11 +309,11 @@ index fec0aeb79c..c113e67a83 100644
 +    return (src_port == 67 || src_port == 68 || dst_port == 67 || dst_port == 68);
 +}
 +
++#ifdef RTE_LIBRTE_ETHDEV_DEBUG
 +/* Analyze and log packet details */
 +void
 +analyze_packet(struct rte_mbuf *pkt, unsigned int lcore_id, const char *direction, uint16_t queue_id)
 +{
-+#if L3FWD_DEBUG_LOGS
 +	struct rte_ether_hdr *eth_hdr;
 +	struct rte_ipv4_hdr *ipv4_hdr;
 +	struct rte_tcp_hdr *tcp_hdr;
@@ -363,32 +356,26 @@ index fec0aeb79c..c113e67a83 100644
 +			tcp_hdr = (struct rte_tcp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
 +			src_port = rte_be_to_cpu_16(tcp_hdr->src_port);
 +			dst_port = rte_be_to_cpu_16(tcp_hdr->dst_port);
-+			L3FWD_DEBUG_LOG("[%s] lcore=%u queue=%u TCP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x)\n",
++			AK_DEBUG_LOG_L3FWD("[%s] lcore=%u queue=%u TCP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x)",
 +				direction, lcore_id, queue_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss);
 +		} else if (proto == IPPROTO_UDP && rte_pktmbuf_data_len(pkt) >= sizeof(*eth_hdr) + sizeof(*ipv4_hdr) + sizeof(*udp_hdr)) {
 +			udp_hdr = (struct rte_udp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
 +			src_port = rte_be_to_cpu_16(udp_hdr->src_port);
 +			dst_port = rte_be_to_cpu_16(udp_hdr->dst_port);
-+			L3FWD_DEBUG_LOG("[%s] lcore=%u queue=%u UDP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x)\n",
++			AK_DEBUG_LOG_L3FWD("[%s] lcore=%u queue=%u UDP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x)",
 +				direction, lcore_id, queue_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss);
 +		} else {
-+			L3FWD_DEBUG_LOG("[%s] lcore=%u queue=%u IP proto=%u %s -> %s (MAC %s -> %s) (RSS=0x%08x)\n",
++			AK_DEBUG_LOG_L3FWD("[%s] lcore=%u queue=%u IP proto=%u %s -> %s (MAC %s -> %s) (RSS=0x%08x)",
 +				direction, lcore_id, queue_id, proto, src_ip_str, dst_ip_str, src_mac_str, dst_mac_str, pkt->hash.rss);
 +		}
 +	} else if (RTE_ETH_IS_IPV6_HDR(pkt->packet_type)) {
-+		L3FWD_DEBUG_LOG("[%s] lcore=%u queue=%u IPv6 packet (MAC %s -> %s)\n", direction, lcore_id, queue_id, src_mac_str, dst_mac_str);
++		AK_DEBUG_LOG_L3FWD("[%s] lcore=%u queue=%u IPv6 packet (MAC %s -> %s)", direction, lcore_id, queue_id, src_mac_str, dst_mac_str);
 +	} else {
-+		L3FWD_DEBUG_LOG("[%s] lcore=%u queue=%u Non-IP packet (type=0x%04x) (MAC %s -> %s)\n",
++		AK_DEBUG_LOG_L3FWD("[%s] lcore=%u queue=%u Non-IP packet (type=0x%04x) (MAC %s -> %s)",
 +			direction, lcore_id, queue_id, rte_be_to_cpu_16(eth_hdr->ether_type), src_mac_str, dst_mac_str);
 +	}
-+#else
-+	/* Suppress unused parameter warnings when debug is disabled */
-+	(void)pkt;
-+	(void)lcore_id;
-+	(void)direction;
-+	(void)queue_id;
-+#endif
 +}
++#endif
 +
 +/* Print packet statistics when exiting */
 +static void
@@ -552,7 +539,7 @@ index fec0aeb79c..c113e67a83 100644
  /* Performing LPM-based lookups. 8< */
  static inline uint16_t
  lpm_get_ipv4_dst_port(const struct rte_ipv4_hdr *ipv4_hdr,
-@@ -156,6 +430,19 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -156,6 +418,19 @@ lpm_main_loop(__rte_unused void *dummy)
  	lcore_id = rte_lcore_id();
  	qconf = &lcore_conf[lcore_id];
  
@@ -572,7 +559,7 @@ index fec0aeb79c..c113e67a83 100644
  	const uint16_t n_rx_q = qconf->n_rx_queue;
  	const uint16_t n_tx_p = qconf->n_tx_port;
  	if (n_rx_q == 0) {
-@@ -163,17 +450,31 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -163,17 +438,31 @@ lpm_main_loop(__rte_unused void *dummy)
  		return 0;
  	}
  
@@ -608,17 +595,17 @@ index fec0aeb79c..c113e67a83 100644
  	cur_tsc = rte_rdtsc();
  	prev_tsc = cur_tsc;
  
-@@ -189,6 +490,9 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -189,6 +478,9 @@ lpm_main_loop(__rte_unused void *dummy)
  				portid = qconf->tx_port_id[i];
  				if (qconf->tx_mbufs[portid].len == 0)
  					continue;
 +
-+				L3FWD_DEBUG_LOG("lcore %u sending %u packets to port %u queue %u\n",
++				AK_DEBUG_LOG_L3FWD("lcore %u sending %u packets to port %u queue %u",
 +					lcore_id, qconf->tx_mbufs[portid].len, portid, qconf->tx_queue_id[portid]);
  				send_burst(qconf,
  					qconf->tx_mbufs[portid].len,
  					portid);
-@@ -209,6 +513,35 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -209,6 +501,34 @@ lpm_main_loop(__rte_unused void *dummy)
  			if (nb_rx == 0)
  				continue;
  
@@ -632,8 +619,7 @@ index fec0aeb79c..c113e67a83 100644
 +					if (!is_dhcp_packet(pkts_burst[j])) {
 +						filtered_count++;
 +					}
-+
-+#if L3FWD_DEBUG_LOGS
++#ifdef RTE_LIBRTE_ETHDEV_DEBUG
 +					/* Analyze packet for debugging */
 +					analyze_packet(pkts_burst[j], lcore_id, "RX", queueid);
 +#endif
@@ -642,7 +628,7 @@ index fec0aeb79c..c113e67a83 100644
 +				lcore_stats[lcore_id].rx_packets += nb_rx;
 +				lcore_stats[lcore_id].filtered_rx_packets += filtered_count;
 +			} else {
-+#if L3FWD_DEBUG_LOGS
++#ifdef RTE_LIBRTE_ETHDEV_DEBUG
 +				/* Analyze packets for debugging even when stats disabled */
 +				for (int j = 0; j < nb_rx; j++) {
 +					analyze_packet(pkts_burst[j], lcore_id, "RX", queueid);
@@ -650,11 +636,11 @@ index fec0aeb79c..c113e67a83 100644
 +#endif
 +			}
 +
-+			L3FWD_DEBUG_LOG("lcore %u received %d packets from port %u queue %u\n", lcore_id, nb_rx, portid, queueid);
++			AK_DEBUG_LOG_L3FWD("lcore %u received %d packets from port %u queue %u", lcore_id, nb_rx, portid, queueid);
  #if defined RTE_ARCH_X86 || defined __ARM_NEON \
  			 || defined RTE_ARCH_PPC_64
  			l3fwd_lpm_send_packets(nb_rx, pkts_burst,
-@@ -222,6 +555,11 @@ lpm_main_loop(__rte_unused void *dummy)
+@@ -222,6 +542,11 @@ lpm_main_loop(__rte_unused void *dummy)
  		cur_tsc = rte_rdtsc();
  	}
  
@@ -2724,46 +2710,50 @@ index 74144c7979..b10568d0f4 100644
 +    ldflags += [pcm_static_lib, '-static-libstdc++', '-static-libgcc', '-lpthread', '-ldl', '-lnuma']
 +endif
 diff --git a/lib/ethdev/rte_ethdev.h b/lib/ethdev/rte_ethdev.h
-index f9fb6ae549..35a9fba511 100644
+index f9fb6ae549..98e8076cb2 100644
 --- a/lib/ethdev/rte_ethdev.h
 +++ b/lib/ethdev/rte_ethdev.h
-@@ -6686,14 +6686,15 @@ rte_eth_tx_burst(uint16_t port_id, uint16_t queue_id,
+@@ -159,6 +159,7 @@
+ #include <rte_cman.h>
+ #include <rte_compat.h>
+ #include <rte_log.h>
++#include "../../../ak_debug_log.h"
+ #include <rte_interrupts.h>
+ #include <rte_dev.h>
+ #include <rte_devargs.h>
+@@ -6686,14 +6687,15 @@ rte_eth_tx_burst(uint16_t port_id, uint16_t queue_id,
  		 */
  		cb = rte_atomic_load_explicit(&p->txq.clbk[queue_id],
  				rte_memory_order_relaxed);
 -		if (unlikely(cb != NULL))
 +		if (unlikely(cb != NULL)){
-+			RTE_DEBUG_LOG_LINE(INFO, "rte_eth_call_tx_callbacks()");
++			AK_DEBUG_LOG_LINE(INFO, "rte_eth_call_tx_callbacks()");
  			nb_pkts = rte_eth_call_tx_callbacks(port_id, queue_id,
  					tx_pkts, nb_pkts, cb);
 +		}
  	}
  #endif
 -
-+	RTE_DEBUG_LOG_LINE(INFO, "p->tx_pkt_burst()");
++	AK_DEBUG_LOG_LINE(INFO, "p->tx_pkt_burst()");
  	nb_pkts = p->tx_pkt_burst(qd, tx_pkts, nb_pkts);
 -
  	rte_ethdev_trace_tx_burst(port_id, queue_id, (void **)tx_pkts, nb_pkts);
  	return nb_pkts;
  }
 diff --git a/lib/log/rte_log.h b/lib/log/rte_log.h
-index 3735137150..89ebfaab23 100644
+index 3735137150..4ede186d6f 100644
 --- a/lib/log/rte_log.h
 +++ b/lib/log/rte_log.h
-@@ -516,6 +516,17 @@ RTE_INIT(__##type)							    \
+@@ -516,6 +516,13 @@ RTE_INIT(__##type)							    \
  	RTE_LOG_REGISTER_IMPL(type,					      \
  		 RTE_STR(RTE_LOG_DEFAULT_LOGTYPE) "." RTE_STR(suffix), level)
  
-+/* Debug logging macro - only enabled in debug builds */
-+#ifdef RTE_LIBRTE_ETHDEV_DEBUG
-+#define RTE_DEBUG_LOG(level, logtype, ...) \
-+	RTE_LOG(level, logtype, __VA_ARGS__)
-+#define RTE_DEBUG_LOG_LINE(level, ...) \
-+	RTE_LOG_LINE(level, ETHDEV, "" __VA_ARGS__)
-+#else
-+#define RTE_DEBUG_LOG(level, logtype, ...) do { } while (0)
-+#define RTE_DEBUG_LOG_LINE(level, ...) do { } while (0)
-+#endif
++/* Include unified Autokernel debug logging system */
++#include "../../../ak_debug_log.h"
++
++/* Backward compatibility: map old RTE_DEBUG_LOG* to new AK_DEBUG_LOG* */
++#define RTE_DEBUG_LOG(level, logtype, ...) AK_DEBUG_LOG(level, logtype, __VA_ARGS__)
++#define RTE_DEBUG_LOG_LINE(level, ...) AK_DEBUG_LOG_LINE(level, __VA_ARGS__)
 +
  #ifdef __cplusplus
  }
