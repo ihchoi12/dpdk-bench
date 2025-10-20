@@ -365,7 +365,7 @@ index ac33b51..f6206cd 100644
      if (pktgen.flags & BLINK_PORTS_FLAG) {
          RTE_ETH_FOREACH_DEV(pid)
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..4367181 100644
+index 627034d..e54164d 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -510,9 +510,9 @@ index 627034d..4367181 100644
 +            tcp_hdr = (struct rte_tcp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
 +            src_port = rte_be_to_cpu_16(tcp_hdr->src_port);
 +            dst_port = rte_be_to_cpu_16(tcp_hdr->dst_port);
-+            // uint16_t payload_size = pkt->pkt_len - sizeof(*eth_hdr) - sizeof(*ipv4_hdr) - (tcp_hdr->data_off >> 4) * 4;
++            uint16_t payload_size = pkt->pkt_len - sizeof(*eth_hdr) - sizeof(*ipv4_hdr) - (tcp_hdr->data_off >> 4) * 4;
 +            AK_DEBUG_LOG_PKTGEN("PKTGEN: [%s] lcore=%u port=%u TCP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x) payload=%u",
-+                direction, lcore_id, port_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss, pkt->pkt_len);
++                direction, lcore_id, port_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss, payload_size);
 +        } else if (proto == IPPROTO_UDP && rte_pktmbuf_data_len(pkt) >= sizeof(*eth_hdr) + sizeof(*ipv4_hdr) + sizeof(*udp_hdr)) {
 +            udp_hdr = (struct rte_udp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
 +            src_port = rte_be_to_cpu_16(udp_hdr->src_port);
@@ -3231,7 +3231,7 @@ index 0000000..fc81586
 +os.exit(0)
 diff --git a/scripts/tx-pkts.lua b/scripts/tx-pkts.lua
 new file mode 100644
-index 0000000..c6f6bec
+index 0000000..278119e
 --- /dev/null
 +++ b/scripts/tx-pkts.lua
 @@ -0,0 +1,95 @@
@@ -3252,9 +3252,9 @@ index 0000000..c6f6bec
 +pktgen.delay(100)
 +
 +-- Configuration (same as measure-tx-rate.lua)
-+pktgen.set(port, "size", 1000)
++pktgen.set(port, "size", packet_size)
 +pktgen.set(port, "rate", 100)  -- 100% rate to utilize multiple cores
-+pktgen.set(port, "count", 5)   -- Continuous transmission (0 = infinite)
++pktgen.set(port, "count", 1)   -- Continuous transmission (0 = infinite)
 +
 +-- Set MAC addresses (same as measure-tx-rate.lua)
 +pktgen.set_mac(port, "src", "08:c0:eb:b6:cd:5d")
@@ -3302,10 +3302,10 @@ index 0000000..c6f6bec
 +pktgen.range.ttl(port, "max", 64)
 +
 +-- Set packet size for range mode
-+pktgen.range.pkt_size(port, "start", 1000)
++pktgen.range.pkt_size(port, "start", packet_size)
 +pktgen.range.pkt_size(port, "inc", 0)
-+pktgen.range.pkt_size(port, "min", 1000)
-+pktgen.range.pkt_size(port, "max", 1000)
++pktgen.range.pkt_size(port, "min", packet_size)
++pktgen.range.pkt_size(port, "max", packet_size)
 +
 +-- Enable range mode (same as measure-tx-rate.lua)
 +pktgen.set_range(port, "on")

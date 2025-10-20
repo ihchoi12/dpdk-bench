@@ -1,5 +1,5 @@
 diff --git a/drivers/net/mlx5/mlx5_tx.h b/drivers/net/mlx5/mlx5_tx.h
-index 16307206e2..aa0f560f5a 100644
+index 16307206e2..a635ac7393 100644
 --- a/drivers/net/mlx5/mlx5_tx.h
 +++ b/drivers/net/mlx5/mlx5_tx.h
 @@ -22,6 +22,9 @@
@@ -12,7 +12,94 @@ index 16307206e2..aa0f560f5a 100644
  
  /* TX burst subroutines return codes. */
  enum mlx5_txcmp_code {
-@@ -3216,6 +3219,9 @@ mlx5_tx_burst_single_send(struct mlx5_txq_data *__rte_restrict txq,
+@@ -858,6 +861,8 @@ mlx5_tx_cseg_init(struct mlx5_txq_data *__rte_restrict txq,
+ 		opcode = MLX5_OPCODE_TSO | MLX5_OPC_MOD_MPW << 24;
+ 	cs->opcode = rte_cpu_to_be_32((txq->wqe_ci << 8) | opcode);
+ 	cs->sq_ds = rte_cpu_to_be_32(txq->qp_num_8s | ds);
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Control segment init - opcode=0x%x, wqe_len=%u segments, comp_mode=%s",
++		opcode & 0xFF, ds, MLX5_TXOFF_CONFIG(TXPP) ? "ALWAYS" : "FIRST_ERR");
+ 	if (MLX5_TXOFF_CONFIG(TXPP) && __rte_trace_point_fp_is_enabled())
+ 		cs->flags = RTE_BE32(MLX5_COMP_ALWAYS <<
+ 				     MLX5_COMP_MODE_OFFSET);
+@@ -1413,6 +1418,8 @@ mlx5_tx_dseg_ptr(struct mlx5_txq_data *__rte_restrict txq,
+ 	dseg->bcount = rte_cpu_to_be_32(len);
+ 	dseg->lkey = mlx5_mr_mb2mr(&txq->mr_ctrl, loc->mbuf);
+ 	dseg->pbuf = rte_cpu_to_be_64((uintptr_t)buf);
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Data segment (ptr) - dseg=%p, len=%u, lkey=0x%x, pbuf=0x%lx",
++		dseg, len, rte_be_to_cpu_32(dseg->lkey), (uintptr_t)buf);
+ }
+ 
+ /**
+@@ -1449,10 +1456,13 @@ mlx5_tx_dseg_iptr(struct mlx5_txq_data *__rte_restrict txq,
+ 		dseg->bcount = rte_cpu_to_be_32(len);
+ 		dseg->lkey = mlx5_mr_mb2mr(&txq->mr_ctrl, loc->mbuf);
+ 		dseg->pbuf = rte_cpu_to_be_64((uintptr_t)buf);
+-
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Data segment (ptr) - dseg=%p, len=%u, lkey=0x%x, pbuf=0x%lx",
++			dseg, len, rte_be_to_cpu_32(dseg->lkey), (uintptr_t)buf);
+ 		return;
+ 	}
+ 	dseg->bcount = rte_cpu_to_be_32(len | MLX5_ETH_WQE_DATA_INLINE);
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Data segment (inline) - dseg=%p, len=%u, inline_data copied",
++		dseg, len);
+ 	/* Unrolled implementation of generic rte_memcpy. */
+ 	dst = (uintptr_t)&dseg->inline_data[0];
+ 	src = (uintptr_t)buf;
+@@ -1795,6 +1805,8 @@ mlx5_tx_schedule_send(struct mlx5_txq_data *restrict txq,
+ 					   1, rte_memory_order_relaxed);
+ 		txq->ts_last = ts;
+ 		wqe = txq->wqes + (txq->wqe_ci & txq->wqe_m);
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: WQE allocated - addr=%p, wqe_ci=%u, wqe_free=%u",
++			wqe, txq->wqe_ci, loc->wqe_free);
+ 		sh = txq->sh;
+ 		if (txq->wait_on_time) {
+ 			/* The wait on time capability should be used. */
+@@ -1824,6 +1836,8 @@ mlx5_tx_schedule_send(struct mlx5_txq_data *restrict txq,
+ 		}
+ 		++txq->wqe_ci;
+ 		--loc->wqe_free;
++		AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: WQE posted (WAIT) - wqe_ci=%u, wqe_free=%u",
++			txq->wqe_ci, loc->wqe_free);
+ 		return MLX5_TXCMP_CODE_MULTI;
+ 	}
+ 	return MLX5_TXCMP_CODE_SINGLE;
+@@ -1917,6 +1931,8 @@ mlx5_tx_packet_multi_tso(struct mlx5_txq_data *__rte_restrict txq,
+ 	txq->stats.obytes += dlen + vlan + ntcp * inlen;
+ #endif
+ 	wqe = txq->wqes + (txq->wqe_ci & txq->wqe_m);
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: TSO WQE allocated - addr=%p, wqe_ci=%u, wqe_free=%u, pkt_len=%u",
++		wqe, txq->wqe_ci, loc->wqe_free, loc->mbuf->pkt_len);
+ 	loc->wqe_last = wqe;
+ 	mlx5_tx_cseg_init(txq, loc, wqe, 0, MLX5_OPCODE_TSO, olx);
+ 	rte_pmd_mlx5_trace_tx_push(loc->mbuf, txq->wqe_ci);
+@@ -1924,6 +1940,8 @@ mlx5_tx_packet_multi_tso(struct mlx5_txq_data *__rte_restrict txq,
+ 	wqe->cseg.sq_ds = rte_cpu_to_be_32(txq->qp_num_8s | ds);
+ 	txq->wqe_ci += (ds + 3) / 4;
+ 	loc->wqe_free -= (ds + 3) / 4;
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: WQE posted (TSO) - wqe_ci=%u, wqe_free=%u, wqe_size=%u WQEBBs",
++		txq->wqe_ci, loc->wqe_free, (ds + 3) / 4);
+ 	return MLX5_TXCMP_CODE_MULTI;
+ }
+ 
+@@ -2000,6 +2018,8 @@ mlx5_tx_packet_multi_send(struct mlx5_txq_data *__rte_restrict txq,
+ 	 * - Data Segments, pointer only type
+ 	 */
+ 	wqe = txq->wqes + (txq->wqe_ci & txq->wqe_m);
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: SEND WQE allocated - addr=%p, wqe_ci=%u, wqe_free=%u, pkt_len=%u, nb_segs=%u",
++		wqe, txq->wqe_ci, loc->wqe_free, loc->mbuf->pkt_len, NB_SEGS(loc->mbuf));
+ 	loc->wqe_last = wqe;
+ 	mlx5_tx_cseg_init(txq, loc, wqe, ds, MLX5_OPCODE_SEND, olx);
+ 	rte_pmd_mlx5_trace_tx_push(loc->mbuf, txq->wqe_ci);
+@@ -2040,6 +2060,8 @@ mlx5_tx_packet_multi_send(struct mlx5_txq_data *__rte_restrict txq,
+ 	} while (true);
+ 	txq->wqe_ci += (ds + 3) / 4;
+ 	loc->wqe_free -= (ds + 3) / 4;
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: WQE posted (SEND multi-seg) - wqe_ci=%u, wqe_free=%u, wqe_size=%u WQEBBs",
++		txq->wqe_ci, loc->wqe_free, (ds + 3) / 4);
+ 	return MLX5_TXCMP_CODE_MULTI;
+ }
+ 
+@@ -3216,6 +3238,9 @@ mlx5_tx_burst_single_send(struct mlx5_txq_data *__rte_restrict txq,
  	 * Subroutine is the part of mlx5_tx_burst_single()
  	 * and sends single-segment packet with SEND opcode.
  	 */
@@ -22,7 +109,16 @@ index 16307206e2..aa0f560f5a 100644
  	MLX5_ASSERT(loc->elts_free && loc->wqe_free);
  	MLX5_ASSERT(pkts_n > loc->pkts_sent);
  	pkts += loc->pkts_sent + 1;
-@@ -3506,6 +3512,8 @@ mlx5_tx_burst_single(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3315,6 +3340,8 @@ mlx5_tx_burst_single_send(struct mlx5_txq_data *__rte_restrict txq,
+ 						  vlan, inlen, 0, olx);
+ 				txq->wqe_ci += wqe_n;
+ 				loc->wqe_free -= wqe_n;
++				AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: WQE posted (SEND inline) - wqe_ci=%u, wqe_free=%u, wqe_size=%u WQEBBs, inlined=%u bytes",
++					txq->wqe_ci, loc->wqe_free, wqe_n, inlen);
+ 				/*
+ 				 * Packet data are completely inlined,
+ 				 * free the packet immediately.
+@@ -3506,6 +3533,8 @@ mlx5_tx_burst_single(struct mlx5_txq_data *__rte_restrict txq,
  {
  	enum mlx5_txcmp_code ret;
  
@@ -31,7 +127,7 @@ index 16307206e2..aa0f560f5a 100644
  	ret = mlx5_tx_able_to_empw(txq, loc, olx, false);
  	if (ret == MLX5_TXCMP_CODE_SINGLE)
  		goto ordinary_send;
-@@ -3522,6 +3530,7 @@ mlx5_tx_burst_single(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3522,6 +3551,7 @@ mlx5_tx_burst_single(struct mlx5_txq_data *__rte_restrict txq,
  		/* The resources to send one packet should remain. */
  		MLX5_ASSERT(loc->elts_free && loc->wqe_free);
  ordinary_send:
@@ -39,7 +135,7 @@ index 16307206e2..aa0f560f5a 100644
  		ret = mlx5_tx_burst_single_send(txq, pkts, pkts_n, loc, olx);
  		MLX5_ASSERT(ret != MLX5_TXCMP_CODE_SINGLE);
  		if (ret != MLX5_TXCMP_CODE_EMPW)
-@@ -3560,18 +3569,30 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3560,18 +3590,30 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	enum mlx5_txcmp_code ret;
  	unsigned int part;
  
@@ -71,7 +167,7 @@ index 16307206e2..aa0f560f5a 100644
  	/*
  	 * Check if there are some CQEs, if any:
  	 * - process an encountered errors
-@@ -3580,7 +3601,27 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3580,7 +3622,27 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	 * - doorbell the NIC about processed CQEs
  	 */
  	rte_prefetch0(*(pkts + loc.pkts_sent));
@@ -93,13 +189,13 @@ index 16307206e2..aa0f560f5a 100644
 +	uint16_t elts_tail_after = txq->elts_tail;
 +	uint16_t completions_processed = cq_ci_after - cq_ci_before;
 +	uint16_t mbufs_freed = elts_tail_after - elts_tail_before;
-+	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Completion processed - cqes_handled=%u, mbufs_freed=%u, remaining_pending=%u",
-+		completions_processed, mbufs_freed, (uint16_t)(txq->wqe_ci - txq->cq_ci));
++	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Completion processed - cqes_handled=%u, mbufs_freed=%u, remaining_pending=%u, NIC_read_complete_for_mbufs=%u",
++		completions_processed, mbufs_freed, (uint16_t)(txq->wqe_ci - txq->cq_ci), mbufs_freed);
 +#endif
  	/*
  	 * Calculate the number of available resources - elts and WQEs.
  	 * There are two possible different scenarios:
-@@ -3595,6 +3636,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3595,6 +3657,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	MLX5_ASSERT(txq->wqe_s >= (uint16_t)(txq->wqe_ci - txq->wqe_pi));
  	loc.wqe_free = txq->wqe_s -
  				(uint16_t)(txq->wqe_ci - txq->wqe_pi);
@@ -108,7 +204,7 @@ index 16307206e2..aa0f560f5a 100644
  	if (unlikely(!loc.elts_free || !loc.wqe_free))
  		goto burst_exit;
  	for (;;) {
-@@ -3603,6 +3646,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3603,6 +3667,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  		 * packet in series of multi/single segment packets.
  		 */
  		loc.mbuf = *(pkts + loc.pkts_sent);
@@ -117,7 +213,7 @@ index 16307206e2..aa0f560f5a 100644
  		/* Dedicated branch for multi-segment packets. */
  		if (MLX5_TXOFF_CONFIG(MULTI) &&
  		    unlikely(NB_SEGS(loc.mbuf) > 1)) {
-@@ -3612,6 +3657,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3612,6 +3678,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  			 * with SEND/TSO opcodes, one packet
  			 * per WQE, do it in dedicated routine.
  			 */
@@ -126,7 +222,7 @@ index 16307206e2..aa0f560f5a 100644
  enter_send_multi:
  			MLX5_ASSERT(loc.pkts_sent >= loc.pkts_copy);
  			part = loc.pkts_sent - loc.pkts_copy;
-@@ -3629,6 +3676,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3629,6 +3697,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  			}
  			MLX5_ASSERT(pkts_n > loc.pkts_sent);
  			ret = mlx5_tx_burst_mseg(txq, pkts, pkts_n, &loc, olx);
@@ -135,7 +231,7 @@ index 16307206e2..aa0f560f5a 100644
  			if (!MLX5_TXOFF_CONFIG(INLINE))
  				loc.pkts_copy = loc.pkts_sent;
  			/*
-@@ -3641,6 +3690,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3641,6 +3711,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  				 * all packets are sent or there is no
  				 * enough resources to complete request.
  				 */
@@ -143,7 +239,7 @@ index 16307206e2..aa0f560f5a 100644
  				break;
  			}
  			if (ret == MLX5_TXCMP_CODE_ERROR) {
-@@ -3648,6 +3698,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3648,6 +3719,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  				 * The routine returns this code when some error
  				 * in the incoming packets format occurred.
  				 */
@@ -151,7 +247,7 @@ index 16307206e2..aa0f560f5a 100644
  				txq->stats.oerrors++;
  				break;
  			}
-@@ -3657,6 +3708,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3657,6 +3729,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  				 * in the array, try to send it with the
  				 * best optimized way, possible engaging eMPW.
  				 */
@@ -159,7 +255,7 @@ index 16307206e2..aa0f560f5a 100644
  				goto enter_send_single;
  			}
  			if (MLX5_TXOFF_CONFIG(TSO) &&
-@@ -3665,6 +3717,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3665,6 +3738,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  				 * The single-segment TSO packet was
  				 * encountered in the array.
  				 */
@@ -167,7 +263,7 @@ index 16307206e2..aa0f560f5a 100644
  				goto enter_send_tso;
  			}
  			/* We must not get here. Something is going wrong. */
-@@ -3681,10 +3734,14 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3681,10 +3755,14 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  			 * MLX5_OPCODE_TSO opcode only, provide this
  			 * in dedicated branch.
  			 */
@@ -182,7 +278,7 @@ index 16307206e2..aa0f560f5a 100644
  			/*
  			 * These returned code checks are supposed
  			 * to be optimized out due to routine inlining.
-@@ -3703,6 +3760,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3703,6 +3781,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  				 * The multi-segment packet was
  				 * encountered in the array.
  				 */
@@ -190,7 +286,7 @@ index 16307206e2..aa0f560f5a 100644
  				goto enter_send_multi;
  			}
  			/* We must not get here. Something is going wrong. */
-@@ -3718,9 +3776,12 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3718,9 +3797,12 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  		 * the TSO or multi-segment packet (in case if these
  		 * offloads are requested at SQ configuration time).
  		 */
@@ -203,7 +299,7 @@ index 16307206e2..aa0f560f5a 100644
  		/*
  		 * These returned code checks are supposed
  		 * to be optimized out due to routine inlining.
-@@ -3728,6 +3789,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3728,6 +3810,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  		if (ret == MLX5_TXCMP_CODE_EXIT)
  			break;
  		if (ret == MLX5_TXCMP_CODE_ERROR) {
@@ -211,7 +307,7 @@ index 16307206e2..aa0f560f5a 100644
  			txq->stats.oerrors++;
  			break;
  		}
-@@ -3737,6 +3799,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3737,6 +3820,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  			 * The multi-segment packet was
  			 * encountered in the array.
  			 */
@@ -219,7 +315,7 @@ index 16307206e2..aa0f560f5a 100644
  			goto enter_send_multi;
  		}
  		if (MLX5_TXOFF_CONFIG(TSO) &&
-@@ -3745,6 +3808,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3745,6 +3829,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  			 * The single-segment TSO packet was
  			 * encountered in the array.
  			 */
@@ -227,7 +323,7 @@ index 16307206e2..aa0f560f5a 100644
  			goto enter_send_tso;
  		}
  		/* We must not get here. Something is going wrong. */
-@@ -3761,8 +3825,12 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3761,8 +3846,12 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	MLX5_ASSERT(MLX5_TXOFF_CONFIG(INLINE) ||
  		    loc.pkts_sent >= loc.pkts_copy);
  	/* Take a shortcut if nothing is sent. */
@@ -241,16 +337,51 @@ index 16307206e2..aa0f560f5a 100644
  	/* Request CQE generation if limits are reached. */
  	if (MLX5_TXOFF_CONFIG(TXPP) && __rte_trace_point_fp_is_enabled())
  		mlx5_tx_request_completion_trace(txq, &loc, olx);
-@@ -3795,6 +3863,8 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3795,6 +3884,43 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  	 *   packets are coming and the write barrier will be issued on
  	 *   the next burst (after descriptor writing, at least).
  	 */
++#ifdef RTE_LIBRTE_ETHDEV_DEBUG
++	{
++		uint32_t pkts_sent_this_loop = loc.pkts_sent - loc.pkts_loop;
++		uint32_t dma_bytes = 0; /* Additional DMA reads for non-inlined packets */
++		uint32_t total_wqe_bytes = 0; /* Total WQE traffic including expanded WQEs */
++		uint32_t wqe_ci_start = loc.pkts_loop ? txq->wqe_ci - loc.wqe_free : txq->wqe_pi;
++		uint32_t wqe_ci_end = txq->wqe_ci;
++		uint32_t wqe_entries_used = wqe_ci_end - wqe_ci_start; /* Number of 64-byte WQE entries used */
++		uint32_t i;
++
++		/* Calculate actual WQE bytes used based on wqe_ci increment */
++		total_wqe_bytes = wqe_entries_used * MLX5_WQE_SIZE; /* Each wqe_ci unit = 64 bytes */
++
++		/* Check how many packets were actually inlined by checking mbuf_free count */
++		if (MLX5_TXOFF_CONFIG(INLINE) && loc.mbuf_free > 0) {
++			/* Calculate DMA bytes for non-inlined packets */
++			for (i = loc.pkts_loop; i < loc.pkts_sent; i++) {
++				if (i >= loc.pkts_loop + loc.mbuf_free) {
++					/* This packet was not inlined - needs DMA */
++					dma_bytes += pkts[i]->pkt_len;
++				}
++			}
++
++			AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Doorbell (MIXED) - wqe_ci=%u, pkts=%u, inlined=%u, wqe_entries=%u, WQE_bytes=%u, DMA_bytes=%u, total_PCIe_BW=%u bytes",
++				txq->wqe_ci, pkts_sent_this_loop, loc.mbuf_free, wqe_entries_used, total_wqe_bytes, dma_bytes, total_wqe_bytes + dma_bytes);
++		} else {
++			/* All packets use pointer mode - calculate DMA for all */
++			for (i = loc.pkts_loop; i < loc.pkts_sent; i++) {
++				dma_bytes += pkts[i]->pkt_len;
++			}
++			AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Doorbell (POINTER) - wqe_ci=%u, pkts=%u, wqe_entries=%u, WQE_bytes=%u, DMA_bytes=%u, total_PCIe_BW=%u bytes",
++				txq->wqe_ci, pkts_sent_this_loop, wqe_entries_used, total_wqe_bytes, dma_bytes, total_wqe_bytes + dma_bytes);
++		}
++	}
 +	AK_DEBUG_LOG_LINE(NOTICE, "MLX5 TX: Ringing doorbell, wqe_ci=%u, sent=%u",
 +		txq->wqe_ci, loc.pkts_sent);
++#endif
  	mlx5_doorbell_ring(mlx5_tx_bfreg(txq),
  			   *(volatile uint64_t *)loc.wqe_last, txq->wqe_ci,
  			   txq->qp_db, !txq->db_nc &&
-@@ -3810,6 +3880,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3810,6 +3936,7 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  		 * Unfortunately if inlining is enabled the gaps in pointer
  		 * array may happen due to early freeing of the inlined mbufs.
  		 */
@@ -258,7 +389,7 @@ index 16307206e2..aa0f560f5a 100644
  		mlx5_tx_copy_elts(txq, pkts + loc.pkts_copy, part, olx);
  		loc.pkts_copy = loc.pkts_sent;
  	}
-@@ -3821,19 +3892,29 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+@@ -3821,19 +3948,29 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
  		 * fetched from completion queue and no enough resources
  		 * freed to send all the packets.
  		 */
