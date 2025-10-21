@@ -365,7 +365,7 @@ index ac33b51..f6206cd 100644
      if (pktgen.flags & BLINK_PORTS_FLAG) {
          RTE_ETH_FOREACH_DEV(pid)
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..e54164d 100644
+index 627034d..7c109f4 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -378,7 +378,7 @@ index 627034d..e54164d 100644
  
  #include "pktgen.h"
  #include "pktgen-gre.h"
-@@ -37,12 +40,159 @@ TXlib */
+@@ -37,12 +40,166 @@ TXlib */
  
  #include <pthread.h>
  #include <sched.h>
@@ -510,16 +510,23 @@ index 627034d..e54164d 100644
 +            tcp_hdr = (struct rte_tcp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
 +            src_port = rte_be_to_cpu_16(tcp_hdr->src_port);
 +            dst_port = rte_be_to_cpu_16(tcp_hdr->dst_port);
-+            uint16_t payload_size = pkt->pkt_len - sizeof(*eth_hdr) - sizeof(*ipv4_hdr) - (tcp_hdr->data_off >> 4) * 4;
-+            AK_DEBUG_LOG_PKTGEN("PKTGEN: [%s] lcore=%u port=%u TCP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x) payload=%u",
-+                direction, lcore_id, port_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss, payload_size);
++            uint16_t eth_hdr_size = sizeof(*eth_hdr);
++            uint16_t ipv4_hdr_size = sizeof(*ipv4_hdr);
++            uint16_t tcp_hdr_size = (tcp_hdr->data_off >> 4) * 4;
++            uint16_t payload_size = pkt->pkt_len - eth_hdr_size - ipv4_hdr_size - tcp_hdr_size;
++
++            AK_DEBUG_LOG_PKTGEN("PKTGEN: [%s] lcore=%u port=%u TCP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x) pkt_len=%u eth=%u ipv4=%u tcp=%u payload=%u",
++                direction, lcore_id, port_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss, pkt->pkt_len, eth_hdr_size, ipv4_hdr_size, tcp_hdr_size, payload_size);
 +        } else if (proto == IPPROTO_UDP && rte_pktmbuf_data_len(pkt) >= sizeof(*eth_hdr) + sizeof(*ipv4_hdr) + sizeof(*udp_hdr)) {
 +            udp_hdr = (struct rte_udp_hdr *)((char *)ipv4_hdr + sizeof(*ipv4_hdr));
 +            src_port = rte_be_to_cpu_16(udp_hdr->src_port);
 +            dst_port = rte_be_to_cpu_16(udp_hdr->dst_port);
-+            uint16_t payload_size = pkt->pkt_len - sizeof(*eth_hdr) - sizeof(*ipv4_hdr) - sizeof(*udp_hdr);
-+            AK_DEBUG_LOG_PKTGEN("PKTGEN: [%s] lcore=%u port=%u UDP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x) payload=%u",
-+                direction, lcore_id, port_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss, payload_size);
++            uint16_t eth_hdr_size = sizeof(*eth_hdr);
++            uint16_t ipv4_hdr_size = sizeof(*ipv4_hdr);
++            uint16_t udp_hdr_size = sizeof(*udp_hdr);
++            uint16_t payload_size = pkt->pkt_len - eth_hdr_size - ipv4_hdr_size - udp_hdr_size;
++            AK_DEBUG_LOG_PKTGEN("PKTGEN: [%s] lcore=%u port=%u UDP %s:%u -> %s:%u (MAC %s -> %s) (RSS=0x%08x) pkt_len=%u eth=%u ipv4=%u udp=%u payload=%u",
++                direction, lcore_id, port_id, src_ip_str, src_port, dst_ip_str, dst_port, src_mac_str, dst_mac_str, pkt->hash.rss, pkt->pkt_len, eth_hdr_size, ipv4_hdr_size, udp_hdr_size, payload_size);
 +        } else {
 +            uint16_t payload_size = pkt->pkt_len - sizeof(*eth_hdr) - (ipv4_hdr->version_ihl & 0x0F) * 4;
 +            AK_DEBUG_LOG_PKTGEN("PKTGEN: [%s] lcore=%u port=%u IP proto=%u %s -> %s (MAC %s -> %s) (RSS=0x%08x) payload=%u",
@@ -539,7 +546,7 @@ index 627034d..e54164d 100644
  double
  next_poisson_time(double rateParameter)
  {
-@@ -280,15 +430,41 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
+@@ -280,15 +437,41 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
  {
      if (nb_pkts) {
          uint16_t sent, to_send = nb_pkts;
@@ -583,7 +590,7 @@ index 627034d..e54164d 100644
              sent = rte_eth_tx_burst(pinfo->pid, qid, pkts, to_send);
              to_send -= sent;
              pkts += sent;
-@@ -973,7 +1149,7 @@ void
+@@ -973,7 +1156,7 @@ void
  pktgen_send_pkts(port_info_t *pinfo, uint16_t qid, struct rte_mempool *mp)
  {
      uint64_t txCnt;
@@ -592,7 +599,7 @@ index 627034d..e54164d 100644
  
      if (!pktgen_tst_port_flags(pinfo, SEND_FOREVER)) {
          txCnt = pkt_atomic64_tx_count(&pinfo->current_tx_count, pinfo->tx_burst);
-@@ -1027,7 +1203,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
+@@ -1027,7 +1210,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
  {
      if (pktgen_tst_port_flags(pinfo, SENDING_PACKETS)) {
          struct rte_mempool *mp = l2p_get_tx_mp(pinfo->pid);
@@ -601,7 +608,7 @@ index 627034d..e54164d 100644
  
          /* Use mempool routines instead of pktmbuf to make sure the mbufs is not altered */
          if (rte_mempool_get_bulk(mp, (void **)pkts, pinfo->tx_burst) == 0) {
-@@ -1057,25 +1233,61 @@ static inline void
+@@ -1057,25 +1240,61 @@ static inline void
  pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  {
      uint16_t nb_rx, nb_pkts = pinfo->rx_burst, pid;
@@ -669,7 +676,7 @@ index 627034d..e54164d 100644
  
          if (unlikely(pinfo->dump_count > 0))
              pktgen_packet_dump_bulk(pkts, nb_rx, pid);
-@@ -1122,12 +1334,52 @@ pktgen_tx_workq_setup(uint16_t pid)
+@@ -1122,12 +1341,52 @@ pktgen_tx_workq_setup(uint16_t pid)
  }
  
  static int
@@ -726,7 +733,7 @@ index 627034d..e54164d 100644
  }
  
  /**
-@@ -1280,7 +1532,7 @@ pktgen_main_rx_loop(void)
+@@ -1280,7 +1539,7 @@ pktgen_main_rx_loop(void)
  
      pinfo  = l2p_get_pinfo_by_lcore(lid);
      rx_qid = l2p_get_rxqid(lid);
@@ -735,7 +742,7 @@ index 627034d..e54164d 100644
      printf("RX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, rx_qid,
             l2p_get_rx_mp(pinfo->pid)->name, l2p_get_rx_mp(pinfo->pid));
  
-@@ -1479,3 +1731,400 @@ pktgen_timer_setup(void)
+@@ -1479,3 +1738,400 @@ pktgen_timer_setup(void)
      CPU_SET(rte_get_main_lcore(), cpuset);
      pthread_setaffinity_np(tid, sizeof(cpuset), cpuset);
  }
