@@ -365,7 +365,7 @@ index ac33b51..f6206cd 100644
      if (pktgen.flags & BLINK_PORTS_FLAG) {
          RTE_ETH_FOREACH_DEV(pid)
 diff --git a/app/pktgen.c b/app/pktgen.c
-index 627034d..7c109f4 100644
+index 627034d..7d4841c 100644
 --- a/app/pktgen.c
 +++ b/app/pktgen.c
 @@ -18,6 +18,9 @@ TXlib */
@@ -378,7 +378,11 @@ index 627034d..7c109f4 100644
  
  #include "pktgen.h"
  #include "pktgen-gre.h"
-@@ -37,12 +40,166 @@ TXlib */
+@@ -34,15 +37,170 @@ TXlib */
+ #include "pktgen-gtpu.h"
+ #include "pktgen-sys.h"
+ #include "pktgen-workq.h"
++#include "pktgen_pcm.h"
  
  #include <pthread.h>
  #include <sched.h>
@@ -546,7 +550,7 @@ index 627034d..7c109f4 100644
  double
  next_poisson_time(double rateParameter)
  {
-@@ -280,15 +437,41 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
+@@ -280,20 +438,107 @@ tx_send_packets(port_info_t *pinfo, uint16_t qid, struct rte_mbuf **pkts, uint16
  {
      if (nb_pkts) {
          uint16_t sent, to_send = nb_pkts;
@@ -585,12 +589,78 @@ index 627034d..7c109f4 100644
          if (pktgen_tst_port_flags(pinfo, SEND_RANDOM_PKTS))
              pktgen_rnd_bits_apply(pinfo, pkts, to_send, NULL);
  
++        /* PCIe byte tracking for hardware-level measurement using Intel PCM */
++        uint64_t pcie_read_before = 0, pcie_write_before = 0;
++        uint64_t pcie_read_after = 0, pcie_write_after = 0;
++        uint32_t socket_id = 1;
++        int pcm_available = pcm_monitoring_is_available();
++        static __thread int pcm_debug_logged = 0;
++
++        /* Get PCIe counters BEFORE transmission (instant snapshot) */
++        if (pcm_available) {
++            extern int pcm_wrapper_get_instant_pcie_bytes(uint32_t socket_id, uint64_t *read, uint64_t *write);
++            int ret = pcm_wrapper_get_instant_pcie_bytes(socket_id, &pcie_read_before, &pcie_write_before);
++            if (ret != 0) {
++                if (!pcm_debug_logged) {
++                    printf("[PCM TX BURST DEBUG] pcm_wrapper_get_instant_pcie_bytes failed with ret=%d on lcore=%u socket=%u\n",
++                           ret, lcore_id, socket_id);
++                    pcm_debug_logged = 1;
++                }
++                pcm_available = 0;  /* Disable if failed */
++            } else if (!pcm_debug_logged) {
++                printf("[PCM TX BURST DEBUG] First call succeeded: lcore=%u socket=%u, read_before=%lu, write_before=%lu\n",
++                       lcore_id, socket_id, pcie_read_before, pcie_write_before);
++                printf("[PCM TX BURST DEBUG] Monitoring socket-specific PCIe traffic (socket %u only)\n", socket_id);
++                pcm_debug_logged = 1;
++            }
++        } else if (!pcm_debug_logged) {
++            printf("[PCM TX BURST DEBUG] PCM not available on lcore=%u\n", lcore_id);
++            pcm_debug_logged = 1;
++        }
++
          do {
 +            AK_DEBUG_LOG_PKTGEN("[1] rte_eth_tx_burst()");
              sent = rte_eth_tx_burst(pinfo->pid, qid, pkts, to_send);
              to_send -= sent;
              pkts += sent;
-@@ -973,7 +1156,7 @@ void
+         } while (to_send > 0);
+ 
++        /* Get PCIe counters AFTER transmission (instant snapshot) */
++        if (pcm_available) {
++            extern int pcm_wrapper_get_instant_pcie_bytes(uint32_t socket_id, uint64_t *read, uint64_t *write);
++            if (pcm_wrapper_get_instant_pcie_bytes(socket_id, &pcie_read_after, &pcie_write_after) == 0) {
++                /* Calculate PCIe bytes consumed for this transmission */
++                uint64_t pcie_read_delta = pcie_read_after - pcie_read_before;
++                uint64_t pcie_write_delta = pcie_write_after - pcie_write_before;
++
++                /* Log first 10 bursts, then every 100 bursts up to 1000, then every 10000 */
++                static __thread uint64_t log_counter = 0;
++                log_counter++;
++                printf("log_counter: %lu", log_counter);
++                int should_log = (log_counter <= 10) ||
++                                (log_counter <= 1000 && log_counter % 100 == 0) ||
++                                (log_counter % 10000 == 0);
++
++                if (should_log) {
++                    printf("[PCM TX BURST] lcore=%u socket=%u port=%u qid=%u nb_pkts=%u burst#%lu | "
++                           "PCIe Read: %lu bytes (%lu->%lu), PCIe Write: %lu bytes (%lu->%lu) | "
++                           "Avg per pkt: Read=%.1f B, Write=%.1f B\n",
++                           lcore_id, socket_id, pinfo->pid, qid, nb_pkts, log_counter,
++                           pcie_read_delta, pcie_read_before, pcie_read_after,
++                           pcie_write_delta, pcie_write_before, pcie_write_after,
++                           (double)pcie_read_delta / nb_pkts,
++                           (double)pcie_write_delta / nb_pkts);
++                }
++            }
++            else{
++                printf("[PCM TX BURST] pcm_wrapper_get_instant_pcie_bytes failed");
++            }
++        }
++
+         if (qid == 0 && pktgen_tst_port_flags(pinfo, SEND_LATENCY_PKTS))
+             pktgen_tstamp_inject(pinfo, qid);
+     }
+@@ -973,7 +1218,7 @@ void
  pktgen_send_pkts(port_info_t *pinfo, uint16_t qid, struct rte_mempool *mp)
  {
      uint64_t txCnt;
@@ -599,7 +669,7 @@ index 627034d..7c109f4 100644
  
      if (!pktgen_tst_port_flags(pinfo, SEND_FOREVER)) {
          txCnt = pkt_atomic64_tx_count(&pinfo->current_tx_count, pinfo->tx_burst);
-@@ -1027,7 +1210,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
+@@ -1027,7 +1272,7 @@ fast_main_transmit(port_info_t *pinfo, uint16_t qid)
  {
      if (pktgen_tst_port_flags(pinfo, SENDING_PACKETS)) {
          struct rte_mempool *mp = l2p_get_tx_mp(pinfo->pid);
@@ -608,7 +678,7 @@ index 627034d..7c109f4 100644
  
          /* Use mempool routines instead of pktmbuf to make sure the mbufs is not altered */
          if (rte_mempool_get_bulk(mp, (void **)pkts, pinfo->tx_burst) == 0) {
-@@ -1057,25 +1240,61 @@ static inline void
+@@ -1057,25 +1302,61 @@ static inline void
  pktgen_main_receive(port_info_t *pinfo, uint16_t qid)
  {
      uint16_t nb_rx, nb_pkts = pinfo->rx_burst, pid;
@@ -676,7 +746,7 @@ index 627034d..7c109f4 100644
  
          if (unlikely(pinfo->dump_count > 0))
              pktgen_packet_dump_bulk(pkts, nb_rx, pid);
-@@ -1122,12 +1341,52 @@ pktgen_tx_workq_setup(uint16_t pid)
+@@ -1122,12 +1403,52 @@ pktgen_tx_workq_setup(uint16_t pid)
  }
  
  static int
@@ -713,7 +783,8 @@ index 627034d..7c109f4 100644
 +        /* Another core is setting it up - wait for completion */
 +        AK_DEBUG_LOG_LINE(DEBUG, "Core %d: Waiting for %s workqueue setup for port %d",
 +                          rte_lcore_id(), (wqt == WORKQ_RX) ? "RX" : "TX", pid);
-+
+ 
+-    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
 +        while (__atomic_load_n(&workq_setup_done[pid][wqt_idx], __ATOMIC_ACQUIRE) != 1) {
 +            rte_pause();
 +        }
@@ -724,8 +795,7 @@ index 627034d..7c109f4 100644
 +
 +    return 0;
 +}
- 
--    return (wqt == WORKQ_RX) ? pktgen_rx_workq_setup(pid) : pktgen_tx_workq_setup(pid);
++
 +static int
 +pktgen_workq_setup(workq_type_t wqt, uint16_t pid, void *arg)
 +{
@@ -733,7 +803,7 @@ index 627034d..7c109f4 100644
  }
  
  /**
-@@ -1280,7 +1539,7 @@ pktgen_main_rx_loop(void)
+@@ -1280,7 +1601,7 @@ pktgen_main_rx_loop(void)
  
      pinfo  = l2p_get_pinfo_by_lcore(lid);
      rx_qid = l2p_get_rxqid(lid);
@@ -742,7 +812,7 @@ index 627034d..7c109f4 100644
      printf("RX lid %3d, pid %2d, qid %2d, Mempool %-16s @ %p\n", lid, pinfo->pid, rx_qid,
             l2p_get_rx_mp(pinfo->pid)->name, l2p_get_rx_mp(pinfo->pid));
  
-@@ -1479,3 +1738,400 @@ pktgen_timer_setup(void)
+@@ -1479,3 +1800,400 @@ pktgen_timer_setup(void)
      CPU_SET(rte_get_main_lcore(), cpuset);
      pthread_setaffinity_np(tid, sizeof(cpuset), cpuset);
  }
@@ -1965,10 +2035,10 @@ index 0000000..3e29a94
 +#endif /* __PKTGEN_PCM_H__ */
 diff --git a/app/pktgen_pcm_wrapper.cpp b/app/pktgen_pcm_wrapper.cpp
 new file mode 100644
-index 0000000..17024fd
+index 0000000..ebca0c0
 --- /dev/null
 +++ b/app/pktgen_pcm_wrapper.cpp
-@@ -0,0 +1,693 @@
+@@ -0,0 +1,750 @@
 +// C++ wrapper for PCM that will be statically linked
 +#include "pktgen_pcm_wrapper.h"
 +#include <iostream>
@@ -2661,13 +2731,70 @@ index 0000000..17024fd
 +    }
 +}
 +
++int pcm_wrapper_get_instant_pcie_bytes(uint32_t socket_id, uint64_t *pcie_read_bytes, uint64_t *pcie_write_bytes) {
++    if (!g_initialized || !g_pcm_instance) {
++        return -1;
++    }
++
++    if (!pcie_read_bytes || !pcie_write_bytes) {
++        return -1;
++    }
++
++    if (socket_id >= g_pcm_instance->getNumSockets()) {
++        return -1;
++    }
++
++    try {
++        // Get instant snapshot of system counter state
++        SystemCounterState current_state = getSystemCounterState();
++
++        // Sum up all QPI/PCIe links for this specific socket only
++        // Each socket can have multiple QPI/PCIe links
++        uint64_t total_incoming = 0;
++        uint64_t total_outgoing = 0;
++
++        // Get number of QPI ports for this socket
++        uint32_t num_qpi_ports = g_pcm_instance->getQPILinksPerSocket();
++
++        // Sum incoming bytes across all links for this socket
++        for (uint32_t link = 0; link < num_qpi_ports; ++link) {
++            total_incoming += getIncomingQPILinkBytes(socket_id, link, current_state);
++        }
++
++        // For outgoing bytes, we need before/after states
++        if (g_measurement_active) {
++            // Sum outgoing bytes across all links for this socket
++            for (uint32_t link = 0; link < num_qpi_ports; ++link) {
++                total_outgoing += getOutgoingQPILinkBytes(socket_id, link, g_before_system_state, current_state);
++            }
++        } else {
++            // If no measurement active, use zero baseline
++            SystemCounterState zero_state = SystemCounterState();
++            for (uint32_t link = 0; link < num_qpi_ports; ++link) {
++                total_outgoing += getOutgoingQPILinkBytes(socket_id, link, zero_state, current_state);
++            }
++        }
++
++        *pcie_read_bytes = total_incoming;
++        *pcie_write_bytes = total_outgoing;
++
++        return 0;
++    } catch (const std::exception& e) {
++        printf("Error getting instant PCIe bytes for socket %u: %s\n", socket_id, e.what());
++        return -1;
++    } catch (...) {
++        printf("Unknown error getting instant PCIe bytes for socket %u\n", socket_id);
++        return -1;
++    }
++}
++
 +} // extern "C"
 diff --git a/app/pktgen_pcm_wrapper.h b/app/pktgen_pcm_wrapper.h
 new file mode 100644
-index 0000000..7f15d75
+index 0000000..4989df4
 --- /dev/null
 +++ b/app/pktgen_pcm_wrapper.h
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,152 @@
 +#ifndef __PKTGEN_PCM_WRAPPER_H__
 +#define __PKTGEN_PCM_WRAPPER_H__
 +
@@ -2805,6 +2932,15 @@ index 0000000..7f15d75
 + * @return 0 on success, negative on error
 + */
 +int pcm_wrapper_get_system_info(char* info_buffer, size_t buffer_size);
++
++/**
++ * Get instant PCIe byte counters (snapshot, not delta)
++ * @param socket_id Socket ID to get counters for
++ * @param pcie_read_bytes Pointer to store PCIe read bytes
++ * @param pcie_write_bytes Pointer to store PCIe write bytes
++ * @return 0 on success, negative on error
++ */
++int pcm_wrapper_get_instant_pcie_bytes(uint32_t socket_id, uint64_t *pcie_read_bytes, uint64_t *pcie_write_bytes);
 +
 +#ifdef __cplusplus
 +}
@@ -3238,7 +3374,7 @@ index 0000000..fc81586
 +os.exit(0)
 diff --git a/scripts/tx-pkts.lua b/scripts/tx-pkts.lua
 new file mode 100644
-index 0000000..278119e
+index 0000000..c13b188
 --- /dev/null
 +++ b/scripts/tx-pkts.lua
 @@ -0,0 +1,95 @@
@@ -3251,7 +3387,7 @@ index 0000000..278119e
 +
 +local port = 0
 +local sleeptime = tonumber(os.getenv("PKTGEN_DURATION")) or 5
-+local packet_size = tonumber(os.getenv("PKTGEN_PACKET_SIZE")) or 64
++local packet_size = tonumber(os.getenv("PKTGEN_PACKET_SIZE")) or 1024
 +
 +pktgen.stop(port)
 +pktgen.clear(port)
