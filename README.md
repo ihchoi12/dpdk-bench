@@ -129,6 +129,51 @@ PKTGEN_PCI_ADDR=0000:31:00.1   # Network interface
 L3FWD_LCORES=-l 0-2            # CPU cores for l3fwd
 ```
 
+## Using AMD Solarflare NICs (SFC9120)
+
+AMD Solarflare NICs require additional setup steps to work with DPDK:
+
+**1. Identify and bind NIC to DPDK driver:**
+```bash
+# Check available NICs
+lspci | grep -i ethernet
+
+# Check current driver binding
+sudo ./dpdk/usertools/dpdk-devbind.py --status
+
+# Bring down interface and bind to DPDK (replace PCI address as needed)
+sudo ip link set enp3s0f0np0 down
+sudo modprobe uio_pci_generic
+sudo ./dpdk/usertools/dpdk-devbind.py --bind=uio_pci_generic 0000:03:00.0
+
+# Verify binding
+sudo ./dpdk/usertools/dpdk-devbind.py --status | grep -A 2 "DPDK-compatible"
+```
+
+**2. Enable SFC driver in DPDK build:**
+
+Edit `build/init_submodules.sh` and remove `net/sfc` from `DISABLE_DRIVERS` list (line 18):
+```bash
+# Before: ...net/qede,net/sfc,net/softnic...
+# After:  ...net/qede,net/softnic...
+```
+
+**3. Rebuild DPDK and Pktgen:**
+```bash
+make submodules
+```
+
+**4. Verify setup:**
+```bash
+make run-pktgen-with-lua-script
+```
+
+Expected output should show:
+```
+PMD: sfc_efx 0000:03:00.0 #0: running FW variant is ultra-low-latency
+PMD: sfc_efx 0000:03:00.0 #0: use ef10 Rx datapath
+PMD: sfc_efx 0000:03:00.0 #0: use ef10 Tx datapath
+```
 
 References:
 - https://developer.arm.com/documentation/109701/1-0/Example-for-Multi-core-scenario
