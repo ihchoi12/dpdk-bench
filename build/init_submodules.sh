@@ -254,10 +254,17 @@ build_pcm() {
 # -----------------------
 # Main
 # -----------------------
-# ... 상단/함수들은 그대로 두고, case 문만 확장 ...
+# ... Keep the above functions as is, only extending the case statement ...
 case "$CMD" in
   build)
     need git; need meson; need ninja
+    # PCM (must be built before DPDK since l3fwd depends on it)
+    sync_pcm
+    if [ ! -f "${PCM_DIR}/build/src/libpcm.a" ]; then
+      build_pcm
+    else
+      echo ">> PCM already built, skipping"
+    fi
     # DPDK
     sync_dpdk
     reset_dpdk
