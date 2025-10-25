@@ -6,15 +6,18 @@
 
 1) Clone this repository.
 
-2) Install dependencie and perform some machine setup.
+2) Install dependencies and perform machine setup.
 
-```
-sudo apt update && sudo apt install meson ninja-build
+```bash
+# Update package list and install all dependencies
 sudo apt update && sudo apt install -y \
-  meson ninja-build build-essential pkg-config git \
+  meson ninja-build build-essential pkg-config git cmake \
   libnuma-dev libpcap-dev python3-pyelftools liblua5.3-dev \
   libibverbs-dev librdmacm-dev rdma-core ibverbs-providers libmlx5-1 \
-  libelf-dev libbsd-dev zlib1g-dev cmake && \
+  libelf-dev libbsd-dev zlib1g-dev \
+  linux-tools-common linux-tools-generic linux-tools-$(uname -r)
+
+# Perform machine setup (hugepages, etc.)
 sudo ./scripts/setup_machines.sh
 ```
 
