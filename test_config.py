@@ -84,7 +84,7 @@ PKTGEN_DURATION = 5  # Duration in seconds for pktgen transmission
 PKTGEN_PACKET_SIZE = 64  # Packet size in bytes
 
 # L3FWD Descriptor configuration
-L3FWD_TX_DESC_VALUES = [128, 512, 1024, 1024*2, 1024*4, 1024*8, 1024*16, 1024*32]  # L3FWD TX descriptor sizes
+L3FWD_TX_DESC_VALUES = [1024] #[128, 512, 1024, 1024*2, 1024*4, 1024*8, 1024*16, 1024*32]  # L3FWD TX descriptor sizes
 L3FWD_RX_DESC_VALUES = [1024]  # L3FWD RX descriptor sizes
 
 # PKTGEN TX Descriptor configuration  
@@ -96,28 +96,16 @@ L3FWD_LCORE_COUNTS = [2]  # L3FWD core counts to test
 L3FWD_LCORE_VALUES = L3FWD_LCORE_COUNTS
 
 # PKTGEN LCORE configuration - must use even numbers for balanced RX:TX splitting
-PKTGEN_LCORE_COUNTS = [14]  # Even numbers only for balanced RX:TX splitting
+PKTGEN_LCORE_COUNTS = [2, 4, 6, 8, 10, 12, 14]  # Even numbers only for balanced RX:TX splitting
 PKTGEN_LCORE_VALUES = PKTGEN_LCORE_COUNTS
 
 ################## BUILD CONFIG #####################
 LIBOS = 'dpdk'  # DPDK-based applications
-FEATURES = [
-    'high-performance',
-    'low-latency',
-]
+# FEATURES = [
+#     'high-performance',
+#     'low-latency',
+# ]
 
-################## TEST CONFIG #####################
-NUM_BACKENDS = 12
-SERVER_APP = 'http-server' # 'capy-proxy', 'https', 'capybara-switch' 'http-server', 'prism', 'redis-server', 'proxy-server'
-TLS = 0
-CLIENT_APP = 'caladan' # 'wrk', 'caladan', 'redis-bench'
-# NUM_THREADS = [1] # for wrk load generator
-REPEAT_NUM = 1
-
-TCPDUMP = False
-EVAL_LATENCY = True
-EVAL_THROUGHPUT = True  
-EVAL_PACKET_LOSS = True
 
 ################## ENV VARS #####################
 ### DPDK ###
