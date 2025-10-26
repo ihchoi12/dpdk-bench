@@ -1,10 +1,11 @@
 [submodule "dpdk"]
 	path = dpdk
-	url = https://github.com/DPDK/dpdk
+	url = https://github.com/ihchoi12/dpdk.git
+	branch = autokernel
 [submodule "Pktgen-DPDK"]
 	path = Pktgen-DPDK
-	url = https://github.com/pktgen/Pktgen-DPDK.git
-	branch = main
+	url = https://github.com/ihchoi12/Pktgen-DPDK.git
+	branch = autokernel
 [submodule "pcm"]
 	path = pcm
 	url = https://github.com/intel/pcm.git
