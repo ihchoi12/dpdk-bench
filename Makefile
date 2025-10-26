@@ -37,7 +37,12 @@ build-pcm:
 	@cd pcm && mkdir -p build && cd build && cmake .. && make -j$(shell nproc)
 	@echo ">> PCM build completed"
 
-l3fwd: build-pcm
+common-pcm: build-pcm
+	@echo ">> Building common PCM wrapper library..."
+	@cd common/pcm && make clean && make install
+	@echo ">> Common PCM library built and installed to lib/"
+
+l3fwd: common-pcm
 	@bash build/init_submodules.sh l3fwd
 
 l3fwd-rebuild:
@@ -92,25 +97,34 @@ generate-performance-graph:
 	@python3 scripts/generate_performance_graph.py
 
 
+# ========================================================================
+# DEPRECATED: Patch-based workflow
+# ========================================================================
+# These targets are deprecated. We now use fork-based workflow:
+# - Changes are committed directly to the autokernel branch in forks
+# - No need for patch files - use git commit and git push instead
+# ========================================================================
+
 .PHONY: dpdk-patch-all
 dpdk-patch-all:
-	@bash -euo pipefail -c '\
-	  test -d dpdk || { echo "dpdk submodule missing"; exit 1; }; \
-	  cd dpdk; \
-	  git add -N $$(git ls-files -o --exclude-standard) >/dev/null 2>&1 || true; \
-	  git diff > ../build/dpdk.patch; \
-	  echo "Wrote build/dpdk.patch" \
-	'
+	@echo "WARNING: dpdk-patch-all is DEPRECATED"
+	@echo "Using fork-based workflow now - commit changes directly:"
+	@echo "  cd dpdk"
+	@echo "  git add <files>"
+	@echo "  git commit -m 'your message'"
+	@echo "  git push fork autokernel"
 
 .PHONY: pktgen-patch-all
 pktgen-patch-all:
-	@bash -euo pipefail -c '\
-	  test -d Pktgen-DPDK || { echo "pktgen submodule missing"; exit 1; }; \
-	  cd Pktgen-DPDK; \
-	  git add -N $$(git ls-files -o --exclude-standard) >/dev/null 2>&1 || true; \
-	  git diff > ../build/pktgen.patch; \
-	  echo "Wrote build/pktgen.patch" \
-	'
+	@echo "WARNING: pktgen-patch-all is DEPRECATED"
+	@echo "Using fork-based workflow now - commit changes directly:"
+	@echo "  cd Pktgen-DPDK"
+	@echo "  git add <files>"
+	@echo "  git commit -m 'your message'"
+	@echo "  git push fork autokernel"
 
 .PHONY: patch-all
-patch-all: dpdk-patch-all pktgen-patch-all
+patch-all:
+	@echo "WARNING: patch-all is DEPRECATED"
+	@echo "Using fork-based workflow now - commit changes to both repos"
+	@echo "See dpdk-patch-all and pktgen-patch-all for details"

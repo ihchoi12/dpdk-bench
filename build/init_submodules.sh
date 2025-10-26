@@ -51,26 +51,17 @@ sync_dpdk() {
 }
 
 reset_dpdk() {
-  echo ">> reset/clean submodule: $DPDK_DIR"
-  git -C "$DPDK_DIR" reset --hard
-  git -C "$DPDK_DIR" clean -fdx
+  # NOTE: No longer using git reset --hard to avoid losing uncommitted work
+  # Using fork-based workflow now - changes are committed directly to autokernel branch
+  echo ">> clean build artifacts only (no git reset): $DPDK_DIR"
+  git -C "$DPDK_DIR" clean -fdx -e '*.c' -e '*.h' -e '*.cpp' -e 'Makefile' -e 'meson.build'
 }
 
 apply_dpdk_patches() {
-  local SERIES="$DPDK_PATCH_SERIES"
-  local SINGLE="$DPDK_PATCH_SINGLE"
-  [[ "$SERIES" = /* ]] || SERIES="${REPO_ROOT}/${SERIES}"
-  [[ "$SINGLE" = /* ]] || SINGLE="${REPO_ROOT}/${SINGLE}"
-
-  if [ -d "$SERIES" ] && ls "$SERIES"/*.patch >/dev/null 2>&1; then
-    echo ">> applying patch series: $SERIES/*.patch"
-    git -C "$DPDK_DIR" -c user.name="x" -c user.email="x" am --3way --whitespace=fix $(ls "$SERIES"/*.patch | sort)
-  elif [ -f "$SINGLE" ]; then
-    echo ">> applying single patch: $SINGLE"
-    git -C "$DPDK_DIR" apply --whitespace=fix "$SINGLE"
-  else
-    echo ">> no dpdk patches found (building vanilla submodule)"
-  fi
+  # NOTE: Patch-based workflow deprecated - using fork with autokernel branch
+  # All changes are now committed directly to the fork's autokernel branch
+  echo ">> skipping patch application (using fork-based workflow)"
+  echo ">> changes are committed directly to autokernel branch"
 }
 
 build_dpdk() {
@@ -153,27 +144,18 @@ sync_pktgen() {
 }
 
 reset_pktgen() {
-  echo ">> reset/clean submodule: $PKTGEN_DIR"
-  git -C "$PKTGEN_DIR" reset --hard
-  git -C "$PKTGEN_DIR" clean -fdx
+  # NOTE: No longer using git reset --hard to avoid losing uncommitted work
+  # Using fork-based workflow now - changes are committed directly to autokernel branch
+  echo ">> clean build artifacts only (no git reset): $PKTGEN_DIR"
+  git -C "$PKTGEN_DIR" clean -fdx -e '*.c' -e '*.h' -e '*.cpp' -e 'Makefile' -e 'meson.build' -e '*.lua'
   rm -rf "$PKTGEN_BUILD"
 }
 
 apply_pktgen_patches() {
-  local SERIES="$PKTGEN_PATCH_SERIES"
-  local SINGLE="$PKTGEN_PATCH_SINGLE"
-  [[ "$SERIES" = /* ]] || SERIES="${REPO_ROOT}/${SERIES}"
-  [[ "$SINGLE" = /* ]] || SINGLE="${REPO_ROOT}/${SINGLE}"
-
-  if [ -d "$SERIES" ] && ls "$SERIES"/*.patch >/dev/null 2>&1; then
-    echo ">> applying pktgen patch series: $SERIES/*.patch"
-    git -C "$PKTGEN_DIR" -c user.name="x" -c user.email="x" am --3way --whitespace=fix $(ls "$SERIES"/*.patch | sort)
-  elif [ -f "$SINGLE" ]; then
-    echo ">> applying pktgen single patch: $SINGLE"
-    git -C "$PKTGEN_DIR" apply --whitespace=fix "$SINGLE"
-  else
-    echo ">> no pktgen patches found (building vanilla submodule)"
-  fi
+  # NOTE: Patch-based workflow deprecated - using fork with autokernel branch
+  # All changes are now committed directly to the fork's autokernel branch
+  echo ">> skipping patch application (using fork-based workflow)"
+  echo ">> changes are committed directly to autokernel branch"
 }
 
 export_dpdk_env() {
