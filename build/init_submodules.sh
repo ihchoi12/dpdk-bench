@@ -51,17 +51,8 @@ sync_dpdk() {
 }
 
 reset_dpdk() {
-  # NOTE: No longer using git reset --hard to avoid losing uncommitted work
-  # Using fork-based workflow now - changes are committed directly to autokernel branch
-  echo ">> clean build artifacts only (no git reset): $DPDK_DIR"
+  echo ">> cleaning build artifacts: $DPDK_DIR"
   git -C "$DPDK_DIR" clean -fdx -e '*.c' -e '*.h' -e '*.cpp' -e 'Makefile' -e 'meson.build'
-}
-
-apply_dpdk_patches() {
-  # NOTE: Patch-based workflow deprecated - using fork with autokernel branch
-  # All changes are now committed directly to the fork's autokernel branch
-  echo ">> skipping patch application (using fork-based workflow)"
-  echo ">> changes are committed directly to autokernel branch"
 }
 
 build_dpdk() {
@@ -144,18 +135,9 @@ sync_pktgen() {
 }
 
 reset_pktgen() {
-  # NOTE: No longer using git reset --hard to avoid losing uncommitted work
-  # Using fork-based workflow now - changes are committed directly to autokernel branch
-  echo ">> clean build artifacts only (no git reset): $PKTGEN_DIR"
+  echo ">> cleaning build artifacts: $PKTGEN_DIR"
   git -C "$PKTGEN_DIR" clean -fdx -e '*.c' -e '*.h' -e '*.cpp' -e 'Makefile' -e 'meson.build' -e '*.lua'
   rm -rf "$PKTGEN_BUILD"
-}
-
-apply_pktgen_patches() {
-  # NOTE: Patch-based workflow deprecated - using fork with autokernel branch
-  # All changes are now committed directly to the fork's autokernel branch
-  echo ">> skipping patch application (using fork-based workflow)"
-  echo ">> changes are committed directly to autokernel branch"
 }
 
 export_dpdk_env() {
@@ -250,49 +232,36 @@ case "$CMD" in
     # DPDK
     sync_dpdk
     reset_dpdk
-    apply_dpdk_patches
     build_dpdk
     # Pktgen
     sync_pktgen
     reset_pktgen
-    apply_pktgen_patches
     build_pktgen
-    echo ">> tip: export PKG_CONFIG_PATH=\"${DPDK_PREFIX}/lib/pkgconfig:${DPDK_PREFIX}/lib/x86_64-linux-gnu/pkgconfig:\$PKG_CONFIG_PATH\""
-    echo ">> tip: export LD_LIBRARY_PATH=\"${DPDK_PREFIX}/lib:${DPDK_PREFIX}/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH\""
+    echo ""
+    echo ">> Build complete!"
+    echo ">> Environment setup:"
+    echo "   export PKG_CONFIG_PATH=\"${DPDK_PREFIX}/lib/pkgconfig:${DPDK_PREFIX}/lib/x86_64-linux-gnu/pkgconfig:\$PKG_CONFIG_PATH\""
+    echo "   export LD_LIBRARY_PATH=\"${DPDK_PREFIX}/lib:${DPDK_PREFIX}/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH\""
     ;;
   l3fwd)
     need git; need meson; need ninja
     sync_dpdk
     build_l3fwd
     ;;
-  pktgen)
-    need git; need meson; need ninja
-    # ensure DPDK is already built/installed to ${DPDK_PREFIX}
-    if [ ! -f "${DPDK_PREFIX}/lib/pkgconfig/libdpdk.pc" ] && \
-       [ ! -f "${DPDK_PREFIX}/lib/x86_64-linux-gnu/pkgconfig/libdpdk.pc" ]; then
-      echo "DPDK not built at ${DPDK_PREFIX}. Run: make submodules"
-      exit 1
-    fi
-    sync_pktgen
-    reset_pktgen
-    apply_pktgen_patches
-    build_pktgen
-    ;;
-  pktgen-clean)
-    sync_pktgen
-    reset_pktgen
-    ;;
   clean)
-    # clean both submodules
     sync_dpdk
     reset_dpdk
     rm -rf "$DPDK_BUILD"
     sync_pktgen
     reset_pktgen
-    echo ">> cleaned: $DPDK_BUILD and $PKTGEN_BUILD"
+    rm -rf "$PKTGEN_BUILD"
+    sync_pcm
+    reset_pcm
+    rm -rf "$PCM_BUILD"
+    echo ">> Cleaned all build directories"
     ;;
   *)
-    echo "usage: $0 {build|pktgen|pktgen-clean|l3fwd|clean}"
+    echo "usage: $0 {build|l3fwd|clean}"
     exit 1
     ;;
 esac

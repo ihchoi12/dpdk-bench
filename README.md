@@ -1,220 +1,240 @@
-# DPDK bench using Pktgen-DPDK
+# DPDK Benchmark Suite
 
+High-performance network packet processing benchmark using DPDK, Pktgen, and Intel PCM.
 
+## Architecture
 
-## How to Run 
+This project uses custom forks of DPDK and Pktgen with modifications for performance monitoring and debugging:
 
-1) Clone this repository.
+- **DPDK fork**: https://github.com/ihchoi12/dpdk.git (branch: `autokernel`)
+- **Pktgen fork**: https://github.com/ihchoi12/Pktgen-DPDK.git (branch: `autokernel`)
+- **Common PCM wrapper**: Shared performance monitoring code in `common/pcm/`
 
-2) Install dependencies and perform machine setup.
+All customizations are committed directly to the `autokernel` branch in each fork.
+
+## Quick Start
+
+### 1. Install Dependencies
 
 ```bash
-# Update package list and install all dependencies
 sudo apt update && sudo apt install -y \
   meson ninja-build build-essential pkg-config git cmake \
   libnuma-dev libpcap-dev python3-pyelftools liblua5.3-dev \
   libibverbs-dev librdmacm-dev rdma-core ibverbs-providers libmlx5-1 \
-  libelf-dev libbsd-dev zlib1g-dev \
-  linux-tools-common linux-tools-generic linux-tools-$(uname -r)
+  libelf-dev libbsd-dev zlib1g-dev
+```
 
-# Perform machine setup (hugepages, MSR for PCM, etc.)
+### 2. Machine Setup
+
+Configure hugepages and enable MSR module for PCM monitoring:
+
+```bash
 sudo ./scripts/setup_machines.sh
 ```
 
-**Note on PCM monitoring:**
-- PCM (Performance Counter Monitor) requires MSR kernel module
-- The setup script automatically loads MSR module and disables NMI watchdog
-- If PCM still fails, verify with: `lsmod | grep msr` and `ls /dev/cpu/0/msr`
-
-3) Set up submodules (e.g., DPDK, SPDK, and rdma-core).
-
-```
-make submodules
-```
-
-**Building specific components:**
+**Verify PCM setup:**
 ```bash
-# Build only l3fwd (without rebuilding DPDK)
-make l3fwd
-
-# Clean and rebuild l3fwd
-make l3fwd-clean && make l3fwd
-
-# Build only pktgen
-make pktgen
+lsmod | grep msr           # Should show msr module loaded
+ls /dev/cpu/0/msr          # Should exist
 ```
 
-4) Run benchmarks
+### 3. Build All Components
 
-```bash
-# Run pktgen
-make run-pktgen
-
-# Run pktgen with lua script (automated)
-make run-pktgen-with-lua-script
-
-# Run multi-core TX rate benchmark (1-15 cores)
-make benchmark-multi-core-tx-rate
-
-# Run benchmarks with different port mapping modes
-make benchmark-combined      # [1-N].0 - All cores handle RX/TX
-make benchmark-split         # [1-N/2:N/2+1-N].0 - Split RX/TX (even cores only)
-
-# Compare port mapping modes and generate performance graph
-make compare-port-mappings   # Run both modes and show summary table
-make generate-performance-graph  # Create PNG bar chart comparison
-
-# Run l3fwd (layer 3 forwarding)
-make run-l3fwd
-
-# Run l3fwd on node8 for exactly 5 seconds and auto-terminate (remote execution)
-make run-l3fwd-timed
-
-# Run l3fwd multi-core benchmark (1-16 cores) on node8
-make benchmark-l3fwd-multi-core
-
-# Run integrated l3fwd vs pktgen RX/TX rate benchmark  
-make benchmark-l3fwd-vs-pktgen
-
-# Custom l3fwd vs pktgen testing with environment variables
-L3FWD_START_CORES=1 L3FWD_END_CORES=4 PKTGEN_DURATION=5 ./scripts/benchmark-l3fwd-vs-pktgen.sh
-
-# Custom l3fwd multi-core testing with environment variables
-L3FWD_DURATION=10 L3FWD_START_CORES=1 L3FWD_END_CORES=8 ./scripts/benchmark-l3fwd-multi-core.sh
-
-# Quick l3fwd test with specific core count
-L3FWD_DURATION=5 L3FWD_START_CORES=4 L3FWD_END_CORES=4 ./scripts/benchmark-l3fwd-multi-core.sh
-
-# Run l3fwd on node8 for custom duration (set L3FWD_DURATION environment variable)
-L3FWD_DURATION=10 make run-l3fwd-timed  # Run for 10 seconds on node8
-
-# Run l3fwd on different node (set L3FWD_NODE environment variable)
-L3FWD_NODE=node9 make run-l3fwd-timed   # Run on node9 instead of node8
-```
-
-**Multi-core TX Rate Benchmark:**
-- Tests TX rate performance across 1-15 CPU cores with retry logic
-- Results saved to `results/YYMMDD-HHMMSS-multi-core-tx-[mode].txt`
-- Format: `setup|TX_rate_in_Mpps`
-- Automatic handling of intermittent SEGFAULT errors (up to 3 retries)
-- Performance graph generation in PNG format
-
-**L3FWD Multi-core Benchmark:**
-- Tests Layer 3 forwarding performance across 1-16 CPU cores
-- Results saved to `results/YYMMDD-HHMMSS-l3fwd-multi-core.txt`
-- Format: `cores|status` (completed/failed)
-- Automatic multi-queue configuration: `(0,0,0),(0,1,1),...,(0,N,N)`
-- Remote execution on configurable target node (default: node8)
-- Retry logic with 3 attempts per core count
-- Environment variables: `L3FWD_DURATION`, `L3FWD_START_CORES`, `L3FWD_END_CORES`, `L3FWD_NODE`
-
-**L3FWD vs Pktgen RX/TX Rate Benchmark:**
-- Tests L3FWD forwarding performance with pktgen as traffic generator
-- Results saved to `results/YYMMDD-HHMMSS-l3fwd-vs-pktgen.txt`
-- Format: `pktgen_setup|l3fwd_setup|RX_rate|TX_rate`
-- Pktgen uses 4-core combined mode for stability
-- L3FWD runs on configurable target node (default: node8)
-- Environment variables: `L3FWD_START_CORES`, `L3FWD_END_CORES`, `PKTGEN_DURATION`, `L3FWD_NODE`
-
-**Port Mapping Modes:**
-- **combined**: `[1-N].0` - All cores handle both RX and TX processing
-- **split**: `[1-N/2:N/2+1-N].0` - Dedicated RX and TX cores (even cores only)
-
-**Performance Results (Example):**
-- Combined mode peak: ~144 Mpps at 8 cores
-- Split mode peak: ~132 Mpps at 14 cores  
-- Split efficiency: ~92% of combined mode at peak
-- **round_robin**: Load balancing `[1].0, [1,2].0, [1,2,3].0, ...`
-
-5) Configuration (optional)
-
-Edit `pktgen.config` to customize parameters like CPU cores, memory channels, and PCI addresses:
-
-```bash
-# Example configuration
-PKTGEN_LCORES=-l 0-14          # CPU cores for pktgen
-PKTGEN_PCI_ADDR=0000:31:00.1   # Network interface
-L3FWD_LCORES=-l 0-2            # CPU cores for l3fwd
-```
-
-## Using AMD Solarflare NICs (SFC9120)
-
-AMD Solarflare NICs require additional setup steps to work with DPDK:
-
-**1. Identify and bind NIC to DPDK driver:**
-```bash
-# Check available NICs
-lspci | grep -i ethernet
-
-# Check current driver binding
-sudo ./dpdk/usertools/dpdk-devbind.py --status
-
-# Bring down interface and bind to DPDK (replace PCI address as needed)
-sudo ip link set enp3s0f0np0 down
-sudo modprobe uio_pci_generic
-sudo ./dpdk/usertools/dpdk-devbind.py --bind=uio_pci_generic 0000:03:00.0
-
-# Verify binding
-sudo ./dpdk/usertools/dpdk-devbind.py --status | grep -A 2 "DPDK-compatible"
-```
-
-**2. Enable SFC driver in DPDK build:**
-
-Edit `build/init_submodules.sh` and remove `net/sfc` from `DISABLE_DRIVERS` list (line 18):
-```bash
-# Before: ...net/qede,net/sfc,net/softnic...
-# After:  ...net/qede,net/softnic...
-```
-
-**3. Rebuild DPDK and Pktgen:**
 ```bash
 make submodules
 ```
 
-**4. Verify setup:**
+This builds:
+- Intel PCM library
+- DPDK with L3FWD example
+- Pktgen-DPDK
+
+**Debug build (with TX/RX logging):**
+```bash
+make submodules-debug
+```
+
+### 4. Run Pktgen
+
 ```bash
 make run-pktgen-with-lua-script
 ```
 
-Expected output should show:
+## Development Workflow
+
+### Initial Build
+
+```bash
+git clone <this-repo>
+cd dpdk-bench
+make submodules
 ```
-PMD: sfc_efx 0000:03:00.0 #0: running FW variant is ultra-low-latency
-PMD: sfc_efx 0000:03:00.0 #0: use ef10 Rx datapath
-PMD: sfc_efx 0000:03:00.0 #0: use ef10 Tx datapath
+
+### Incremental Rebuilds
+
+After modifying source files in submodules:
+
+```bash
+# Rebuild only L3FWD
+make l3fwd-rebuild
+
+# Rebuild only Pktgen
+make pktgen-rebuild
 ```
 
-References:
-- https://developer.arm.com/documentation/109701/1-0/Example-for-Multi-core-scenario
-- https://fast.dpdk.org/doc/perf/DPDK_20_11_Mellanox_NIC_performance_report.pdf
-- https://github.com/intel/pcm
+### Modifying DPDK or Pktgen
 
+Changes are committed directly to fork branches:
 
+```bash
+# Example: Modifying DPDK
+cd dpdk
+git checkout autokernel      # Ensure on autokernel branch
+# ... make your changes ...
+git add <files>
+git commit -m "Your change description"
+git push fork autokernel
 
+# Example: Modifying Pktgen
+cd Pktgen-DPDK
+git checkout autokernel
+# ... make your changes ...
+git add <files>
+git commit -m "Your change description"
+git push fork autokernel
+```
 
-# Parameters
-- TX/RX_DESC_DEFAULT: the size of descriptor ring
-  - Smaller: 
-    - [+] lower memory usage, higher cache efficiency
-    - [-] more packet drops (ring full)
-  - Bigger:
-    - [+] less packet drops (better burst handling)
-    - [-] more memory usage, bigger latency (queueing delay)
-- Hardware RX Drops:  NIC RX pkt, but cannot DMA, so drops it
-  - pkt flow: network -> physical port -> NIC HW (RX queue with 8192 entries) -> SW RX ring -> application
-    - rx_phy_discard_packets: drops at physical port
-    - rx_missed_errors: drops at NIC RX queue  
-  - type 1) RX Missed: RX ring (descriptor: pointer to mbuf entry) is full  
-    - Reasons:
-      - slow CPU or application processing
-      - small RX ring
-      - insufficient memory BW (=> bottleneck SW pkt processing => RX ring full)
-  - type 2) RX No MBuf: mbuf (actual pkt data buffer) is full
+**Important:** Always work on the `autokernel` branch, not `main`.
 
+## Configuration
 
+Edit `pktgen.config` to customize:
 
+```bash
+# CPU cores
+PKTGEN_LCORES=-l 0-14
+L3FWD_LCORES=-l 0-2
 
+# Network interfaces
+PKTGEN_PCI_ADDR=0000:31:00.1
+L3FWD_PCI_ADDR=0000:31:00.1
 
+# Memory
+PKTGEN_MEMORY_CHANNELS=4
+```
 
+## Hardware Setup
 
+### Mellanox ConnectX-5 NICs
 
-Q. Why rx_missed_errors != (Hardware RX Packets) - (pktgen RX total)?
+Works out of the box with MLX5 PMD (included in DPDK).
+
+### AMD Solarflare NICs (SFC9120)
+
+1. **Identify NIC:**
+   ```bash
+   lspci | grep -i ethernet
+   sudo ./dpdk/usertools/dpdk-devbind.py --status
+   ```
+
+2. **Enable SFC driver:**
+
+   Edit `build/init_submodules.sh` line 18, remove `net/sfc` from `DISABLE_DRIVERS`:
+   ```bash
+   # Before: ...net/qede,net/sfc,net/softnic...
+   # After:  ...net/qede,net/softnic...
+   ```
+
+3. **Bind NIC to DPDK:**
+   ```bash
+   sudo ip link set <interface> down
+   sudo modprobe uio_pci_generic
+   sudo ./dpdk/usertools/dpdk-devbind.py --bind=uio_pci_generic <pci_address>
+   ```
+
+4. **Rebuild:**
+   ```bash
+   make clean
+   make submodules
+   ```
+
+## Performance Monitoring
+
+This suite integrates Intel PCM for hardware performance counters:
+
+- **L2/L3 cache hits/misses**
+- **DRAM bandwidth** (read/write MB/s)
+- **PCIe bandwidth** (read/write MB/s)
+- **Instructions per cycle (IPC)**
+
+Metrics are automatically collected during L3FWD runs and logged with packet statistics.
+
+## Troubleshooting
+
+### Build fails with "libdpdk not found"
+
+Ensure PKG_CONFIG_PATH is set:
+```bash
+export PKG_CONFIG_PATH="/path/to/dpdk/build/lib/pkgconfig:${PKG_CONFIG_PATH}"
+```
+
+### PCM fails with "Access to Intel PCM denied"
+
+```bash
+# Verify MSR module
+sudo modprobe msr
+lsmod | grep msr
+
+# Check permissions
+ls -l /dev/cpu/0/msr
+```
+
+### Pktgen shows 0 TX rate
+
+Check:
+1. NIC is bound to DPDK driver
+2. PCI address in `pktgen.config` is correct
+3. Hugepages are configured (`grep Huge /proc/meminfo`)
+
+## Project Structure
+
+```
+dpdk-bench/
+├── dpdk/                   # DPDK submodule (fork)
+├── Pktgen-DPDK/           # Pktgen submodule (fork)
+├── pcm/                   # Intel PCM submodule
+├── common/
+│   └── pcm/               # Shared PCM wrapper (C/C++)
+├── scripts/               # Run and benchmark scripts
+├── build/
+│   └── init_submodules.sh # Build orchestration
+├── Makefile               # Main build targets
+├── pktgen.config          # Runtime configuration
+└── README.md
+```
+
+## Key DPDK Parameters
+
+### TX/RX Descriptor Ring Size
+
+Configured in application code (not runtime):
+- **Smaller rings** (512-1024): Lower latency, higher cache efficiency, may drop packets under load
+- **Larger rings** (2048-4096): Better burst handling, higher memory usage
+
+### Hardware RX Drops
+
+Monitor with `ethtool -S <interface>`:
+- `rx_missed_errors`: NIC RX queue full (SW processing too slow)
+- `rx_no_mbuf_errors`: Mempool exhausted
+
+Tune by:
+1. Increasing RX ring size
+2. Adding more cores
+3. Reducing packet processing complexity
+
+## References
+
+- [DPDK Documentation](https://doc.dpdk.org/)
+- [Pktgen-DPDK Guide](https://pktgen-dpdk.readthedocs.io/)
+- [Intel PCM](https://github.com/intel/pcm)
+- [DPDK Performance Report](https://fast.dpdk.org/doc/perf/DPDK_20_11_Mellanox_NIC_performance_report.pdf)
