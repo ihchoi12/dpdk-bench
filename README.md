@@ -17,9 +17,14 @@ sudo apt update && sudo apt install -y \
   libelf-dev libbsd-dev zlib1g-dev \
   linux-tools-common linux-tools-generic linux-tools-$(uname -r)
 
-# Perform machine setup (hugepages, etc.)
+# Perform machine setup (hugepages, MSR for PCM, etc.)
 sudo ./scripts/setup_machines.sh
 ```
+
+**Note on PCM monitoring:**
+- PCM (Performance Counter Monitor) requires MSR kernel module
+- The setup script automatically loads MSR module and disables NMI watchdog
+- If PCM still fails, verify with: `lsmod | grep msr` and `ls /dev/cpu/0/msr`
 
 3) Set up submodules (e.g., DPDK, SPDK, and rdma-core).
 
