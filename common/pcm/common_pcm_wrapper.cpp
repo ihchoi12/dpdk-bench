@@ -483,6 +483,20 @@ int pcm_wrapper_get_system_info(char* info_buffer, size_t buffer_size) {
     }
 }
 
+// PCIe measurement using CHA PMU counters - EXACTLY like pcm-pcie
+// Haswell (Grantley) requires each event in a SEPARATE group due to CHA PMU limitations
+// We measure ALL 5 events in ONE call, cycling through groups quickly (like pcm-pcie)
+
+// Event groups - each contains only ONE event (Haswell CHA PMU limitation)
+static const uint64_t PCIE_GROUP0_EVENT = 0x19e00000;  // PCIRdCur_total
+static const uint64_t PCIE_GROUP1_EVENT = 0x18020000;  // RFO_total
+static const uint64_t PCIE_GROUP2_EVENT = 0x18100000;  // CRd_total
+static const uint64_t PCIE_GROUP3_EVENT = 0x18200000;  // DRd_total
+static const uint64_t PCIE_GROUP4_EVENT = 0x1c820000;  // ItoM_total
+
+static const int NUM_PCIE_GROUPS = 5;
+static const int PCIE_GROUP_DELAY_MS = 200;  // 200ms per group = 1 second total
+
 int pcm_wrapper_get_instant_pcie_bytes(uint32_t socket_id, uint64_t *pcie_read_bytes, uint64_t *pcie_write_bytes) {
     if (!g_initialized || !g_pcm_instance) {
         return -1;
@@ -492,49 +506,67 @@ int pcm_wrapper_get_instant_pcie_bytes(uint32_t socket_id, uint64_t *pcie_read_b
         return -1;
     }
 
-    if (socket_id >= g_pcm_instance->getNumSockets()) {
+    const uint32_t num_sockets = g_pcm_instance->getNumSockets();
+    if (socket_id >= num_sockets) {
         return -1;
     }
 
     try {
-        // Get instant snapshot of system counter state
-        SystemCounterState current_state = getSystemCounterState();
+        // Array to store event deltas for this measurement cycle
+        uint64_t event_deltas[NUM_PCIE_GROUPS] = {0};
 
-        // Sum up all QPI/PCIe links for this specific socket only
-        uint64_t total_incoming = 0;
-        uint64_t total_outgoing = 0;
+        // List of events to measure
+        const uint64_t* events[NUM_PCIE_GROUPS] = {
+            &PCIE_GROUP0_EVENT,
+            &PCIE_GROUP1_EVENT,
+            &PCIE_GROUP2_EVENT,
+            &PCIE_GROUP3_EVENT,
+            &PCIE_GROUP4_EVENT
+        };
 
-        // Get number of QPI ports for this socket
-        uint32_t num_qpi_ports = g_pcm_instance->getQPILinksPerSocket();
+        // Measure all 5 event groups sequentially (like pcm-pcie does)
+        for (int group_id = 0; group_id < NUM_PCIE_GROUPS; ++group_id) {
+            // Program this group's event
+            eventGroup_t eventGroup(events[group_id], events[group_id] + 1);
+            g_pcm_instance->programPCIeEventGroup(eventGroup);
 
-        // Sum incoming bytes across all links for this socket
-        for (uint32_t link = 0; link < num_qpi_ports; ++link) {
-            total_incoming += getIncomingQPILinkBytes(socket_id, link, current_state);
+            // Read BEFORE counter
+            uint64_t before = g_pcm_instance->getPCIeCounterData(socket_id, 0);
+
+            // Wait for the event to accumulate (200ms per group)
+            usleep(PCIE_GROUP_DELAY_MS * 1000);
+
+            // Read AFTER counter
+            uint64_t after = g_pcm_instance->getPCIeCounterData(socket_id, 0);
+
+            // Calculate delta for this group
+            event_deltas[group_id] = after - before;
         }
 
-        // For outgoing bytes, we need before/after states
-        if (g_measurement_active) {
-            // Sum outgoing bytes across all links for this socket
-            for (uint32_t link = 0; link < num_qpi_ports; ++link) {
-                total_outgoing += getOutgoingQPILinkBytes(socket_id, link, g_before_system_state, current_state);
-            }
-        } else {
-            // If no measurement active, use zero baseline
-            SystemCounterState zero_state = SystemCounterState();
-            for (uint32_t link = 0; link < num_qpi_ports; ++link) {
-                total_outgoing += getOutgoingQPILinkBytes(socket_id, link, zero_state, current_state);
-            }
-        }
+        // Apply scaling factor: multiply by NUM_PCIE_GROUPS (5)
+        // because each event was only measured for 1/5 of the total time
+        uint64_t PCIRdCur = event_deltas[0] * NUM_PCIE_GROUPS;
+        uint64_t RFO      = event_deltas[1] * NUM_PCIE_GROUPS;
+        uint64_t CRd      = event_deltas[2] * NUM_PCIE_GROUPS;
+        uint64_t DRd      = event_deltas[3] * NUM_PCIE_GROUPS;
+        uint64_t ItoM     = event_deltas[4] * NUM_PCIE_GROUPS;
 
-        *pcie_read_bytes = total_incoming;
-        *pcie_write_bytes = total_outgoing;
+        // Formula from pcm-pcie GrantleyPlatform:
+        // Read  = (PCIRdCur + RFO + CRd + DRd) × 64
+        // Write = (RFO + ItoM) × 64
+        uint64_t read_events  = PCIRdCur + RFO + CRd + DRd;
+        uint64_t write_events = RFO + ItoM;
+
+        *pcie_read_bytes  = read_events * 64ULL;
+        *pcie_write_bytes = write_events * 64ULL;
 
         return 0;
+
     } catch (const std::exception& e) {
-        PCM_LOG(PCM_LOG_ERROR, "Exception getting instant PCIe bytes for socket %u: %s", socket_id, e.what());
+        PCM_LOG(PCM_LOG_ERROR, "Exception getting PCIe bytes for socket %u: %s", socket_id, e.what());
         return -1;
     } catch (...) {
-        PCM_LOG(PCM_LOG_ERROR, "Unknown error getting instant PCIe bytes for socket %u", socket_id);
+        PCM_LOG(PCM_LOG_ERROR, "Unknown error getting PCIe bytes for socket %u", socket_id);
         return -1;
     }
 }
