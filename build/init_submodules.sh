@@ -49,9 +49,10 @@ need() { command -v "$1" >/dev/null || { echo "Missing dependency: $1"; exit 1; 
 sync_dpdk() {
   git submodule update --init --recursive "$DPDK_DIR"
   # Checkout autokernel branch if exists (avoid detached HEAD)
-  if git -C "$DPDK_DIR" rev-parse --verify autokernel >/dev/null 2>&1; then
+  if git -C "$DPDK_DIR" rev-parse --verify origin/autokernel >/dev/null 2>&1; then
     echo ">> checking out autokernel branch in $DPDK_DIR"
-    git -C "$DPDK_DIR" checkout autokernel
+    # Create local branch tracking origin/autokernel if it doesn't exist
+    git -C "$DPDK_DIR" checkout -B autokernel origin/autokernel
   fi
 }
 
@@ -138,9 +139,10 @@ build_l3fwd() {
 sync_pktgen() {
   git submodule update --init --recursive "$PKTGEN_DIR"
   # Checkout autokernel branch if exists (avoid detached HEAD)
-  if git -C "$PKTGEN_DIR" rev-parse --verify autokernel >/dev/null 2>&1; then
+  if git -C "$PKTGEN_DIR" rev-parse --verify origin/autokernel >/dev/null 2>&1; then
     echo ">> checking out autokernel branch in $PKTGEN_DIR"
-    git -C "$PKTGEN_DIR" checkout autokernel
+    # Create local branch tracking origin/autokernel if it doesn't exist
+    git -C "$PKTGEN_DIR" checkout -B autokernel origin/autokernel
   fi
 }
 
