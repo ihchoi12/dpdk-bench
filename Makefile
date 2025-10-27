@@ -41,7 +41,11 @@ pktgen-rebuild:
 # Run targets
 # ========================================================================
 
-.PHONY: run-pktgen-with-lua-script
+.PHONY: run-pktgen-with-lua-script monitor-ddio-perf
 
 run-pktgen-with-lua-script:
 	@./scripts/run-pktgen-with-lua-script.sh
+
+monitor-ddio-perf:
+	@echo ">> Starting DDIO monitoring with perf..."
+	@sudo ./scripts/monitor-ddio-perf.sh
