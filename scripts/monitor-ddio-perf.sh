@@ -100,6 +100,36 @@ if ! command -v perf &> /dev/null; then
     exit 1
 fi
 
+# Create output file with proper permissions
+# If running as root via sudo, create file as the original user
+if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+    # Get the original user's UID and GID
+    REAL_UID=$(id -u "$SUDO_USER")
+    REAL_GID=$(id -g "$SUDO_USER")
+
+    # If OUTPUT_FILE is relative path, prepend PWD
+    if [[ "$OUTPUT_FILE" != /* ]]; then
+        OUTPUT_FILE="$PWD/$OUTPUT_FILE"
+    fi
+
+    # Create file as the original user using su
+    if ! su -c "touch '$OUTPUT_FILE'" "$SUDO_USER" 2>/dev/null; then
+        echo -e "${RED}ERROR: Cannot create output file $OUTPUT_FILE${NC}"
+        echo "Please check directory permissions or specify a different output path with -o"
+        exit 1
+    fi
+
+    # Make it writable by all so root can write to it later
+    chmod 666 "$OUTPUT_FILE" 2>/dev/null || true
+else
+    # Not running as root, create normally
+    if ! touch "$OUTPUT_FILE" 2>/dev/null; then
+        echo -e "${RED}ERROR: Cannot create output file $OUTPUT_FILE${NC}"
+        echo "Please check directory permissions or specify a different output path with -o"
+        exit 1
+    fi
+fi
+
 # Build perf command
 # Note: perf stat outputs to stderr, so we need to redirect 2> instead of -o
 if [ -n "$PID" ]; then
@@ -154,7 +184,12 @@ cleanup() {
         echo -e "${GREEN}Processing results to CSV format...${NC}"
 
         # Create CSV with header
-        echo "timestamp_sec,pcie_read_misses,pcie_write_misses,pcie_read_refs,pcie_write_refs,ddio_misses,pcie_miss_rate" > "$OUTPUT_FILE"
+        # Use su to write as original user if running via sudo
+        if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+            su -c "echo 'timestamp_sec,pcie_read_misses,pcie_write_misses,pcie_read_refs,pcie_write_refs,ddio_misses,pcie_miss_rate' > '$OUTPUT_FILE'" "$SUDO_USER"
+        else
+            echo "timestamp_sec,pcie_read_misses,pcie_write_misses,pcie_read_refs,pcie_write_refs,ddio_misses,pcie_miss_rate" > "$OUTPUT_FILE"
+        fi
 
         # Parse perf output
         # CSV Format: timestamp,value,unit,event,runtime,percentage,,
@@ -207,7 +242,15 @@ cleanup() {
             }
             print "# Total samples: " sample_count > "/dev/stderr"
         }
-        ' "$RAW_OUTPUT" >> "$OUTPUT_FILE"
+        ' "$RAW_OUTPUT" > /tmp/ddio-parsed-output.tmp
+
+        # Append parsed data to output file
+        if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+            su -c "cat /tmp/ddio-parsed-output.tmp >> '$OUTPUT_FILE'" "$SUDO_USER"
+        else
+            cat /tmp/ddio-parsed-output.tmp >> "$OUTPUT_FILE"
+        fi
+        rm -f /tmp/ddio-parsed-output.tmp
 
         # Show summary
         SAMPLE_COUNT=$(tail -n +2 "$OUTPUT_FILE" | wc -l)
@@ -215,6 +258,12 @@ cleanup() {
         echo -e "${GREEN}=== Monitoring Complete ===${NC}"
         echo "Samples collected: $SAMPLE_COUNT"
         echo "Output saved to: $OUTPUT_FILE"
+
+        # If running as root and SUDO_USER exists, change file ownership to the real user
+        if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+            chown "$SUDO_USER:$(id -gn $SUDO_USER)" "$OUTPUT_FILE" 2>/dev/null || true
+        fi
+
         echo ""
         echo "All samples (CSV format):"
         cat "$OUTPUT_FILE"
