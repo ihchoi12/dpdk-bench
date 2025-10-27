@@ -10,7 +10,10 @@ SOCKET=0
 # System: 2 sockets, 8 cores per socket, 2 threads per core
 CORES="0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30"  # Socket 0 cores
 INTERVAL=1000  # 1 second in milliseconds
-OUTPUT_FILE="pktgen-perf-ddio.log"
+# Use absolute path for output file (created in Pktgen-DPDK directory like other logs)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+OUTPUT_FILE="${PROJECT_ROOT}/Pktgen-DPDK/pktgen-perf-ddio.log"
 RAW_OUTPUT="/tmp/pktgen-perf-ddio-raw.log"
 
 # DDIO-related events
@@ -29,7 +32,7 @@ usage() {
     echo "  -d DURATION    Duration in seconds (default: run until Ctrl+C)"
     echo "  -s SOCKET      Socket to monitor: 0 or 1 (default: 0)"
     echo "  -c CORES       Core list (default: auto-detect based on socket)"
-    echo "  -o OUTPUT      Output file (default: pktgen-perf-ddio.log)"
+    echo "  -o OUTPUT      Output file (default: Pktgen-DPDK/pktgen-perf-ddio.log)"
     echo "  -p PID         Attach to specific process PID"
     echo ""
     echo "System info:"
@@ -183,12 +186,27 @@ cleanup() {
     if [ -f "$RAW_OUTPUT" ]; then
         echo -e "${GREEN}Processing results to CSV format...${NC}"
 
+        # Create output directory if it doesn't exist
+        OUTPUT_DIR=$(dirname "$OUTPUT_FILE")
+        if [ ! -d "$OUTPUT_DIR" ]; then
+            echo -e "${RED}ERROR: Output directory does not exist: $OUTPUT_DIR${NC}"
+            echo "Please ensure Pktgen-DPDK directory exists"
+            return 1
+        fi
+
         # Create CSV with header
         # Use su to write as original user if running via sudo
         if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
-            su -c "echo 'timestamp_sec,pcie_read_misses,pcie_write_misses,pcie_read_refs,pcie_write_refs,ddio_misses,pcie_miss_rate' > '$OUTPUT_FILE'" "$SUDO_USER"
+            su -c "echo 'timestamp_sec,pcie_read_misses,pcie_write_misses,pcie_read_refs,pcie_write_refs,ddio_misses,pcie_miss_rate' > '$OUTPUT_FILE'" "$SUDO_USER" 2>/dev/null
         else
-            echo "timestamp_sec,pcie_read_misses,pcie_write_misses,pcie_read_refs,pcie_write_refs,ddio_misses,pcie_miss_rate" > "$OUTPUT_FILE"
+            echo "timestamp_sec,pcie_read_misses,pcie_write_misses,pcie_read_refs,pcie_write_refs,ddio_misses,pcie_miss_rate" > "$OUTPUT_FILE" 2>/dev/null
+        fi
+
+        # Check if file creation succeeded
+        if [ ! -f "$OUTPUT_FILE" ]; then
+            echo -e "${RED}ERROR: Cannot create output file $OUTPUT_FILE${NC}"
+            echo "Please check directory permissions or specify a different output path with -o"
+            return 1
         fi
 
         # Parse perf output
