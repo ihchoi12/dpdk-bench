@@ -497,7 +497,7 @@ static const uint64_t PCIE_GROUP4_EVENT = 0x1c820000;  // ItoM_total
 static const int NUM_PCIE_GROUPS = 5;
 static const int PCIE_GROUP_DELAY_MS = 200;  // 200ms per group = 1 second total
 
-int pcm_wrapper_get_instant_pcie_bytes(uint32_t socket_id, uint64_t *pcie_read_bytes, uint64_t *pcie_write_bytes) {
+int pcm_wrapper_get_instant_pcie_bytes(uint32_t socket_id, uint64_t *pcie_read_bytes, uint64_t *pcie_write_bytes, uint64_t *pci_rdcur) {
     if (!g_initialized || !g_pcm_instance) {
         return -1;
     }
@@ -559,6 +559,11 @@ int pcm_wrapper_get_instant_pcie_bytes(uint32_t socket_id, uint64_t *pcie_read_b
 
         *pcie_read_bytes  = read_events * 64ULL;
         *pcie_write_bytes = write_events * 64ULL;
+
+        // Return PCIRdCur counter if requested
+        if (pci_rdcur) {
+            *pci_rdcur = PCIRdCur;
+        }
 
         return 0;
 

@@ -195,9 +195,10 @@ int pcm_wrapper_has_pcie_counters(void);
  * @param socket_id Socket ID to get counters for
  * @param pcie_read_bytes Pointer to store PCIe read bytes
  * @param pcie_write_bytes Pointer to store PCIe write bytes
+ * @param pci_rdcur Pointer to store PCIRdCur counter (can be NULL if not needed)
  * @return 0 on success, negative on error
  */
-int pcm_wrapper_get_instant_pcie_bytes(uint32_t socket_id, uint64_t *pcie_read_bytes, uint64_t *pcie_write_bytes);
+int pcm_wrapper_get_instant_pcie_bytes(uint32_t socket_id, uint64_t *pcie_read_bytes, uint64_t *pcie_write_bytes, uint64_t *pci_rdcur);
 
 #ifdef __cplusplus
 }
