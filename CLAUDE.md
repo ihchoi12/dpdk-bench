@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git Commit Policy
+
+**IMPORTANT**: When creating git commits in this repository:
+- **Author**: Only `ihchoi12` should appear as the commit author
+- **Co-Author**: Do NOT include Claude as Co-Authored-By
+- **Commit message format**: Simple, clear description without AI attribution
+- **Examples**:
+  ```
+  # ✓ CORRECT
+  git commit -m "Add PCM disable functionality via DISABLE_PCM env var"
+
+  # ✗ INCORRECT - Do not include:
+  git commit -m "Add feature
+
+  Co-Authored-By: Claude <noreply@anthropic.com>"
+  ```
+
+This ensures all commits appear as authored solely by ihchoi12.
+
 ## Overview
 
 This is a DPDK (Data Plane Development Kit) benchmarking suite that tests network packet processing performance using two key applications:

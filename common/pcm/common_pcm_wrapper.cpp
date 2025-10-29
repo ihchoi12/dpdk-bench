@@ -53,7 +53,20 @@ static inline bool is_valid_value(double val, double min, double max) {
 }
 
 int pcm_wrapper_is_available(void) {
-    return 1;  // Statically linked, always available
+    /* Check if PCM is disabled via DISABLE_PCM environment variable */
+    static int cached_result = -1;
+
+    if (cached_result == -1) {
+        const char* disable_pcm = getenv("DISABLE_PCM");
+        if (disable_pcm && (strcmp(disable_pcm, "1") == 0 || strcasecmp(disable_pcm, "true") == 0)) {
+            printf("PCM monitoring disabled by DISABLE_PCM environment variable\n");
+            cached_result = 0;
+        } else {
+            cached_result = 1;  // Statically linked, available
+        }
+    }
+
+    return cached_result;
 }
 
 void pcm_wrapper_set_log_level(pcm_log_level_t level) {
@@ -62,6 +75,11 @@ void pcm_wrapper_set_log_level(pcm_log_level_t level) {
 }
 
 int pcm_wrapper_init(void) {
+    // Check if PCM is disabled via DISABLE_PCM environment variable
+    if (!pcm_wrapper_is_available()) {
+        return -1;  // PCM disabled, do not initialize
+    }
+
     if (g_initialized) {
         PCM_LOG(PCM_LOG_WARNING, "Already initialized");
         return 0;

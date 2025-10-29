@@ -59,6 +59,7 @@ cd "${REPO_ROOT}/Pktgen-DPDK"
 sudo bash -lc "LD_LIBRARY_PATH='${LD_LIBRARY_PATH}' \
   PKG_CONFIG_PATH='${PKG_CONFIG_PATH}' \
   PCIE_LOG_ENABLE='${PCIE_LOG_ENABLE:-0}' \
+  DISABLE_PCM='${DISABLE_PCM:-0}' \
   exec '${PKTGEN_BIN}' \
   ${LCORES} ${MEMCH} ${PROC_TYPE} --file-prefix '${FILE_PREFIX}' --allow='${PCI_ADDR}' \
   -- ${APP_ARGS} -m '${PORTMAP}' -f '${SCRIPT_REL_PATH}'"

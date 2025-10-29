@@ -123,6 +123,33 @@ L3FWD_PCI_ADDR=0000:31:00.1
 PKTGEN_MEMORY_CHANNELS=4
 ```
 
+## Performance Monitoring (Intel PCM)
+
+Intel PCM (Performance Counter Monitor) is integrated for hardware-level performance monitoring. PCM tracks CPU cache hits/misses, memory bandwidth, PCIe bandwidth, and other low-level metrics.
+
+### Disabling PCM
+
+To disable PCM monitoring and eliminate all performance counter overhead, set the `DISABLE_PCM` environment variable:
+
+```bash
+# Disable PCM for a single run
+DISABLE_PCM=1 make run-pktgen-with-lua-script
+
+# Disable PCM globally in your shell session
+export DISABLE_PCM=1
+make run-pktgen-with-lua-script
+```
+
+**When PCM is disabled:**
+- No performance counter reads occur (zero overhead)
+- All PCM initialization and measurement functions return immediately
+- PCM library logs may still appear during startup (these are harmless)
+
+**Use cases for disabling PCM:**
+- Maximum packet processing performance (no measurement overhead)
+- Running on systems without MSR access
+- Comparing performance with and without monitoring
+
 ## Hardware Setup
 
 ### Mellanox ConnectX-5 NICs
