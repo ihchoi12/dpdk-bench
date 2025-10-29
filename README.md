@@ -187,6 +187,8 @@ Works out of the box with MLX5 PMD (included in DPDK).
 
 ## Performance Monitoring
 
+### Intel PCM
+
 This suite integrates Intel PCM for hardware performance counters:
 
 - **L2/L3 cache hits/misses**
@@ -195,6 +197,20 @@ This suite integrates Intel PCM for hardware performance counters:
 - **Instructions per cycle (IPC)**
 
 Metrics are automatically collected during L3FWD runs and logged with packet statistics.
+
+### NeoHost Profiling Tool
+
+NeoHost provides device-level performance counter analysis for network interfaces:
+
+```bash
+# Run NeoHost profiling (replace device UID as needed)
+sudo /homes/friedj/neohost/miniconda3/envs/py27/bin/python \
+  /homes/friedj/neohost/sdk/opt/neohost/sdk/get_device_performance_counters.py \
+  --dev-uid=0000:31:00.0 \
+  --get-analysis \
+  --run-loop
+
+**Note:** Switch `--dev-uid` parameter based on which NIC port you are using (0000:31:00.0 or 0000:31:00.1).
 
 ## Troubleshooting
 
