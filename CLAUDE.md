@@ -285,3 +285,63 @@ tail -f results/*.l3fwd  # View debug output
 - SEGFAULT errors can occur intermittently (hardware/driver related)
 - Benchmark scripts include retry logic (up to 3 attempts per configuration)
 - Always cleanup DPDK resources between test runs
+
+## Research Goal: Adaptive DPDK Tuning with ML
+
+### Core Idea
+Build an adaptive system that dynamically tunes DPDK parameters to optimize performance under changing conditions (workloads, hardware contention, network patterns).
+
+### Two-Tier Architecture
+
+**Data Plane (Fast Path):**
+- Decision tree (DT) or symbolic expression (SE) for μs-scale decisions
+- Extracted via knowledge distillation from pre-trained RL model
+- Handles known/confident cases with minimal overhead
+
+**Control Plane (Slow Path):**
+- Background RL training on observed system metrics
+- Continuous learning from runtime data
+- Periodic distillation to update data plane DT/SE
+
+### Key Challenges Addressed
+
+1. **μs-scale Latency Requirement**: Direct ML inference (ms-level) too slow for DPDK critical path
+2. **Complex Parameter Space**: Simple heuristics insufficient; counter-intuitive patterns exist (e.g., "high LLC miss → smaller descriptor better" for cache thrashing prevention)
+3. **Dynamic Environments**: New workloads/hardware require continuous adaptation; pre-defined rules cannot cover all cases
+
+### Workflow
+
+1. System monitors hardware metrics (PCIe BW, LLC miss, packet rate, etc.)
+2. **Known conditions**: Fast path uses distilled DT/SE for immediate tuning
+3. **Unknown conditions**: Detected via confidence/novelty detection → apply safe default → log to control plane for learning
+4. Control plane periodically re-trains RL model and updates DT/SE via distillation
+
+### Critical Design Decisions
+
+**Novelty Detection:**
+- Confidence threshold on DT predictions or distance metric in state space
+- Conservative approach: low confidence → fallback to safe default
+
+**Safe Default:**
+- Pre-characterized conservative configuration (e.g., static best-average config)
+- Ensures performance never drops below baseline during exploration
+
+**Update Protocol:**
+- Atomic swap of DT/SE to avoid inconsistency
+- Validation period before deploying new distilled model
+
+**Baseline Comparison:**
+- Must empirically show "nearest neighbor in lookup table" causes performance degradation
+- Demonstrate non-linear decision boundaries require learned models
+
+### Experimental Validation Needed
+
+1. Characterization study: measure performance variation across 50+ workload/config combinations
+2. Simple baseline comparison: static config, rule-based, lookup table, linear model
+3. Quantify ML benefit: improvement over best simple baseline (target: >30%)
+4. Show counter-intuitive patterns discovered by ML
+5. Convergence analysis: time to adapt to new conditions, sample complexity
+
+### Target Venue
+- **Primary**: NSDI (networking systems focus)
+- **Secondary**: OSDI (if broader OS insights emerge)
