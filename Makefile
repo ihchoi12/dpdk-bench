@@ -20,6 +20,10 @@ submodules-debug:
 	@echo ">> Building with TX/RX debug enabled..."
 	@RTE_LIBRTE_ETHDEV_DEBUG=1 bash $(BUILD_DIR)/init_submodules.sh build
 
+submodules-ak:
+	@echo ">> Building with AK queue depth tracking enabled..."
+	@AK_ENABLE_QUEUE_DEPTH_TRACKING=1 bash $(BUILD_DIR)/init_submodules.sh build
+
 clean:
 	@bash $(BUILD_DIR)/init_submodules.sh clean
 

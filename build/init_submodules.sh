@@ -14,6 +14,14 @@ DPDK_BUILD="${DPDK_BUILD:-$DPDK_DIR/build}"
 DPDK_PREFIX="${DPDK_PREFIX:-${REPO_ROOT}/${DPDK_BUILD}}"
 DPDK_MESON_FLAGS="${DPDK_MESON_FLAGS:--Dtests=false -Denable_kmods=false -Dexamples=l3fwd}"
 
+# AK: Queue depth tracking feature flag
+if [ "${AK_ENABLE_QUEUE_DEPTH_TRACKING:-0}" = "1" ]; then
+    AK_CFLAGS="-DAK_ENABLE_QUEUE_DEPTH_TRACKING"
+    echo ">> AK: Queue depth tracking ENABLED"
+else
+    AK_CFLAGS=""
+fi
+
 # Disable most drivers to keep build small; keep mlx5
 DISABLE_DRIVERS="${DISABLE_DRIVERS:-crypto/*,raw/*,baseband/*,dma/*,net/af_packet,net/af_xdp,net/ark,net/atlantic,net/avp,net/axgbe,net/bnx2x,net/bnxt,net/bonding,net/cnxk,net/cxgbe,net/dpaa,net/dpaa2,net/e1000,net/ena,net/enetc,net/enetfec,net/enic,net/fm10k,net/hinic,net/hns3,net/iavf,net/ice,net/igc,net/ionic,net/ipn3ke,net/kni,net/liquidio,net/memif,net/mlx4,net/mvneta,net/mvpp2,net/nfb,net/nfp,net/ngbe,net/octeontx,net/octeontx_ep,net/pcap,net/pfe,net/qede,net/softnic,net/thunderx,net/txgbe,net/vdev_netvsc,net/vhost,net/virtio,net/vmxnet3}"
 
@@ -72,6 +80,11 @@ build_dpdk() {
   if [ "${RTE_LIBRTE_ETHDEV_DEBUG:-}" = "1" ]; then
     DEBUG_CFLAGS="${DEBUG_CFLAGS} -DRTE_LIBRTE_ETHDEV_DEBUG"
     echo ">> ETHDEV debug enabled (TX + RX)"
+  fi
+
+  # AK: Add queue depth tracking flags
+  if [ -n "$AK_CFLAGS" ]; then
+    DEBUG_CFLAGS="${DEBUG_CFLAGS} ${AK_CFLAGS}"
   fi
   
   # Setup meson with debug flags if any
@@ -167,6 +180,12 @@ build_pktgen() {
   if [ "${RTE_LIBRTE_ETHDEV_DEBUG:-}" = "1" ]; then
     DEBUG_CFLAGS="-DRTE_LIBRTE_ETHDEV_DEBUG"
     echo ">> Building Pktgen with ETHDEV debug flags: $DEBUG_CFLAGS"
+  fi
+
+  # AK: Add queue depth tracking flags
+  if [ -n "$AK_CFLAGS" ]; then
+    DEBUG_CFLAGS="${DEBUG_CFLAGS} ${AK_CFLAGS}"
+    echo ">> Building Pktgen with AK flags: $AK_CFLAGS"
   fi
 
   # Use local 'build' dir inside Pktgen-DPDK
