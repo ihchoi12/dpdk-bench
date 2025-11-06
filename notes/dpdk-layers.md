@@ -1,7 +1,6 @@
 # DPDK TX Path: Multi-Layer Architecture Overview
 
 > **Document Purpose**: Understanding DPDK's layered architecture, data structures, and packet I/O flow
-> **Created**: 2025-01-05
 > **Project**: DPDK Performance Benchmarking & Optimization
 
 ---
@@ -43,11 +42,11 @@
 ┃  │              │  data        │                              │    ┃
 ┃  └──────────────┴──────────────┴──────────────────────────────┘    ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-                            ↓ Dispatches to PMD
+                            ↓ Dispatches to PMD (via function pointers)
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃  PMD LAYER (Poll Mode Driver)                                       ┃
-┃  • Hardware-specific driver (MLX5, i40e, etc.)                      ┃
-┃  • WQE ring management (hardware descriptors)                       ┃
+┃  • HW-specific driver (MLX5, i40e, etc.)                            ┃
+┃  • WQE (HW descriptors) ring buffer management                      ┃
 ┃  • Completion queue polling                                         ┃
 ┃  • DMA setup and doorbell operations                                ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
@@ -71,22 +70,33 @@
 - **Hardware**: Physical NIC
 
 **Data Ownership**:
-- **Application**: Holds pointers only (temporary arrays)
-- **DPDK Core**: Owns actual memory (mbufs, rings)
-- **PMD**: Manages hardware descriptors (WQEs)
+- **Application**: application buffer holding mbuf pointers (pinfo->tx_pkts[], DEFAULT_PKT_TX_BURST=32, MAX_PKT_TX_BURST 256)
+- **DPDK Core**: Owns mbuf memory (mempool), dispatches API calls to the specific HW PMD
+- **PMD**: Owns WQE Ring, Completion Queue, elts[] array (all in host memory)
 - **Hardware**: Physical transmission
 
 **API Flow** (TX path):
 ```
-Application:  rte_mempool_get_bulk()  →  get mbufs
-              rte_eth_tx_burst()       →  submit packets
+Application:  rte_mempool_get_bulk()         →  get mbufs
+              (pktgen.c:1323 → rte_mempool.h:1691)
 
-DPDK Core:    ethdev dispatch         →  calls PMD function pointer
+              rte_eth_tx_burst()             →  submit packets
+              (pktgen.c:569 → rte_ethdev.h)
 
-PMD:          mlx5_tx_burst()          →  write WQEs, ring doorbell
-              mlx5_tx_completion()     →  poll CQ, return mbufs
+DPDK Core:    dev->tx_pkt_burst()            →  dispatch to PMD via function pointer
+              (inside rte_eth_tx_burst, rte_ethdev.h)
 
-              rte_mempool_put_bulk()   →  return to pool
+PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
+              (mlx5_tx.h)
+
+              mlx5_tx_handle_completion()    →  poll CQ, find completed WQEs
+              (mlx5_tx.c:312)
+                mlx5_tx_free_elts()          →  retrieve mbufs from elts[]
+                (mlx5_tx.h:671, called at mlx5_tx.c:289)
+                  mlx5_tx_free_mbuf()        →  group mbufs by mempool
+                  (mlx5_tx.h:542, called at mlx5_tx.h:700)
+                    rte_mempool_put_bulk()   →  return mbufs to mempool (free)
+                    (rte_mempool.h:1474, called at mlx5_tx.h:566,621)
 ```
 
 ---
@@ -131,7 +141,8 @@ PMD:          mlx5_tx_burst()          →  write WQEs, ring doorbell
 ┃  │                                                                                                         │   ┃
 ┃  │  • tx_send_packets() (pktgen.c:463) - Core TX with retry logic                                        │   ┃
 ┃  │    API: rte_eth_tx_burst(pid, qid, pkts, to_send) (pktgen.c:569)                                      │   ┃
-┃  │    - Retry loop handles partial sends                                                                 │   ┃
+┃  │    - Retry loop handles partial sends (pktgen.c:567-572)                                              │   ┃
+┃  │      Partial send occurs when: elts[] full OR WQE Ring full (see N:M mapping in Key Takeaways)       │   ┃
 ┃  │    - Tracks TX producer count & burst timing (AK)                                                      │   ┃
 ┃  │                                                                                                         │   ┃
 ┃  │  [ALTERNATIVE FAST PATH - Zero-overhead mode]                                                          │   ┃
@@ -218,8 +229,36 @@ PMD:          mlx5_tx_burst()          →  write WQEs, ring doorbell
 ┃  │  │                                │  │  │ ┃ (up to 2,048 bytes)          ┃   │  │  │                                       │  │ ┃
 ┃  │  │   put_bulk()                   │  │  │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛   │  │  │ • Queue metadata:                     │  │ ┃
 ┃  │  │   Called by PMD (on completion)│  │  │                                    │  │  │   - Number of RX queues               │  │ ┃
-┃  │  │                                │  │  │                                    │  │  │   - Number of TX queues               │  │ ┃
-┃  │  │ Features:                      │  │  │                                    │  │  │   - Queue descriptors                 │  │ ┃
+┃  │  │                                │  │  │ 📦 Detailed Memory Layout:         │  │  │   - Number of TX queues               │  │ ┃
+┃  │  │ 🔒 Per-core Cache (Lock-free): │  │  │                                    │  │  │   - Queue descriptors                 │  │ ┃
+┃  │  │ ┌────────────────────────────┐ │  │  │ ┌────────────────────────────────┐ │  │  │                                       │  │ ┃
+┃  │  │ │ Core 0 Cache               │ │  │  │ │ struct rte_mbuf (128B)         │ │  │  │ 📊 Stats Collection:                  │  │ ┃
+┃  │  │ │ [mbuf][mbuf]...[mbuf]      │ │  │  │ │ • buf_addr → data start        │ │  │  │ • rte_eth_stats_get()                 │  │ ┃
+┃  │  │ └────────────────────────────┘ │  │  │ │ • buf_len = 2048               │ │  │  │   - ipackets, opackets                │  │ ┃
+┃  │  │ ┌────────────────────────────┐ │  │  │ │ • data_len = actual pkt size   │ │  │  │   - ibytes, obytes                    │  │ ┃
+┃  │  │ │ Core 1 Cache               │ │  │  │ │ • pkt_len = total length       │ │  │  │   - ierrors, oerrors                  │  │ ┃
+┃  │  │ │ [mbuf][mbuf]...[mbuf]      │ │  │  │ ├────────────────────────────────┤ │  │  │   - rx_nombuf (out of mbufs!)         │  │ ┃
+┃  │  │ └────────────────────────────┘ │  │  │ │ Headroom (128B)                │ │  │  │                                       │  │ ┃
+┃  │  │                                │  │  │ ├────────────────────────────────┤ │  │  │ 🎛️ Device Control:                    │  │ ┃
+┃  │  │ Performance:                   │  │  │ │         ↑ buf_addr points here │ │  │  │ • rte_eth_dev_start()                 │  │ ┃
+┃  │  │ • get_bulk from cache: ~10 ns  │  │  │ ├────────────────────────────────┤ │  │  │ • rte_eth_dev_stop()                  │  │ ┃
+┃  │  │ • Cache miss → main pool:      │  │  │ │ Packet Data (0-2048B)          │ │  │  │ • rte_eth_promiscuous_enable()        │  │ ┃
+┃  │  │   ~100 ns (lock contention)    │  │  │ │ • NIC DMA reads from here      │ │  │  │ • rte_eth_link_get_nowait()           │  │ ┃
+┃  │  │                                │  │  │ ├────────────────────────────────┤ │  │  │                                       │  │ ┃
+┃  │  │ Cache Size Tuning:             │  │  │ │ Tailroom                       │ │  │  │ ⚡ Offload Capabilities:              │  │ ┃
+┃  │  │ • Default: 256 mbufs/core      │  │  │ └────────────────────────────────┘ │  │  │ • TX: Checksums, TSO, VLAN            │  │ ┃
+┃  │  │ • Larger cache → less lock     │  │  │ Total: ~2304 bytes per mbuf       │  │  │ • RX: Checksum validation             │  │ ┃
+┃  │  │   contention, more memory      │  │  │ (single contiguous allocation)    │  │  │ • Multi-segment packets               │  │ ┃
+┃  │  │ • Smaller cache → memory       │  │  │                                    │  │  │ • RSS (Receive Side Scaling)          │  │ ┃
+┃  │  │   efficient, more contention   │  │  │ Key Points:                        │  │  │                                       │  │ ┃
+┃  │  │                                │  │  │ • Metadata + data in ONE block     │  │  │ 🔄 Burst Operations:                  │  │ ┃
+┃  │  │ ⚠️ Out of mbufs?                │  │  │ • buf_addr = mbuf_addr +           │  │  │ • Batch size: 32-64 typical           │  │ ┃
+┃  │  │ → Check rx_nombuf stat!        │  │  │             sizeof(mbuf) + 128     │  │  │ • Amortizes function call cost        │  │ ┃
+┃  │  │                                │  │  │ • On free: only metadata touched   │  │  │ • Improves cache locality             │  │ ┃
+┃  │  │                                │  │  │   (~128B/mbuf), pkt data NOT       │  │  │                                       │  │ ┃
+┃  │  │                                │  │  │ • Full 2KB cached during TX only,  │  │  │                                       │  │ ┃
+┃  │  │                                │  │  │   not during free                  │  │  │                                       │  │ ┃
+┃  │  │ Features:                      │  │  │                                    │  │  │                                       │  │ ┃
 ┃  │  │ • Per-port shared mempool      │  │  │                                    │  │  │                                       │  │ ┃
 ┃  │  │   (all lcores using that port) │  │  │                                    │  │  │                                       │  │ ┃
 ┃  │  │ • Per-core cache for           │  │  │                                    │  │  │ ℹ️  Pure metadata - no actual         │  │ ┃
@@ -284,53 +323,209 @@ PMD:          mlx5_tx_burst()          →  write WQEs, ring doorbell
 ┃  │    completion()                                              │ ┃
 ┃  │  • mlx5_tx_free_elts()      - Free completed mbufs          │ ┃
 ┃  └──────────────────────────────────────────────────────────────┘ ┃
+┃  ┌────────────────────────────────────────────────────────────────┐┃
+┃  │  🎛️  struct mlx5_txq_data (mlx5_tx.h:123-186)                  │┃
+┃  │  Software TX queue control structure - manages both arrays     │┃
+┃  │                                                                 │┃
+┃  │  Management Fields (indices for tracking):                     │┃
+┃  │    • wqe_ci, wqe_pi  - WQE Ring consumer/producer indices      │┃
+┃  │    • elts_head, elts_tail - elts[] head/tail indices           │┃
+┃  │    • wqe_s, elts_s   - Ring/array sizes                        │┃
+┃  │                                                                 │┃
+┃  │  Pointers to Separate Arrays:                                  │┃
+┃  │    • struct mlx5_wqe *wqes;   → WQE Ring (SQ, for hardware)    │┃
+┃  │    • struct rte_mbuf *elts[]; → mbuf tracking (for software)   │┃
+┃  └────────────────────────────────────────────────────────────────┘┃
+┃                                                                     ┃
+┃  ┌──────────────────────────────────────┬─────────────────────────────────────┐┃
+┃  │  ⚙️  WQE Ring (Send Queue)           │  📌 elts[] Array                    │┃
+┃  │  Hardware Work Descriptors Queue     │     Software mbuf Tracking          │┃
+┃  ├──────────────────────────────────────┼─────────────────────────────────────┤┃
+┃  │  Pointed to by: txq->wqes            │  Pointed to by: txq->elts           │┃
+┃  │  (mlx5_tx.h:163)                     │  (mlx5_tx.h:184)                    │┃
+┃  │                                      │                                     │┃
+┃  │  Purpose:                            │  Purpose:                           │┃
+┃  │  NIC reads these descs via DMA to    │  Driver tracks mbuf pointers        │┃
+┃  │  execute TX operations               │  to free them on TX completion      │┃
+┃  │                                      │                                     │┃
+┃  │  ┏━━━━━┳━━━━━┳━━━━━┳━━━━━┓          │  ┏━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┓      │┃
+┃  │  ┃WQE0 ┃WQE1 ┃WQE2 ┃WQE3 ┃ ...      │  ┃mbuf0*┃mbuf1*┃mbuf2*┃mbuf3*┃ ... │┃
+┃  │  ┗━━━━━┻━━━━━┻━━━━━┻━━━━━┛          │  ┗━━━━━━┻━━━━━━┻━━━━━━┻━━━━━━┛      │┃
+┃  │  (size: DEFAULT_TX_DESC)             │  (size: DEFAULT_TX_DESC)            │┃
+┃  │                                      │                                     │┃
+┃  │  Each WQE contains HW desc:          │  Each element stores:               │┃
+┃  │  • pbuf (DMA address)                │  • struct rte_mbuf* pointer         │┃
+┃  │    - where NIC reads packet data    │  • Used to return mbuf to mempool   │┃
+┃  │  • bcount - bytes to transmit        │    on completion                    │┃
+┃  │  • lkey - memory region key          │                                     │┃
+┃  │    (for NIC DMA access permission)   │                                     │┃
+┃  │                                      │                                     │┃
+┃  │  ⚠️  WQE = work instruction          │  Why needed:                        │┃
+┃  │  for NIC, NOT packet data itself!    │  • NIC only knows DMA addresses     │┃
+┃  │  For hardware (NIC DMA reads).       │  • SW (PMD) needs virtual pointers  │┃
+┃  └──────────────────────────────────────┴─────────────────────────────────────┘┃
 ┃                                                                     ┃
 ┃  💾 Data Structures:                                               ┃
 ┃                                                                     ┃
-┃  ⚠️  IMPORTANT: Both structures below are in host memory!          ┃
-┃  • Left:  WQE Ring (SQ) - descriptor ring (NIC reads via DMA)      ┃
-┃  • Right: TX Control Structure - manages WQE Ring (driver uses)    ┃
-┃                                                                     ┃
 ┃  📏 Size Determination (mlx5_txq.c:1135, 1168, 708):               ┃
-┃  • By DEFAULT_TX_DESC (Default: 1024)                  ┃
-┃  • Both sizes determined from same desc parameter:                 ┃
+┃  • By DEFAULT_TX_DESC (Default: 1024)                              ┃
+┃  • Both arrays sized from same desc parameter:                     ┃
 ┃    - elts[] size = desc (mlx5_txq.c:1168)                          ┃
 ┃    - WQE Ring size = 1 << log2above(desc) (mlx5_txq.c:708)         ┃
 ┃  • ⚠️  desc is rounded up to nearest power of 2!                   ┃
 ┃    (e.g., desc=1000 → WQE Ring=1024, elts[]=1024)                  ┃
-┃  • Both arrays guaranteed same size (1:1 parallel mapping)         ┃
+┃  • ⚠️  SAME SIZE, BUT N:M ELEMENT MAPPING!                         ┃
+┃    • NOT 1:1 element-wise correspondence!                          ┃
+┃      • No inline mode (eMPW - Enhanced Multi-Packet Write):        ┃
+┃        - 1 eMPW session uses multiple WQEBBs (typically 2)         ┃
+┃        - 1st WQEBB: Control(16B) + Ethernet(16B) + 2 dsegs(32B)   ┃
+┃        - 2nd WQEBB: 4 dsegs(64B) - pure data segments              ┃
+┃        - Typical: 2+2 = 4 packets (optimal for latency)            ┃
+┃        - Can use more WQEBBs → up to 32 pkts/session (soft limit)  ┃
+┃        - With 2 WQEBBs: Max 2+4 = 6 packets (but causes spikes)    ┃
+┃      • Inline mode (MPW_INLINE): 1 elts[] can span multiple WQEs   ┃
+┃        - Max 6 packets per session (hard limit, data size bound)   ┃
+┃        - Large packets need multiple WQEBBs for inlined data       ┃
+┃    • Independent consumption rates (see detailed section below)    ┃
 ┃                                                                     ┃
-┃  ┌───────────────────────────┬───────────────────────────────────┐┃
-┃  │  ⚙️  WQE Ring (SQ)        │  🎛️  TX Control Structure        │┃
-┃  │     (Send Queue)          │     (struct mlx5_txq_data)       │┃
-┃  │                           │                                  │┃
-┃  │  Work Instructions for NIC:│  Management Fields:              │┃
-┃  │  ┏━━━━━┳━━━━━┳━━━━━┓     │  • wqe_ci - WQE Ring consumer idx│┃
-┃  │  ┃WQE0 ┃WQE1 ┃WQE2 ┃...  │  • wqe_pi - WQE Ring producer idx│┃
-┃  │  ┗━━━━━┻━━━━━┻━━━━━┛     │  • wqe_s  - WQE Ring size (1024) │┃
-┃  │       ↕ parallel ↕        │  • wqes   - pointer → WQE Ring   │┃
-┃  │  ┏━━━━━┳━━━━━┳━━━━━┓     │                                  │┃
-┃  │  ┃elts0┃elts1┃elts2┃...  │  Parallel mbuf tracking:         │┃
-┃  │  ┗━━━━━┻━━━━━┻━━━━━┛     │  • elts[] - mbuf pointer array   │┃
-┃  │                           │    (parallel to WQE Ring)        │┃
-┃  │  Each WQE (descriptor):   │  • elts[i] ↔ WQE[i]              │┃
-┃  │  Tells NIC how to process:│  • Stores mbuf ptr while WQE[i]  │┃
-┃  │  • pbuf   - where to read │    is in-flight                  │┃
-┃  │    (DMA addr, NOT mbuf*)  │  • Retrieved on completion for   │┃
-┃  │  • bcount - how many bytes│    mempool return                │┃
-┃  │  • lkey   - memory key    │                                  │┃
-┃  │                           │                                  │┃
-┃  │  ⚠️  Descriptor = work     │  Why elts[] needed:              │┃
-┃  │  instruction for NIC,     │  • NIC only understands DMA      │┃
-┃  │  NOT data itself!         │    addresses, not virtual        │┃
-┃  │  • NIC reads WQE via DMA  │    pointers (mbuf*)              │┃
-┃  │  • Executes: "read pbuf,  │  • WQE[i] has DMA addr (for NIC) │┃
-┃  │    send bcount bytes"     │  • elts[i] has mbuf* (for driver)│┃
-┃  │                           │  • On completion: driver uses    │┃
-┃  │                           │    elts[i] to return mbuf        │┃
-┃  │  • DMA-mapped memory      │                                  │┃
-┃  │  • Size: 1024 (default)   │                                  │┃
-┃  └───────────────────────────┴───────────────────────────────────┘┃
+┃  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ┃
+┃  🧱 WQEBB (Work Queue Element Building Block)                      ┃
+┃  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ┃
+┃                                                                     ┃
+┃  WQEBB = Basic unit of WQE Ring allocation (fixed 64 bytes)        ┃
+┃                                                                     ┃
+┃  Key Concepts:                                                      ┃
+┃    • WQEBB (Building Block):  64 bytes (4 segments × 16B)          ┃
+┃    • WQE (Work Element):      1 or more WQEBBs                     ┃
+┃  WQE Size Examples:                                                 ┃
+┃    • Small WQE:   1 WQEBB  (64B)  - single small packet           ┃
+┃    • Medium WQE:  2 WQEBBs (128B) - typical eMPW session          ┃
+┃    • Large WQE:   3+ WQEBBs (192B+) - inline mode or many packets ┃
+┃                                                                     ┃
+┃  Why WQEBB?                                                         ┃
+┃    • Fixed-size blocks → easier ring buffer management             ┃
+┃    • Variable-size WQEs built from fixed blocks                    ┃
+┃    • Simplifies wraparound calculation at ring boundary            ┃
+┃                                                                     ┃
+┃  WQE Ring = Array of WQEBBs:                                        ┃
+┃    [WQEBB 0][WQEBB 1][WQEBB 2][WQEBB 3]...[WQEBB 1023]            ┃
+┃    └──────┘ └────────────────┘                                     ┃
+┃     WQE #1   WQE #2 (2 WQEBBs)    ...                              ┃
+┃    (1 WQEBB)                                                       ┃
+┃                                                                     ┃
+┃  ⚠️  WQE Ring Size vs Actual Session Count:                        ┃
+┃    WQE Ring size = 1024 means:                                     ┃
+┃      → 1024 WQEBBs (64B × 1024 = 64KB total space)                ┃
+┃      → NOT 1024 WQE sessions!                                      ┃
+┃                                                                     ┃
+┃  Actual WQE session count = VARIABLE (depends on actual WQE sizes): ┃
+┃      Case 1: Each WQE = 1 WQEBB (single small packet)              ┃
+┃        → Max 1024 sessions                                         ┃
+┃      Case 2: Each WQE = 2 WQEBBs (typical eMPW)                    ┃
+┃        → Max 512 sessions                                          ┃
+┃      Case 3: Each WQE = 4 WQEBBs (large inline)                    ┃
+┃        → Max 256 sessions                                          ┃
+┃      Case 4: Mixed sizes (runtime determined)                      ┃
+┃        → Example: [1 WQEBB][2 WQEBBs][2 WQEBBs][3 WQEBBs]...       ┃
+┃        → 6 WQEBBs used → 4 sessions created                        ┃
+┃                                                                     ┃
+┃    Key Insight - N:M Mapping:                                      ┃
+┃      • WQE Ring: 1024 WQEBBs (fixed allocation units)              ┃
+┃      • elts[] array: 1024 entries (fixed packet slots)             ┃
+┃      • Actual WQE sessions: Variable (< 1024)                      ┃
+┃      • Each WQE can reference multiple elts[] entries              ┃
+┃      • Example: 512 WQE sessions × 2 pkts/session = 1024 packets  ┃
+┃                                                                     ┃
+┃  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ┃
+┃  📊 eMPW Session Structure Details (Enhanced Multi-Packet Write)   ┃
+┃  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ┃
+┃  eMPW enables batching multiple packets in a single WQE session    ┃
+┃  by using multiple WQEBBs. This reduces doorbell writes overhead   ┃
+┃  and improves efficiency for small packets.                        ┃
+┃  ┌─────────────────────────────────────────────────────────────┐   ┃
+┃  │ 1st WQEBB (64 bytes)                                        │   ┃
+┃  ├─────────────────────────────────────────────────────────────┤   ┃
+┃  │ Control Segment     (16 bytes) ← WQE header                │   ┃
+┃  │ Ethernet Segment    (16 bytes) ← Ethernet header           │   ┃
+┃  │ Data Segment 0      (16 bytes) ← Packet 1 pointer          │   ┃
+┃  │   • bcount(4B) + lkey(4B) + pbuf(8B)                       │   ┃
+┃  │ Data Segment 1      (16 bytes) ← Packet 2 pointer          │   ┃
+┃  └────────────────────────────────────────────────────────────┘   ┃
+┃  ┌─────────────────────────────────────────────────────────────┐   ┃
+┃  │ 2nd+ WQEBB (64 bytes) - "one WQEBB may contains up to      │   ┃
+┃  │                          four packets" (mlx5_tx.h:3721)    │   ┃
+┃  ├─────────────────────────────────────────────────────────────┤   ┃
+┃  │ Data Segment 0      (16 bytes) ← Packet 3 pointer          │   ┃
+┃  │ Data Segment 1      (16 bytes) ← Packet 4 pointer          │   ┃
+┃  │ Data Segment 2      (16 bytes) ← Packet 5 pointer          │   ┃
+┃  │ Data Segment 3      (16 bytes) ← Packet 6 pointer          │   ┃
+┃  │ (Pure data segments - no headers! Up to 4 pkts/WQEBB)      │   ┃
+┃  └────────────────────────────────────────────────────────────┘   ┃
+┃  Packet Capacity Calculation:                                      ┃
+┃    • 1st WQEBB: 2 packets (limited by Control+Ethernet headers)   ┃
+┃    • 2nd+ WQEBB: Up to 4 packets each (pure data segments)        ┃
+┃    • 2 WQEBBs: 2 + 4 = 6 packets max                              ┃
+┃    • Can use more WQEBBs up to MLX5_EMPW_MAX_PACKETS = 32         ┃
+┃  Code Evidence:                                                   ┃
+┃    • mlx5_tx.h:3017-3020 - Calculates available room across       ┃
+┃      multiple WQEBBs minus Control & Ethernet segments            ┃
+┃    • mlx5_tx.h:3177,3181,3183 - Iterates through data segments:   ┃
+┃        mlx5_tx_dseg_ptr() → room -= MLX5_WQE_DSEG_SIZE → ++dseg   ┃
+┃    • mlx5_prm.h:107 - MLX5_MPW_INLINE_MAX_PACKETS = 6             ┃
+┃Q: Why "up to 4 packets" instead of max 6?                          ┃
+┃A: Sweet spot to prevent latency spikes during completion processing┃
+┃                                                                     ┃
+┃  Key Constants (mlx5_defs.h:23, mlx5_prm.h:105-107):               ┃
+┃    • MLX5_TX_COMP_THRESH = 32                                      ┃
+┃      → PMD sets completion flag in WQE Control Segment every       ┃
+┃        32 descriptors (mlx5_tx.h:771-782)                          ┃
+┃      → Tells NIC: "generate CQE when this WQE completes"           ┃
+┃      → Reduces CQ overhead (not every WQE needs CQE)                ┃
+┃    • MLX5_TX_COMP_MAX_CQE = 2                                      ┃
+┃      → Max completion entries processed per tx_burst() call        ┃
+┃      → Limits burst size when freeing mbufs                        ┃
+┃    • MLX5_EMPW_MAX_PACKETS = 32 (mlx5_prm.h:105)                   ┃
+┃      → Max packets in each eMPW session (pointer mode, no inline)  ┃
+┃      → Soft limit = MLX5_TX_COMP_THRESH (completion threshold)     ┃
+┃      → Can use many WQEBBs (each packet = 16B data segment)        ┃
+┃      → Prevents unbounded mbuf accumulation before completion      ┃
+┃    • MLX5_MPW_INLINE_MAX_PACKETS = 6 (mlx5_prm.h:107)              ┃
+┃      → Max packets PER MPW SESSION (mlx5_tx.h:2976-2977)          ┃
+┃      → "one WQE" = one session with Control+Ethernet headers      ┃
+┃      → Inline mode: actual packet data copied to WQE              ┃
+┃      → Hard limit to improve CQE latency generation               ┃
+┃      → Example: 6 × 64B packets → ~384B data → 6+ WQEBBs/session ┃
+┃      → For more packets: create multiple sessions                 ┃
+┃      → Data segment union [16B]:                                        ┃
+┃       bcount[4B] + (inline_data[12B] OR lkey+pbuf[12B]             ┃
+┃                                                                     ┃
+┃  Completion Burst Analysis (mlx5_prm.h:98-105):                    ┃
+┃    Scenario        │ CQEs │ Packets/CQE │ mbufs freed │ Result     ┃
+┃    ───────────────────────────────────────────────────────────────  ┃
+┃    6 pkts/session  │  2   │      6      │     12      │ ❌ Spike!  ┃
+┃    4 pkts/session  │  2   │      4      │      8      │ ✅ Good    ┃
+┃    2 pkts/session  │  2   │      2      │      4      │ ⚠️  Waste  ┃
+┃                                                                     ┃
+┃  Why 4 = Sweet Spot:                                               ┃
+┃    ✓ Predictable latency: 8 mbufs freed per burst (manageable)    ┃
+┃    ✓ WQE efficiency: Uses 2 WQEBBs (reasonable overhead)           ┃
+┃    ✓ Avoids completion burst: Code comment warns about             ┃
+┃      "significant latency" if too many mbufs freed at once         ┃
+┃    ✓ Cache working set pressure management:                        ┃
+┃      • TX path hot data: descriptors, CQ, mempool, next packets    ┃
+┃      • Larger burst → more cache pressure → evict other hot data   ┃
+┃      • Next packet processing may see cache misses                 ┃
+┃      • 8 mbufs manageable, 12 mbufs risks evicting critical data   ┃
+┃    ✗ Wastes 32B: 2nd WQEBB half unused, but stability > space     ┃
+┃                                                                     ┃
+┃  Trade-off Decision:                                               ┃
+┃    Sacrifice 32 bytes per session → Gain consistent performance    ┃
+┃                                                                     ┃
+┃  Key Insight: This explains N:M mapping!                           ┃
+┃    • 1-2 WQEBBs consumed from WQE Ring                             ┃
+┃    • 4-6 mbuf pointers stored in elts[] array                      ┃
+┃    • Different consumption rates between WQE ring and elts array   ┃
+┃     → must check availability of both resources                     ┃
 ┃                                                                     ┃
 ┃  ┌────────────────────────────────────────────────────────────────┐┃
 ┃  │  ✅ Completion Queue (CQ)                                      │┃
@@ -897,14 +1092,242 @@ Hardware:
   - PMD: `rte_mempool_put_bulk()` to return mbufs after completion
 - Shared resource with per-core caching for performance
 
+#### 📊 Mempool Internal Architecture: Per-Core Cache + Global Ring
+
+**⚠️ Common Misconception**: Mempool does NOT use simple producer/consumer indices for all operations!
+
+**Two-Tier Structure** (`dpdk/lib/mempool/rte_mempool.h`):
+
+**1. Per-Core Cache (Fast Path - Stack Structure)**
+- **Structure**: `cache->objs[]` array + `cache->len` (stack height)
+- **NOT** a ring with producer/consumer indices!
+- **Location**: `rte_mempool.h:1530` (get), `1404` (put)
+
+**Get Operation** (`rte_mempool_do_generic_get`, line 1530-1559):
+```c
+// "The cache is a stack" (line 1530 comment)
+cache_objs = &cache->objs[cache->len];  // Stack top
+cache->len -= n;                        // Decrement height
+for (index = 0; index < n; index++)
+    *obj_table++ = *--cache_objs;       // Pop from stack
+```
+
+**Put Operation** (`rte_mempool_do_generic_put`, line 1404-1421):
+```c
+cache_objs = &cache->objs[cache->len];  // Stack top
+cache->len += n;                        // Increment height
+rte_memcpy(cache_objs, obj_table, ...); // Push to stack
+```
+
+**Key Insight**: Uses **stack semantics** (len only), NOT ring indices (producer/consumer)
+
+**2. Global Ring (Slow Path - Ring Structure)**
+- Used ONLY when per-core cache miss or flush
+- **Location**: `rte_mempool.h:1413` (enqueue), `1570` (dequeue)
+- This layer DOES use producer/consumer ring (`rte_mempool_ops_enqueue_bulk`, `rte_mempool_ops_dequeue_bulk`)
+
+**Cache Refill** (line 1570-1582):
+```c
+driver_dequeue:
+    ret = rte_mempool_ops_dequeue_bulk(mp, obj_table, remaining);
+    // ↑ Global ring dequeue (producer/consumer ring here)
+```
+
+**Cache Flush** (line 1413):
+```c
+rte_mempool_ops_enqueue_bulk(mp, cache_objs, cache->len);
+// ↑ Flush cache to global ring (producer/consumer ring)
+```
+
+**Performance Optimization**:
+- **Fast path**: Per-core cache (no atomic ops, just len increment/decrement)
+- **Slow path**: Global ring access (atomic producer/consumer operations)
+- Cache hit rate typically >95% → most operations avoid global ring
+
+**Both Application AND PMD use same API**:
+- `rte_mempool_get_bulk()` - Application gets mbufs
+- `rte_mempool_put_bulk()` - PMD returns completed mbufs
+- Both go through: per-core cache (stack) → global ring (fallback)
+- No difference in mechanism, only usage context differs
+
 ### 3️⃣ **Multiple Queue Concepts and Physical Locations**
 
 **⚠️ Terminology Clarification:**
 - **SQ (Send Queue)** = **WQE Ring** = descriptor ring buffer (DMA-mapped memory)
 - **TX Control Structure** = `struct mlx5_txq_data` = manages WQE Ring (NOT a queue!)
   - Contains: wqe_ci/wqe_pi (WQE Ring indices), wqes (→ WQE Ring), elts[] (mbuf pointers)
-  - elts[] is **parallel** to WQE Ring: elts[i] stores mbuf pointer for WQE[i]
+  - elts[] and WQE Ring: **same size (1024)** but **NOT 1:1 mapping** (see N:M mapping below)
 - **Why confusing naming?** "wqe_pi/wqe_ci" are indices **for the WQE Ring**, not for mlx5_txq_data itself
+
+#### ⚠️ CRITICAL: WQE Ring ↔ elts[] N:M Mapping (NOT 1:1!)
+
+**Common Misconception**: "elts[i] always corresponds to WQE[i]" ❌
+
+**Reality**: Mapping depends on configuration (`mlx5_tx.h:3718-3724`)
+
+**Scenario 1: No Data Inlining** (Multiple packets → 1 WQE)
+```
+elts[]:      mbuf0*  mbuf1*  mbuf2*  mbuf3*    ← 4 mbuf pointers
+               ↓       ↓       ↓       ↓
+WQE Ring:    [    WQE 0 (4 packet ptrs)    ]   ← 1 descriptor
+```
+- **Ratio**: 1 WQE : up to 4 elts[]
+- **Bottleneck**: **elts[] becomes scarce first** (consumed 4x faster)
+- **Example**: WQE_free=100, elts_free=5 → can only send 5 packets (not 100!)
+
+**Scenario 2: Data Inlining Enabled** (1 packet → Multiple WQEs)
+```
+elts[]:      mbuf0*                          ← 1 mbuf pointer
+               ↓ (data copied to WQEs)
+            [packet data]
+               ↓
+WQE Ring:    [ WQE 0 - inline data part 1 ]
+             [ WQE 1 - inline data part 2 ]  ← Multiple descriptors
+             [ WQE 2 - inline data part 3 ]
+```
+- **Ratio**: 1 elts[] : multiple WQEs (large packet needs multiple descriptors)
+- **Bottleneck**: **WQE Ring becomes scarce first**
+- **Example**: elts_free=100, WQE_free=2 → might not send even 1 large packet!
+- **Key**: Inline copies data to WQE, but **still stores mbuf* in elts[]** (mlx5_tx.h:2483)
+  - Why? Must free mbuf after TX completion (return to mempool)
+  - Inline = NIC doesn't DMA from mbuf, but mbuf memory still needs cleanup
+
+**Why Both Checks Are Required** (`mlx5_tx.h:3732`):
+```c
+if (unlikely(!loc.elts_free || !loc.wqe_free))
+    goto burst_exit;  // Partial send!
+```
+- Different modes have **different bottlenecks**
+- Configuration-dependent: `MLX5_TXOFF_CONFIG(INLINE)`
+- Packet size varies: runtime behavior unpredictable
+- Both resources consumed **independently**
+
+**Partial Send Conditions**:
+- **elts[] full**: Can't store more mbuf pointers (no inline or small inline)
+- **WQE Ring full**: Can't write more descriptors (large packet inline)
+
+#### 🚀 Why Inline Mode is a Performance Win (Not Waste!)
+
+**Common Misunderstanding**: "Inline copies data AND keeps original mbuf = wasteful duplication" ❌
+
+**Reality**: Inline is a **memory efficiency optimization** through **early free** ✅
+
+**No Inline Mode Flow** (Traditional DMA):
+```
+1. Application: Allocate mbuf + write data
+2. TX burst: Store mbuf DMA address in WQE
+3. NIC: DMA read from mbuf memory (~200ns PCIe latency)
+4. Wait for TX completion... (1-10μs)
+5. Completion handler: Finally free mbuf to mempool
+
+Problem: mbuf locked until completion (long time!)
+```
+
+**Inline Mode Flow** (Copy + Early Free):
+```
+1. Application: Allocate mbuf + write data
+2. TX burst:
+   a) Copy data to WQE (mlx5_tx.h:1187):
+      rte_memcpy(wqe, mbuf->data, len);  // ~10ns from CPU cache
+
+   b) Immediately free mbuf (mlx5_tx.h:3416):
+      rte_pktmbuf_free_seg(loc->mbuf);   // ← Key optimization!
+
+3. NIC: Read directly from WQE (no DMA to mbuf needed)
+4. Completion: No mbuf cleanup needed (already freed!)
+
+Advantage: mbuf returned to mempool immediately!
+```
+
+**Code Evidence** (`mlx5_tx.h:3406-3416`):
+```c
+// Copy packet data into WQE inline
+mlx5_tx_eseg_data(txq, loc, wqe, vlan, inlen, 0, olx);
+
+/*
+ * Packet data are completely inlined,
+ * free the packet immediately.
+ */
+rte_pktmbuf_free_seg(loc->mbuf);  // ← Early free!
+```
+
+**Inline Copy Implementation** (`mlx5_tx.h:1148-1187`):
+```c
+mlx5_tx_eseg_data(...) {
+    // Get source from mbuf
+    psrc = rte_pktmbuf_mtod(loc->mbuf, uint8_t *);  // line 1148
+
+    // Destination in WQE
+    pdst = (uint8_t *)(es + 1);  // line 1152
+
+    // Fast copy (optimized for small packets)
+    rte_mov16(pdst, psrc);       // line 1169 - 16 bytes
+    rte_memcpy(pdst, psrc, part); // line 1187 - remaining data
+}
+```
+
+**Performance Analysis**:
+
+| Metric | No Inline (DMA) | Inline (Copy+Free) | Winner |
+|--------|-----------------|-------------------|---------|
+| **Small packet (64B)** |
+| Data transfer | DMA setup + PCIe (~300ns) | CPU copy from cache (~10ns) | Inline ✅ |
+| Mbuf lifetime | Until completion (~1-10μs) | Immediate free (~100ns) | Inline ✅ |
+| Memory pressure | High (many in-flight mbufs) | Low (quick recycle) | Inline ✅ |
+| **Large packet (1500B)** |
+| Data transfer | DMA (~500ns) | CPU copy (~150ns) | Inline ✅ |
+| WQE consumption | 1-2 descriptors | 4-6 descriptors | No-inline ✅ |
+| Memory pressure | Moderate | Very low | Inline ✅ |
+
+**Why "Copy then Free" is Smart**:
+
+1. **Memory Recycling Speed** ⚡
+   - No inline: mbuf tied up for microseconds (waiting for completion)
+   - Inline: mbuf freed in nanoseconds → instant reuse
+   - High packet rate → faster mempool turnover = fewer mbufs needed
+
+2. **Cache Efficiency** 🎯
+   - Copy from mbuf (hot in CPU cache) → WQE (also in cache)
+   - Much faster than DMA setup + PCIe round-trip
+   - For 64B packets: copy ~10ns vs DMA ~300ns
+
+3. **Simplified Memory Model** 🧩
+   - mbuf always complete object (never "moved" or corrupted)
+   - Clean abstraction: PMD doesn't modify application memory
+   - Easier debugging: no partial/zombie mbufs
+
+4. **PCIe Bandwidth Savings** 💾
+   - No inline: 2x PCIe traffic (descriptor + DMA data read)
+   - Inline: 1x PCIe traffic (descriptor with embedded data)
+   - Important for high packet rates on shared PCIe bus
+
+**Trade-off Sweet Spot**:
+```
+Inline wins:   Packet size < 256B  (copy cheaper than DMA)
+No-inline wins: Packet size > 1KB   (DMA cheaper than copy + WQE bloat)
+Mixed traffic:  Configure threshold (txq->inlen_send)
+```
+
+**Why Not "Move" Instead of "Copy"?**
+
+Hypothetical (bad) approach:
+```c
+// Don't do this!
+memcpy(wqe, mbuf->data, len);
+mbuf->data = NULL;        // Corrupt mbuf structure
+mbuf->data_len = 0;       // Complex state management
+// Now what? Partial mbuf? Special handling everywhere?
+```
+
+Current approach (clean):
+```c
+// Simple and correct:
+memcpy(wqe, mbuf->data, len);        // Copy data
+rte_pktmbuf_free_seg(mbuf);          // Complete object free
+// mbuf returned intact to mempool, ready for reuse
+```
+
+**Key Insight**: The "duplication" lasts only ~100ns (copy time), then original is freed. Not wasteful—it's **temporal efficiency through spatial duplication**.
 
 **⚠️ WQE Structure and Why elts[] is Needed:**
 - **WQE = Hardware Descriptor = Work Instruction for NIC**
@@ -991,6 +1414,51 @@ Poll CQ → mlx5_tx_free_mbuf() → rte_mempool_put_bulk() → mbuf reuse
 ```
 
 Each step involves different data structures and layers!
+
+---
+
+## Additional Notes
+
+### Multi-segment mbuf (Jumbo Frames)
+
+For packets larger than 2048 bytes (e.g., Jumbo Frames), DPDK uses **chained mbufs**:
+
+```
+Example: 9000-byte Jumbo Frame
+
+┌─────────────────┐
+│ 1st mbuf (head) │ pkt_len=9000, data_len=2048, nb_segs=5
+│ [2048 bytes]    │ next ──┐
+└─────────────────┘        │
+                           ↓
+┌─────────────────┐
+│ 2nd mbuf        │ data_len=2048
+│ [2048 bytes]    │ next ──┐
+└─────────────────┘        │
+                           ↓
+┌─────────────────┐
+│ 3rd mbuf        │ data_len=2048
+│ [2048 bytes]    │ next ──┐
+└─────────────────┘        │
+                           ↓
+┌─────────────────┐
+│ 4th mbuf        │ data_len=2048
+│ [2048 bytes]    │ next ──┐
+└─────────────────┘        │
+                           ↓
+┌─────────────────┐
+│ 5th mbuf (tail) │ data_len=808
+│ [808 bytes]     │ next = NULL
+└─────────────────┘
+```
+
+**Key mbuf fields for multi-segment support:**
+- `pkt_len`: Total packet length (all segments)
+- `data_len`: Data length in this mbuf
+- `nb_segs`: Number of segments in this packet
+- `next`: Pointer to next mbuf in chain
+
+**Note**: Most benchmarks use standard 64-byte packets, so multi-segment handling is rare in typical test scenarios.
 
 ---
 
