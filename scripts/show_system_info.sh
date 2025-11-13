@@ -13,28 +13,46 @@ echo "Threads: $physical_cores cores × $threads_per_core (HT) = $total_threads 
 
 echo ""
 echo "=== NUMA TOPOLOGY ==="
-lscpu | grep "NUMA node[0-9]" | while read line; do
+while IFS= read -r line; do
   node=$(echo $line | awk '{print $1 " " $2}' | sed 's/://')
   cpus=$(echo $line | awk '{print $NF}')
   echo "$node CPUs: $cpus"
 
   # Show HT pairs
-  ht_pairs=""
-  declare -A seen
-  for cpu in $(echo $cpus | tr ',' ' '); do
-    if [ -z "${seen[$cpu]}" ]; then
-      sibling=$(cat /sys/devices/system/cpu/cpu$cpu/topology/thread_siblings_list 2>/dev/null)
-      if [ -n "$sibling" ]; then
-        pair=$(echo $sibling | tr ',' ' ')
-        ht_pairs="$ht_pairs [$sibling]"
-        for c in $pair; do
-          seen[$c]=1
-        done
-      fi
+  echo -n "  HT pairs:"
+
+  # Expand CPU range (e.g., 0-39 -> 0 1 2 ... 39)
+  cpu_list=""
+  for range in $(echo $cpus | tr ',' ' '); do
+    if [[ $range == *-* ]]; then
+      start=$(echo $range | cut -d'-' -f1)
+      end=$(echo $range | cut -d'-' -f2)
+      cpu_list="$cpu_list $(seq $start $end)"
+    else
+      cpu_list="$cpu_list $range"
     fi
   done
-  echo "  HT pairs:$ht_pairs"
-done
+
+  # Track seen CPUs
+  seen_cpus=""
+  for cpu in $cpu_list; do
+    # Skip if already seen
+    if echo " $seen_cpus " | grep -q " $cpu "; then
+      continue
+    fi
+
+    # Get sibling list
+    sibling=$(cat /sys/devices/system/cpu/cpu$cpu/topology/thread_siblings_list 2>/dev/null)
+    if [ -n "$sibling" ]; then
+      echo -n " [$sibling]"
+      # Mark all siblings as seen
+      for s in $(echo $sibling | tr ',' ' '); do
+        seen_cpus="$seen_cpus $s"
+      done
+    fi
+  done
+  echo ""
+done < <(lscpu | grep "NUMA node[0-9]")
 
 echo ""
 echo "=== NIC DEVICES ==="
