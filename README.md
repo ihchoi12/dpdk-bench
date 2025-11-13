@@ -12,6 +12,14 @@ This project uses custom forks of DPDK and Pktgen with modifications for perform
 
 All customizations are committed directly to the `autokernel` branch in each fork.
 
+## System Information
+
+Check CPU architecture and NIC bandwidth:
+
+```bash
+./scripts/show_system_info.sh
+```
+
 ## Quick Start
 
 ### 1. Install Dependencies
