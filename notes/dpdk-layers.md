@@ -531,7 +531,7 @@ PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
 ┃  │  ✅ Completion Queue (CQ)                                      │┃
 ┃  │  • Hardware writes completion status here                     │┃
 ┃  │  • Driver polls CQ to free mbufs (no interrupts)              │┃
-┃  │  • Updates wqe_ci when packets complete                       │┃
+┃  │  • Updates wqe_pi when packets complete (from CQE)            │┃
 ┃  └────────────────────────────────────────────────────────────────┘┃
 ┃                                                                     ┃
 ┃  ⚠️  IMPORTANT: Physical Memory Location                           ┃
@@ -677,7 +677,7 @@ PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
       │ For each mbuf:                │
       │  1. Write WQE descriptor      │ ← WQE Ring Buffer (PMD Layer)
       │  2. Store mbuf pointer        │ ← SW TX Queue (elts[])
-      │  3. Increment wqe_pi          │
+      │  3. Increment wqe_ci          │
       └───────────────────────────────┘
               ↓
       Ring doorbell (notify NIC)
@@ -696,9 +696,10 @@ PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
               ↓
       ┌───────────────────────────────┐
       │ For each completion:          │
-      │  1. Read elts[wqe_ci]         │ ← Get mbuf pointer (PMD Layer)
-      │  2. Call rte_mempool_put_bulk │ ─┐
-      │  3. Increment wqe_ci          │  │
+      │  1. Update wqe_pi from CQE    │ ← NIC reports completed WQE
+      │  2. Read elts[], free mbufs   │ ← PMD Layer gets mbuf pointer
+      │  3. Call rte_mempool_put_bulk │ ─┐
+      │  4. Update elts_tail          │  │
       └───────────────────────────────┘  │
               │                           │
               │                           ↓
@@ -722,14 +723,11 @@ PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
 ```
 ┌─────────────────────────────────────┐
 │  Application Layer (Pktgen)         │
-│                                     │
-│  rte_mempool_create()              │ ──→ Create mbuf mempool
-│            ↓                        │     (via DPDK Core Libraries)
+│  rte_mempool_create()               │ ──→ Create mbuf mempool (via DPDK Core Libraries)
 └─────────────────────────────────────┘
             ↓
 ┌─────────────────────────────────────┐
 │  DPDK Core Libraries (Mempool)      │
-│                                     │
 │  • Allocate 32,768 mbufs            │
 │  • Setup per-core caches            │
 │  • Return mempool handle            │
@@ -737,55 +735,43 @@ PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
             ↓
 ┌─────────────────────────────────────┐
 │  Application Layer (Pktgen)         │
-│                                     │
-│  pktgen_packet_ctor()              │ ──→ Fill packet templates
-│  • Pre-fill headers                 │     (headers, patterns)
+│  pktgen_packet_ctor()               │ 
+│  • Pre-fill headers                 │ 
 │  • Setup packet patterns            │
 └─────────────────────────────────────┘
 ```
-
 **Code Location**: `pktgen.c:750+` (pktgen_packet_ctor)
-
 **Key Point**: Mempool is **shared across cores** - potential contention point!
-
 ---
-
-#### STEP 1.5: Fast Path - Get Pre-filled mbufs
-
+#### STEP 2: Fast Path - Get Pre-filled mbufs
 ```
 ┌─────────────────────────────────────┐
 │  Application Layer (Pktgen)         │
-│                                     │
-│  rte_mempool_get_bulk(mp,          │ ──→ Request batch of mbufs
+│  rte_mempool_get_bulk(mp,           │ ──→ Request batch of mbufs
 │      mbufs[], count)                │
 └─────────────────────────────────────┘
             ↓
 ┌─────────────────────────────────────┐
 │  DPDK Core Libraries (Mempool)      │
-│                                     │
 │  • Check per-core cache first       │
 │  • Return pre-filled mbufs          │
-│  • Zero-copy (reuse pattern)        │
+│  • Reuse pattern                    │
 └─────────────────────────────────────┘
             ↓
     mbufs[] ready for transmission
 ```
-
 **Code Location**: `pktgen.c:1297+` (pktgen_send_pkts)
-
 **Key API**: `rte_mempool_get_bulk()` NOT `rte_pktmbuf_alloc()`!
-
 ---
 
-#### STEP 2: Submit to TX Queue
-
+#### STEP 3: Submit to TX Queue
 ```
 ┌─────────────────────────────────────┐
 │  Application Layer (Pktgen)         │
 │                                     │
-│  tx_send_packets(mbufs[], count)   │ ──→ Batch mbufs into array
+│  tx_send_packets(mbufs[], count)    │ ──→ Batch mbufs into array
 │            ↓                        │
-│  rte_eth_tx_burst(port, queue,     │ ──→ Call DPDK Core API
+│  rte_eth_tx_burst(port, queue,      │ ──→ Call DPDK Core API
 │                   mbufs[], count)   │
 └─────────────────────────────────────┘
             ↓
@@ -797,13 +783,12 @@ PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
             ↓
 ┌─────────────────────────────────────┐
 │  PMD Layer (MLX5)                   │
-│                                     │
 │  mlx5_tx_burst(mbufs[], count)     │
 │            ↓                        │
 │  For each mbuf:                     │
-│    1. Build WQE descriptor         │ ──→ Write to WQE ring at wqe_pi
-│    2. Store mbuf pointer           │ ──→ Save to elts[wqe_pi]
-│    3. Increment wqe_pi             │ ──→ Advance producer index
+│    1. Build WQE descriptor         │ ──→ Write to WQE ring at wqe_ci
+│    2. Store mbuf pointer           │ ──→ Save to elts[elts_head]
+│    3. Increment wqe_ci, elts_head  │ ──→ Advance producer indices
 │            ↓                        │
 │  Ring doorbell (MMIO write)        │ ──→ Notify NIC of new packets
 └─────────────────────────────────────┘
@@ -818,14 +803,14 @@ PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
 
 ---
 
-#### STEP 3: Hardware Processing
+#### STEP 4: Hardware Processing
 
 ```
 ┌─────────────────────────────────────┐
 │  Hardware (NIC)                     │
 │                                     │
-│  DMA reads WQEs                    │ ──→ From WQE ring buffer
-│            ↓                        │     (host memory)
+│  DMA reads WQEs                    │ ──→ From WQE ring buffer 
+│            ↓                        │     
 │  DMA reads packet data             │ ──→ From mbuf data buffers
 │            ↓                        │
 │  Transmit packets to wire          │
@@ -840,7 +825,7 @@ PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
 
 ---
 
-#### STEP 4: Completion Processing
+#### STEP 5: Completion Processing
 
 ```
 ┌─────────────────────────────────────┐
@@ -853,9 +838,10 @@ PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
 │  mlx5_tx_free_mbuf()               │
 │            ↓                        │
 │  For each completed packet:         │
-│    1. Read elts[wqe_ci]            │ ──→ Get mbuf pointer
-│    2. rte_mempool_put_bulk()       │ ─┐
-│    3. Increment wqe_ci             │  │
+│    1. Update wqe_pi from CQE       │ ──→ NIC reports completion
+│    2. Read elts[elts_tail]         │ ──→ Get mbuf pointer
+│    3. rte_mempool_put_bulk()       │ ─┐
+│    4. Increment elts_tail          │  │
 └─────────────────────────────────────┘  │
             │                            │
             │                            ↓
@@ -874,7 +860,7 @@ PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
 - PMD: `dpdk/drivers/net/mlx5/mlx5_tx.h:542-567` (mlx5_tx_free_mbuf)
 - DPDK Core Libraries: `dpdk/lib/mempool/rte_mempool.h` (rte_mempool_put_bulk)
 
-**Key Point**: Polling-based (not interrupt-driven) for low latency!
+**Key Point**: Polling-based completion handling (not interrupt-driven) for low latency!
 
 ---
 
@@ -887,47 +873,56 @@ PMD:          mlx5_tx_burst()                →  write WQEs, ring doorbell
 │                    WQE Ring Buffer (Size = 1024)                    │
 └─────────────────────────────────────────────────────────────────────┘
 
-    Consumer Index (wqe_ci)              Producer Index (wqe_pi)
-            ↓                                    ↓
+  ⚠️ MLX5 Naming (from "Completion" perspective):
+    wqe_ci = SW submits WQE (waiting for completion)
+    wqe_pi = NIC completed WQE (produces completion)
+
+    wqe_pi (Completed)              wqe_ci (Submitted)
+            ↓                                  ↓
   ┏━━━━┳━━━━┳━━━━┳━━━━┳━━━━┳━━━━┳━━━━┳━━━━┳━━━━┳━━━━┳━━━━┳━━━━┓
-  ┃Free┃Free┃Used┃Used┃Used┃Used┃Free┃Free┃Free┃Free┃Free┃Free┃
+  ┃Done┃Done┃USED┃USED┃USED┃USED┃USED┃USED┃USED┃Free┃Free┃Free┃
   ┗━━━━┻━━━━┻━━━━┻━━━━┻━━━━┻━━━━┻━━━━┻━━━━┻━━━━┻━━━━┻━━━━┻━━━━┛
   │  0    1    2    3    4    5    6    7    8    9   10   11 ...│
-            ↑                    ↑
-            └────────────────────┘
-               Queue Depth
-            (In-flight packets)
+            ↑                                  ↑
+            └──────────────────────────────────┘
+               Queue Depth = 9 - 2 = 7
+                (In-flight WQEBBs)
 ```
 
 ### Formula & Calculation
 
+**IMPORTANT**: wqe_ci and wqe_pi are **absolute counters** (not ring indices)!
+
 ```
-Queue Depth = (wqe_pi - wqe_ci) mod wqe_s
+Queue Depth (In-flight WQEBBs) = wqe_ci - wqe_pi
 ```
 
-**Example from Logs**:
+**Example Case**:
 ```
-wqe_ci = 648    (Consumer Index - packets completed by NIC)
-wqe_pi = 351    (Producer Index - packets submitted by app)
-wqe_s  = 1024   (Ring size - wraps around)
+wqe_ci = 1026   (SW submitted up to WQEBB 1026)
+wqe_pi = 441    (NIC completed up to WQEBB 441)
 
-Calculation (with wraparound):
-  wqe_used = (351 + 1024 - 648) mod 1024 = 727 mod 1024 = 297
+Calculation:
+  wqe_used = wqe_ci - wqe_pi
+           = 1026 - 441
+           = 585 WQEBBs
 ```
 
 **Interpretation**:
-- ✅ **297 packets in flight** (waiting for completion)
-- ✅ **29% queue utilization** (297 / 1024)
-- ✅ **727 free slots available**
+- ✅ **585 WQEBBs in flight** (submitted but not yet completed)
+- ✅ **57% queue utilization** (585 / 1024)
+- ✅ **439 free slots available** (1024 - 585)
 
 ### Queue States
 
-| Queue Depth | Utilization | Interpretation | Action Needed |
+| Queue Depth | Utilization | Interpretation | What Happens |
 |-------------|-------------|----------------|---------------|
 | < 10% | Very Low | NIC processing faster than app submission | Can increase TX rate |
 | 20-50% | **Healthy** | Balanced state | ✅ Optimal |
-| 50-80% | High | Queue filling up | Monitor for drops |
-| > 80% | Critical | Risk of overflow | Reduce TX rate or increase queue size |
+| 50-80% | High | Queue filling up | tx_burst() may return < requested |
+| > 80% | Critical | Nearly full | Frequent partial accepts, app must retry |
+
+**Note**: PMD does NOT drop packets. When queue is full, `tx_burst()` returns partial accept count (back-pressure). Application must handle retries or decide to drop.
 
 ---
 
@@ -974,8 +969,7 @@ Calculation (with wraparound):
 │  📍 [PMD LAYER - mlx5_tx.h:3691-3715]                             │
 │  ─────────────────────────────────────                            │
 │  ✅ Queue Depth Tracking                                          │
-│     • What: WQE queue utilization (wqe_ci - wqe_pi)              │
-│     • When: Every 10,000th completion (sampled for efficiency)   │
+│     • What: In-flight WQEBBs (wqe_ci - wqe_pi, WQEBB count)      │
 │     • Why: Monitor queue saturation                              │
 │     • Variable: ak_txq_stats[lcore_id].total_depth               │
 │                                                                    │
@@ -995,68 +989,7 @@ Calculation (with wraparound):
 
 ---
 
-## 7. Configuration Bug Fixed
-
-### The Bug
-
-**File**: `Pktgen-DPDK/app/pktgen-port-cfg.c:493`
-
-#### ❌ BEFORE (Buggy Code)
-
-```c
-ret = rte_eth_tx_queue_setup(pid, q, pktgen.nb_rxd, pinfo->sid, &txq_conf);
-                                     ^^^^^^^^^^^^^^
-                                     Wrong! Using RX descriptor count
-```
-
-**Impact**:
-- ❌ TX queue size = RX queue size (both 1024)
-- ❌ Changing `DEFAULT_TX_DESC` had no effect
-- ❌ `wqe_s` remained 1024 regardless of configuration
-- ❌ Cannot independently tune TX/RX queue sizes
-
----
-
-#### ✅ AFTER (Fixed Code)
-
-```c
-ret = rte_eth_tx_queue_setup(pid, q, pktgen.nb_txd, pinfo->sid, &txq_conf);
-                                     ^^^^^^^^^^^^^^
-                                     Correct! Using TX descriptor count
-```
-
-**Benefits**:
-- ✅ TX queue size = `DEFAULT_TX_DESC` (configurable)
-- ✅ Can adjust TX descriptor ring independently
-- ✅ `wqe_s` reflects configured value
-- ✅ Proper control over TX queue depth
-
----
-
-### Configuration Flow
-
-```
-Application Layer:
-  pktgen-constants.h:
-    DEFAULT_TX_DESC = 2048   ← Can now configure this!
-            ↓
-  pktgen-main.c:462:
-    pktgen.nb_txd = DEFAULT_TX_DESC
-            ↓
-  pktgen-port-cfg.c:493:
-    rte_eth_tx_queue_setup(..., pktgen.nb_txd, ...)  ← Fixed!
-            ↓
-PMD Layer:
-  MLX5 driver receives nb_txd and sets:
-    txq->wqe_s = nb_txd
-            ↓
-Hardware:
-  WQE ring allocated with wqe_s descriptors
-```
-
----
-
-## 8. Summary Table
+## Summary Table
 
 ### Layer-by-Layer Comparison
 
@@ -1155,9 +1088,12 @@ rte_mempool_ops_enqueue_bulk(mp, cache_objs, cache->len);
 **⚠️ Terminology Clarification:**
 - **SQ (Send Queue)** = **WQE Ring** = descriptor ring buffer (DMA-mapped memory)
 - **TX Control Structure** = `struct mlx5_txq_data` = manages WQE Ring (NOT a queue!)
-  - Contains: wqe_ci/wqe_pi (WQE Ring indices), wqes (→ WQE Ring), elts[] (mbuf pointers)
+  - Contains: wqe_ci/wqe_pi (absolute counters!), wqes (→ WQE Ring), elts[] (mbuf pointers)
+  - **IMPORTANT**: wqe_ci/wqe_pi are NOT ring indices - they're absolute counters that keep increasing
+    - wqe_ci: Total WQEBBs submitted by SW (Producer of completions to wait for)
+    - wqe_pi: Total WQEBBs completed by NIC (Consumer reads from CQE)
   - elts[] and WQE Ring: **same size (1024)** but **NOT 1:1 mapping** (see N:M mapping below)
-- **Why confusing naming?** "wqe_pi/wqe_ci" are indices **for the WQE Ring**, not for mlx5_txq_data itself
+- **Why confusing naming?** "PI/CI" naming is from **"Completion" perspective** (who produces/consumes completions), not WQE perspective
 
 #### ⚠️ CRITICAL: WQE Ring ↔ elts[] N:M Mapping (NOT 1:1!)
 
@@ -1382,39 +1318,6 @@ rte_pktmbuf_free_seg(mbuf);          // Complete object free
   - WQE Ring, CQ, elts[] are all in **host RAM**
   - NIC accesses WQE Ring/CQ via DMA, not elts[]
 
-### 4️⃣ **Pktgen's Zero-Copy mbuf Reuse Pattern**
-- **NOT using** `rte_pktmbuf_alloc()` / `rte_pktmbuf_free()` in fast path
-- **Initialization**: Create packet templates once with `pktgen_packet_ctor()`
-- **Fast path**: Use `rte_mempool_get_bulk()` to retrieve pre-filled mbufs
-- **Completion**: PMD calls `rte_mempool_put_bulk()` to return mbufs
-- Zero-copy optimization - no per-packet allocation overhead
-
-### 5️⃣ **Performance Tracking**
-- Producer/Consumer tracking at different layers reveals bottlenecks
-- Queue depth monitoring prevents overflow
-- Burst timing measurements identify latency sources
-
-### 6️⃣ **Configuration Bug Fixed**
-- TX/RX queue sizes must be independently configurable
-- Bug: `pktgen-port-cfg.c:493` used `nb_rxd` instead of `nb_txd`
-- Fix enables proper tuning of TX descriptor ring sizes
-- Hardware queue size (`wqe_s`) now correctly derives from `nb_txd`
-
-### 7️⃣ **Complete Data Flow**
-```
-[Initialization]
-rte_mempool_create() → pktgen_packet_ctor() (fill templates)
-     ↓
-[Fast Path TX]
-rte_mempool_get_bulk() → rte_eth_tx_burst() → mlx5_tx_burst() →
-WQE write → DMA read → wire TX
-     ↓
-[Completion]
-Poll CQ → mlx5_tx_free_mbuf() → rte_mempool_put_bulk() → mbuf reuse
-```
-
-Each step involves different data structures and layers!
-
 ---
 
 ## Additional Notes
@@ -1469,7 +1372,3 @@ Example: 9000-byte Jumbo Frame
 - **Pktgen Documentation**: https://pktgen-dpdk.readthedocs.io/
 
 ---
-
-**Last Updated**: 2025-01-05
-**Project**: DPDK Performance Benchmarking & Optimization
-**Repository**: `/homes/inho/Autokernel/dpdk-bench/`
