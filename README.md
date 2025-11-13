@@ -160,6 +160,56 @@ make run-pktgen-with-lua-script
 
 ## Hardware Setup
 
+### Intel X710 NICs (10GbE)
+
+Intel X710 uses the i40e PMD (included in DPDK by default).
+
+1. **Identify your NIC:**
+   ```bash
+   # Find PCI address and interface name
+   lspci | grep Ethernet
+   ./dpdk/usertools/dpdk-devbind.py --status
+   ```
+
+2. **Bind NIC to DPDK:**
+   ```bash
+   # Take interface down (replace enp24s0f1np1 with your interface)
+   sudo ip link set enp24s0f1np1 down
+
+   # Load DPDK-compatible driver (choose one)
+   sudo modprobe vfio-pci          # Recommended (IOMMU support)
+   # OR
+   sudo modprobe uio_pci_generic   # Alternative (if IOMMU unavailable)
+
+   # Verify driver loaded
+   lsmod | grep -E "vfio|uio"
+
+   # Bind to DPDK driver (replace 0000:18:00.1 with your PCI address)
+   sudo ./dpdk/usertools/dpdk-devbind.py --bind=vfio-pci 0000:18:00.1
+   ```
+
+3. **Verify binding:**
+   ```bash
+   ./dpdk/usertools/dpdk-devbind.py --status
+   ```
+
+   Should show:
+   ```
+   Network devices using DPDK-compatible driver
+   ============================================
+   0000:18:00.1 'Ethernet Controller X710 for 10GbE SFP+ 1572' drv=vfio-pci unused=i40e
+   ```
+
+4. **Update `pktgen.config`:**
+   - Set `PKTGEN_PCI_ADDR` and `L3FWD_PCI_ADDR` to your NIC's PCI address
+   - Use NUMA node 0 cores if NIC is on NUMA 0 (check with `./scripts/show_system_info.sh`)
+
+5. **To restore kernel driver:**
+   ```bash
+   sudo ./dpdk/usertools/dpdk-devbind.py --bind=i40e 0000:18:00.1
+   sudo ip link set enp24s0f1np1 up
+   ```
+
 ### Mellanox ConnectX-5 NICs
 
 Works out of the box with MLX5 PMD (included in DPDK).
