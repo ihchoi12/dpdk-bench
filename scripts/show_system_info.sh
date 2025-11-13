@@ -16,7 +16,24 @@ echo "=== NUMA TOPOLOGY ==="
 lscpu | grep "NUMA node[0-9]" | while read line; do
   node=$(echo $line | awk '{print $1 " " $2}' | sed 's/://')
   cpus=$(echo $line | awk '{print $NF}')
-  echo "$node: $cpus"
+  echo "$node CPUs: $cpus"
+
+  # Show HT pairs
+  ht_pairs=""
+  declare -A seen
+  for cpu in $(echo $cpus | tr ',' ' '); do
+    if [ -z "${seen[$cpu]}" ]; then
+      sibling=$(cat /sys/devices/system/cpu/cpu$cpu/topology/thread_siblings_list 2>/dev/null)
+      if [ -n "$sibling" ]; then
+        pair=$(echo $sibling | tr ',' ' ')
+        ht_pairs="$ht_pairs [$sibling]"
+        for c in $pair; do
+          seen[$c]=1
+        done
+      fi
+    fi
+  done
+  echo "  HT pairs:$ht_pairs"
 done
 
 echo ""
