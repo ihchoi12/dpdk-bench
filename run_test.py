@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 DPDK Benchmark Test Runner
-Runs l3fwd on node8 and pktgen on node7, saves results to files with pyrem
+Runs l3fwd and pktgen on configured cluster nodes, saves results to files with pyrem
+Node configuration is defined in test_config.py CLUSTER CONFIG section
 """
 
 import argparse
@@ -42,17 +43,17 @@ experiment_id = ''
 def kill_procs():
     """Kill DPDK processes on all nodes"""
 
-    # Kill pktgen processes on node7
-    node7_cmd = ['sudo pkill -f pktgen']
-    node7 = pyrem.host.RemoteHost('node7')
-    node7_task = node7.run(node7_cmd, quiet=False)
-    
-    # Kill dpdk-l3fwd more precisely - target the executable name only
-    node8_cmd = ['sudo pkill dpdk-l3fwd']
-    node8 = pyrem.host.RemoteHost('node8')
-    node8_task = node8.run(node8_cmd, quiet=False)
-    
-    pyrem.task.Parallel([node7_task, node8_task], aggregate=True).start(wait=True)
+    # Kill pktgen processes on PKTGEN node
+    pktgen_cmd = ['sudo pkill -f pktgen']
+    pktgen_host = pyrem.host.RemoteHost(PKTGEN_NODE)
+    pktgen_task = pktgen_host.run(pktgen_cmd, quiet=False)
+
+    # Kill dpdk-l3fwd on L3FWD node
+    l3fwd_cmd = ['sudo pkill dpdk-l3fwd']
+    l3fwd_host = pyrem.host.RemoteHost(L3FWD_NODE)
+    l3fwd_task = l3fwd_host.run(l3fwd_cmd, quiet=False)
+
+    pyrem.task.Parallel([pktgen_task, l3fwd_task], aggregate=True).start(wait=True)
     print('KILLED LEGACY PROCESSES')
 
 # Setup ARP tables
@@ -67,9 +68,9 @@ def setup_arp_tables():
     pyrem.task.Parallel(arp_task, aggregate=True).start(wait=True)
 
 def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None):
-    """Run l3fwd on node8"""
+    """Run l3fwd on L3FWD node"""
     global experiment_id
-    print(f'RUNNING L3FWD on node8 with TX_DESC={tx_desc_value}, RX_DESC={rx_desc_value}')
+    print(f'RUNNING L3FWD on {L3FWD_NODE} with TX_DESC={tx_desc_value}, RX_DESC={rx_desc_value}')
     
     # Use provided config or default
     config = l3fwd_config if l3fwd_config else L3FWD_CONFIG
@@ -103,22 +104,23 @@ def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None):
     time.sleep(3)
 
 def run_pktgen(tx_desc_value=None, pktgen_config=None):
-    """Run pktgen on node7"""
+    """Run pktgen on PKTGEN node"""
     global experiment_id
-    print(f'RUNNING PKTGEN on node7 with TX_DESC={tx_desc_value}')
-    
+    print(f'RUNNING PKTGEN on {PKTGEN_NODE} with TX_DESC={tx_desc_value}')
+
     # Use provided config or default
     config = pktgen_config if pktgen_config else PKTGEN_CONFIG
-    
+
     # Build TX descriptor argument if specified
     # Note: --txd is an application option, goes after -- separator
     tx_desc_arg = ""
     if tx_desc_value and tx_desc_value != 1024:  # Only add if different from default
         tx_desc_arg = f" --txd={tx_desc_value}"
-    
+
     host = pyrem.host.RemoteHost(config["node"])
     cmd = [f'cd {config["working_dir"]} && '
            f'sudo -E {ENV} '
+           f'DISABLE_PCM=1 '  # Disable PCM
            f'PKTGEN_DURATION={PKTGEN_DURATION} '
            f'PKTGEN_PACKET_SIZE={PKTGEN_PACKET_SIZE} '
            f'{config["binary_path"]} '
@@ -132,18 +134,358 @@ def run_pktgen(tx_desc_value=None, pktgen_config=None):
            f'{tx_desc_arg} '
            f'-f {config["script_file"]} '
            f'> {DATA_PATH}/{experiment_id}.pktgen 2>&1']
-    
+
     task = host.run(cmd, quiet=False)
     print(f'PKTGEN command: {cmd}')
     pyrem.task.Parallel([task], aggregate=True).start(wait=True)
-    
+
     # Format and print L3FWD command with line breaks for readability
     # cmd_formatted = cmd[0].replace(' && ', ' &&\n    ').replace(' -', '\n    -').replace(' --', '\n    --')
     # Remove multiple consecutive newlines and fix spacing
     # cmd_formatted = '\n    '.join(line.strip() for line in cmd_formatted.split('\n') if line.strip())
     # print(f'PKTGEN command: {cmd}\n\n    {cmd_formatted}')
-    
+
     # time.sleep(3)
+
+def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
+    """Run pktgen on PKTGEN node and start perf stat after delay"""
+    global experiment_id
+    print(f'RUNNING PKTGEN on {PKTGEN_NODE} with TX_DESC={tx_desc_value} and perf monitoring')
+
+    # Use provided config or default
+    config = pktgen_config if pktgen_config else PKTGEN_CONFIG
+
+    # Build TX descriptor argument if specified
+    tx_desc_arg = ""
+    if tx_desc_value and tx_desc_value != 1024:
+        tx_desc_arg = f" --txd={tx_desc_value}"
+
+    host = pyrem.host.RemoteHost(config["node"])
+
+    # Calculate timing for sequential monitoring
+    pcm_start_time = PERF_START_DELAY + PERF_DURATION + PCM_START_DELAY
+    neohost_start_time = pcm_start_time + PCM_DURATION + NEOHOST_START_DELAY
+
+    # Extract PCI address (remove devargs like ",txqs_min_inline=0")
+    pci_address = config["pci_address"].split(',')[0]
+
+    # Start pktgen in background, then run perf, pcm-pcie, and neohost sequentially
+    pktgen_cmd = (f'cd {config["working_dir"]} && '
+                  f'sudo -E {ENV} '
+                  f'DISABLE_PCM=1 '
+                  f'PKTGEN_DURATION={PKTGEN_DURATION} '
+                  f'PKTGEN_PACKET_SIZE={PKTGEN_PACKET_SIZE} '
+                  f'{config["binary_path"]} '
+                  f'{config["lcores"]} '
+                  f'{config["memory_channels"]} '
+                  f'-a {config["pci_address"]} '
+                  f'{config["proc_type"]} '
+                  f'--file-prefix={config["file_prefix"]} '
+                  f'-- -m "{config["port_map"]}" '
+                  f'{config["app_args"]}'
+                  f'{tx_desc_arg} '
+                  f'-f {config["script_file"]} '
+                  f'> {DATA_PATH}/{experiment_id}.pktgen 2>&1 & '
+                  f'PKTGEN_PID=$!; '
+                  f'sleep {PERF_START_DELAY}; '
+                  f'sudo timeout {PERF_DURATION} perf stat -e llc_misses.pcie_read,llc_misses.pcie_write,unc_cha_llc_lookup.data_read,unc_cha_llc_lookup.write -I 1000 -a --per-socket '
+                  f'> {DATA_PATH}/{experiment_id}.perf 2>&1; '
+                  f'sleep {PCM_START_DELAY}; '
+                  f'sudo timeout {PCM_DURATION} {DPDK_BENCH_HOME}/pcm/build/bin/pcm-pcie -B '
+                  f'> {DATA_PATH}/{experiment_id}.pcm-pcie 2>&1; '
+                  f'sleep {NEOHOST_START_DELAY}; '
+                  f'sudo timeout {NEOHOST_DURATION} /homes/friedj/neohost/miniconda3/envs/py27/bin/python '
+                  f'/homes/friedj/neohost/sdk/opt/neohost/sdk/get_device_performance_counters.py '
+                  f'--dev-uid={pci_address} --get-analysis --run-loop 2>&1 | '
+                  f'sed "s/\\x1b\\[[0-9;]*m//g" '
+                  f'> {DATA_PATH}/{experiment_id}.neohost; '
+                  f'wait $PKTGEN_PID 2>/dev/null || sleep {PKTGEN_DURATION - neohost_start_time - NEOHOST_DURATION}')
+
+    cmd = [pktgen_cmd]
+    task = host.run(cmd, quiet=False)
+    print(f'PKTGEN+PERF command: {pktgen_cmd}')
+    pyrem.task.Parallel([task], aggregate=True).start(wait=True)
+
+def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_value, pktgen_lcore_count):
+    """Parse pktgen and perf stat results"""
+    result_str = ''
+
+    # Parse Pktgen results for TX rate
+    pktgen_file = f'{DATA_PATH}/{experiment_id}.pktgen'
+    pktgen_tx_pkts = 0
+    pktgen_tx_rate = 0
+    pktgen_status = 'unknown'
+
+    if os.path.exists(pktgen_file):
+        try:
+            with open(pktgen_file, "r", encoding='utf-8', errors='ignore') as file:
+                pktgen_text = file.read()
+
+            # Look for Total TX packets in PKTGEN Packet Statistics Summary
+            packet_stats_pattern = r'PKTGEN Packet Statistics Summary.*?Total\s+\d+\s+(\d+).*?====='
+            packet_stats_match = re.search(packet_stats_pattern, pktgen_text, re.DOTALL)
+            if packet_stats_match:
+                pktgen_tx_pkts = int(packet_stats_match.group(1))
+                pktgen_status = 'success'
+                print(f"DEBUG Pktgen: Found TX packets: {pktgen_tx_pkts}")
+            else:
+                # Try to sum individual lcore TX stats
+                lcore_matches = re.findall(r'^\s*(\d+)\s+\d+\s+(\d+)\s+', pktgen_text, re.MULTILINE)
+                if lcore_matches:
+                    lcore_dict = {}
+                    for match in lcore_matches:
+                        lcore_id = int(match[0])
+                        lcore_dict[lcore_id] = int(match[1])  # TX
+                    pktgen_tx_pkts = sum(lcore_dict.values())
+                    pktgen_status = 'success'
+                    print(f"DEBUG Pktgen: Summed {len(lcore_dict)} lcore TX stats: {pktgen_tx_pkts}")
+                else:
+                    pktgen_status = 'error'
+                    print(f"DEBUG Pktgen: No TX packet data found")
+
+        except Exception as e:
+            print(f"ERROR parsing Pktgen file {pktgen_file}: {e}")
+            pktgen_status = 'error'
+
+    # Calculate TX rate (Mpps)
+    duration_sec = PKTGEN_DURATION
+    pktgen_tx_rate = round(pktgen_tx_pkts / (duration_sec * 1_000_000), 3) if pktgen_tx_pkts > 0 else 0
+
+    # Parse perf stat results
+    perf_file = f'{DATA_PATH}/{experiment_id}.perf'
+    llc_pcie_read_mb = 0
+    llc_pcie_write_mb = 0
+    unc_cha_llc_lookup_data_read = 0
+    unc_cha_llc_lookup_write = 0
+
+    if os.path.exists(perf_file):
+        try:
+            with open(perf_file, "r", encoding='utf-8', errors='ignore') as file:
+                perf_text = file.read()
+
+            # Parse perf stat output: "3.005254200 S0        1             85,760 Bytes llc_misses.pcie_read"
+            # Find matching pairs from same timestamp
+            lines = perf_text.strip().split('\n')
+            timestamp_data = {}
+
+            for line in lines:
+                # Match pattern for Bytes events: timestamp S0 1 value Bytes event_name
+                match_bytes = re.match(r'\s*([\d\.]+)\s+S\d+\s+\d+\s+([\d,]+)\s+Bytes\s+(llc_misses\.pcie_(?:read|write))', line)
+                if match_bytes:
+                    timestamp = match_bytes.group(1)
+                    value_bytes = int(match_bytes.group(2).replace(',', ''))
+                    event = match_bytes.group(3)
+
+                    if timestamp not in timestamp_data:
+                        timestamp_data[timestamp] = {}
+                    timestamp_data[timestamp][event] = value_bytes
+
+                # Match pattern for count events: timestamp S0 1 value event_name (no unit)
+                match_count = re.match(r'\s*([\d\.]+)\s+S\d+\s+\d+\s+([\d,]+)\s+(unc_cha_llc_lookup\.(?:data_read|write))', line)
+                if match_count:
+                    timestamp = match_count.group(1)
+                    value_count = int(match_count.group(2).replace(',', ''))
+                    event = match_count.group(3)
+
+                    if timestamp not in timestamp_data:
+                        timestamp_data[timestamp] = {}
+                    timestamp_data[timestamp][event] = value_count
+
+            # Average all complete sets (4 events)
+            read_values = []
+            write_values = []
+            lookup_data_read_values = []
+            lookup_write_values = []
+
+            for timestamp, events in timestamp_data.items():
+                if ('llc_misses.pcie_read' in events and 'llc_misses.pcie_write' in events and
+                    'unc_cha_llc_lookup.data_read' in events and 'unc_cha_llc_lookup.write' in events):
+                    read_values.append(events['llc_misses.pcie_read'])
+                    write_values.append(events['llc_misses.pcie_write'])
+                    lookup_data_read_values.append(events['unc_cha_llc_lookup.data_read'])
+                    lookup_write_values.append(events['unc_cha_llc_lookup.write'])
+
+            if read_values and write_values and lookup_data_read_values and lookup_write_values:
+                # Skip first 2 samples for warm-up
+                read_values_filtered = read_values[2:] if len(read_values) > 2 else read_values
+                write_values_filtered = write_values[2:] if len(write_values) > 2 else write_values
+                lookup_data_read_filtered = lookup_data_read_values[2:] if len(lookup_data_read_values) > 2 else lookup_data_read_values
+                lookup_write_filtered = lookup_write_values[2:] if len(lookup_write_values) > 2 else lookup_write_values
+
+                # Convert from Bytes to MB for llc_misses
+                llc_pcie_read_mb = round(sum(read_values_filtered) / len(read_values_filtered) / (1024 * 1024), 3) if read_values_filtered else 0
+                llc_pcie_write_mb = round(sum(write_values_filtered) / len(write_values_filtered) / (1024 * 1024), 3) if write_values_filtered else 0
+
+                # Keep raw count for unc_cha_llc_lookup
+                unc_cha_llc_lookup_data_read = round(sum(lookup_data_read_filtered) / len(lookup_data_read_filtered), 3) if lookup_data_read_filtered else 0
+                unc_cha_llc_lookup_write = round(sum(lookup_write_filtered) / len(lookup_write_filtered), 3) if lookup_write_filtered else 0
+
+                print(f"DEBUG Perf: Found {len(read_values)} samples (using {len(read_values_filtered)} after skipping first 2)")
+                print(f"DEBUG Perf: LLC PCIe Read: {llc_pcie_read_mb} MB, Write: {llc_pcie_write_mb} MB")
+                print(f"DEBUG Perf: LLC Lookup Data Read: {unc_cha_llc_lookup_data_read}, Write: {unc_cha_llc_lookup_write}")
+            else:
+                print(f"DEBUG Perf: No complete timestamp sets found (need all 4 events)")
+
+        except Exception as e:
+            print(f"ERROR parsing perf file {perf_file}: {e}")
+
+    # Parse pcm-pcie results
+    pcm_file = f'{DATA_PATH}/{experiment_id}.pcm-pcie'
+    pcm_pcie_rdcur = 0
+    pcm_pcie_rd_mb = 0
+    pcm_pcie_wr_mb = 0
+
+    if os.path.exists(pcm_file):
+        try:
+            with open(pcm_file, "r", encoding='utf-8', errors='ignore') as file:
+                pcm_text = file.read()
+
+            # Parse pcm-pcie output
+            # Format: " 0       90 K       30 K     0       0     416 K    320 K    15 K      7767 K            28 M"
+            # Columns: Skt | PCIRdCur | RFO | CRd | DRd | ItoM | PRd | WiL | PCIe Rd (B) | PCIe Wr (B)
+            lines = pcm_text.strip().split('\n')
+            rdcur_values = []
+            rd_bytes_values = []
+            wr_bytes_values = []
+
+            for line in lines:
+                # Skip header and separator lines
+                if 'Skt' in line or '---' in line or not line.strip():
+                    continue
+
+                # Match data lines (socket 0 or aggregate *)
+                # Pattern: whitespace, socket number/*, then values
+                match = re.match(r'\s*[\d\*]\s+([\d\.]+\s*[KMG]?)\s+[\d\.]+\s*[KMG]?\s+[\d\.]+\s*[KMG]?\s+[\d\.]+\s*[KMG]?\s+[\d\.]+\s*[KMG]?\s+[\d\.]+\s*[KMG]?\s+[\d\.]+\s*[KMG]?\s+([\d\.]+\s*[KMG]?)\s+([\d\.]+\s*[KMG]?)', line)
+                if match:
+                    # Parse PCIRdCur (count, not bytes)
+                    def parse_count(s):
+                        s = s.strip()
+                        if 'K' in s:
+                            return float(s.replace('K', '').strip()) * 1000
+                        elif 'M' in s:
+                            return float(s.replace('M', '').strip()) * 1000000
+                        elif 'G' in s:
+                            return float(s.replace('G', '').strip()) * 1000000000
+                        else:
+                            return float(s) if s else 0
+
+                    # Parse PCIe Rd/Wr (bytes)
+                    def parse_bytes(s):
+                        s = s.strip()
+                        if 'K' in s:
+                            return float(s.replace('K', '').strip()) * 1024
+                        elif 'M' in s:
+                            return float(s.replace('M', '').strip()) * 1024 * 1024
+                        elif 'G' in s:
+                            return float(s.replace('G', '').strip()) * 1024 * 1024 * 1024
+                        else:
+                            return float(s) if s else 0
+
+                    rdcur = parse_count(match.group(1))
+                    rd_bytes = parse_bytes(match.group(2))
+                    wr_bytes = parse_bytes(match.group(3))
+
+                    rdcur_values.append(rdcur)
+                    rd_bytes_values.append(rd_bytes)
+                    wr_bytes_values.append(wr_bytes)
+
+            if rdcur_values and rd_bytes_values and wr_bytes_values:
+                # Skip first 2 samples for warm-up
+                rdcur_values_filtered = rdcur_values[2:] if len(rdcur_values) > 2 else rdcur_values
+                rd_bytes_values_filtered = rd_bytes_values[2:] if len(rd_bytes_values) > 2 else rd_bytes_values
+                wr_bytes_values_filtered = wr_bytes_values[2:] if len(wr_bytes_values) > 2 else wr_bytes_values
+
+                # Calculate averages
+                # PCIRdCur: convert to M (millions)
+                pcm_pcie_rdcur = round(sum(rdcur_values_filtered) / len(rdcur_values_filtered) / 1000000, 3) if rdcur_values_filtered else 0
+                # PCIe Rd/Wr: convert to MB
+                pcm_pcie_rd_mb = round(sum(rd_bytes_values_filtered) / len(rd_bytes_values_filtered) / (1024 * 1024), 3) if rd_bytes_values_filtered else 0
+                pcm_pcie_wr_mb = round(sum(wr_bytes_values_filtered) / len(wr_bytes_values_filtered) / (1024 * 1024), 3) if wr_bytes_values_filtered else 0
+                print(f"DEBUG PCM: Found {len(rdcur_values)} samples (using {len(rdcur_values_filtered)} after skipping first 2)")
+                print(f"DEBUG PCM: PCIRdCur: {pcm_pcie_rdcur} M, PCIe Rd: {pcm_pcie_rd_mb} MB, PCIe Wr: {pcm_pcie_wr_mb} MB")
+            else:
+                print(f"DEBUG PCM: No data found")
+
+        except Exception as e:
+            print(f"ERROR parsing PCM file {pcm_file}: {e}")
+
+    # Parse neohost results
+    neohost_file = f'{DATA_PATH}/{experiment_id}.neohost'
+    neohost_outbound_stalled_reads = 0
+    neohost_pcie_inbound_bw = 0
+    neohost_pcie_outbound_bw = 0
+
+    if os.path.exists(neohost_file):
+        try:
+            with open(neohost_file, "r", encoding='utf-8', errors='ignore') as file:
+                neohost_text = file.read()
+
+            lines = neohost_text.strip().split('\n')
+            outbound_stalled_reads_values = []
+            pcie_inbound_bw_values = []
+            pcie_outbound_bw_values = []
+
+            for line in lines:
+                # Parse "Outbound Stalled Reads" from Counter section
+                # Format: || Outbound Stalled Reads                                    || 0               ||
+                if 'Outbound Stalled Reads' in line and '||' in line:
+                    match = re.search(r'\|\|\s*Outbound Stalled Reads\s*\|\|\s*([\d,]+)\s*\|\|', line)
+                    if match:
+                        value = int(match.group(1).replace(',', ''))
+                        outbound_stalled_reads_values.append(value)
+
+                # Parse "PCIe Inbound Used BW" from Performance Analysis section
+                # Format: ||| PCIe Inbound Used BW                || 8.8684        [Gb/s]             ||
+                if 'PCIe Inbound Used BW' in line and '|||' in line:
+                    match = re.search(r'\|\|\|\s*PCIe Inbound Used BW\s*\|\|\s*([\d,\.]+)\s*\[Gb/s\]', line)
+                    if match:
+                        value = float(match.group(1).replace(',', ''))
+                        pcie_inbound_bw_values.append(value)
+
+                # Parse "PCIe Outbound Used BW" from Performance Analysis section
+                # Format: ||| PCIe Outbound Used BW               || 0.6274        [Gb/s]             ||
+                if 'PCIe Outbound Used BW' in line and '|||' in line:
+                    match = re.search(r'\|\|\|\s*PCIe Outbound Used BW\s*\|\|\s*([\d,\.]+)\s*\[Gb/s\]', line)
+                    if match:
+                        value = float(match.group(1).replace(',', ''))
+                        pcie_outbound_bw_values.append(value)
+
+            # Skip first 2 samples for warm-up
+            if outbound_stalled_reads_values:
+                filtered = outbound_stalled_reads_values[2:] if len(outbound_stalled_reads_values) > 2 else outbound_stalled_reads_values
+                neohost_outbound_stalled_reads = round(sum(filtered) / len(filtered), 3) if filtered else 0
+            if pcie_inbound_bw_values:
+                filtered = pcie_inbound_bw_values[2:] if len(pcie_inbound_bw_values) > 2 else pcie_inbound_bw_values
+                neohost_pcie_inbound_bw = round(sum(filtered) / len(filtered), 3) if filtered else 0
+            if pcie_outbound_bw_values:
+                filtered = pcie_outbound_bw_values[2:] if len(pcie_outbound_bw_values) > 2 else pcie_outbound_bw_values
+                neohost_pcie_outbound_bw = round(sum(filtered) / len(filtered), 3) if filtered else 0
+
+            if outbound_stalled_reads_values or pcie_inbound_bw_values or pcie_outbound_bw_values:
+                total_samples = max(len(outbound_stalled_reads_values), len(pcie_inbound_bw_values), len(pcie_outbound_bw_values))
+                used_samples = max(len(outbound_stalled_reads_values[2:]) if len(outbound_stalled_reads_values) > 2 else len(outbound_stalled_reads_values),
+                                   len(pcie_inbound_bw_values[2:]) if len(pcie_inbound_bw_values) > 2 else len(pcie_inbound_bw_values),
+                                   len(pcie_outbound_bw_values[2:]) if len(pcie_outbound_bw_values) > 2 else len(pcie_outbound_bw_values))
+                print(f"DEBUG Neohost: Found {total_samples} samples (using {used_samples} after skipping first 2)")
+                print(f"DEBUG Neohost: Outbound Stalled Reads: {neohost_outbound_stalled_reads}, PCIe Inbound BW: {neohost_pcie_inbound_bw} Gb/s, PCIe Outbound BW: {neohost_pcie_outbound_bw} Gb/s")
+            else:
+                print(f"DEBUG Neohost: No data found")
+
+        except Exception as e:
+            print(f"ERROR parsing Neohost file {neohost_file}: {e}")
+
+    print(f"Pktgen: TX={pktgen_tx_pkts:,} TX_rate={pktgen_tx_rate} Mpps ({pktgen_status})")
+    print(f"Perf: LLC Lookup Data Read={unc_cha_llc_lookup_data_read}, Write={unc_cha_llc_lookup_write}")
+    print(f"Perf: LLC PCIe Read={llc_pcie_read_mb} MB, Write={llc_pcie_write_mb} MB")
+    print(f"PCM: PCIRdCur={pcm_pcie_rdcur} M, PCIe Rd={pcm_pcie_rd_mb} MB, PCIe Wr={pcm_pcie_wr_mb} MB")
+    print(f"Neohost: Outbound Stalled Reads={neohost_outbound_stalled_reads}, PCIe Inbound BW={neohost_pcie_inbound_bw} Gb/s, PCIe Outbound BW={neohost_pcie_outbound_bw} Gb/s")
+
+    # CSV format: EXPTID, txqs_min_inline, # TX cores, DEFAULT_RX/TX_DESC, TX rate (Mpps), unc_cha_llc_lookup.data_read, unc_cha_llc_lookup.write, llc_misses.pcie_read (MB), llc_misses.pcie_write (MB), PCIRdCur (M), PCIe Rd (MB), PCIe Wr (MB), Outbound Stalled Reads, PCIe Inbound Used BW (Gb/s), PCIe Outbound Used BW (Gb/s)
+    # TX cores = pktgen_lcore_count (which now directly represents TX core count, RX is always core 1)
+    tx_cores = pktgen_lcore_count
+    result_str += f'{experiment_id}, {txqs_min_inline}, {tx_cores}, {pktgen_tx_desc_value}, {pktgen_tx_rate}, {unc_cha_llc_lookup_data_read}, {unc_cha_llc_lookup_write}, {llc_pcie_read_mb}, {llc_pcie_write_mb}, {pcm_pcie_rdcur}, {pcm_pcie_rd_mb}, {pcm_pcie_wr_mb}, {neohost_outbound_stalled_reads}, {neohost_pcie_inbound_bw}, {neohost_pcie_outbound_bw}\n'
+
+    return result_str
 
 def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_value=None, pktgen_tx_desc_value=None, l3fwd_lcore_count=None, pktgen_lcore_count=None):
     """Parse DPDK test results from l3fwd and pktgen"""
@@ -467,54 +809,52 @@ def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_va
     return result_str
 
 def run_eval():
-    """Main DPDK evaluation function"""
+    """Main DPDK evaluation function - Pktgen only with perf monitoring"""
     global experiment_id
     global final_result
-    
-    print("Starting DPDK TX/RX Descriptor and LCORE Tests")
-    print(f"Testing L3FWD TX descriptor values: {L3FWD_TX_DESC_VALUES}")
-    print(f"Testing L3FWD RX descriptor values: {L3FWD_RX_DESC_VALUES}")
+
+    print("Starting DPDK Pktgen Tests with Perf Monitoring")
     print(f"Testing PKTGEN TX descriptor values: {PKTGEN_TX_DESC_VALUES}")
-    print(f"Testing L3FWD LCORE counts: {L3FWD_LCORE_VALUES}")
     print(f"Testing PKTGEN LCORE counts: {PKTGEN_LCORE_VALUES}")
-    
-    for l3fwd_lcore_count in L3FWD_LCORE_VALUES:
-        for pktgen_lcore_count in PKTGEN_LCORE_VALUES:
-            for l3fwd_tx_desc_value in L3FWD_TX_DESC_VALUES:
-                for l3fwd_rx_desc_value in L3FWD_RX_DESC_VALUES:
-                    for pktgen_tx_desc_value in PKTGEN_TX_DESC_VALUES:
-                        print(f'\n================ TESTING L3FWD_LCORE={l3fwd_lcore_count}, PKTGEN_LCORE={pktgen_lcore_count}, L3FWD_TX_DESC={l3fwd_tx_desc_value}, L3FWD_RX_DESC={l3fwd_rx_desc_value}, PKTGEN_TX_DESC={pktgen_tx_desc_value} =================')
-                        
-                        kill_procs()
-                        experiment_id = datetime.datetime.now().strftime('%Y%m%d-%H%M%S.%f')
-                        print(f'EXPTID: {experiment_id}')
-                        
-                        setup_arp_tables()
-                        
-                        # Generate configurations for current lcore counts
-                        l3fwd_config = get_l3fwd_config(l3fwd_lcore_count)
-                        pktgen_config = get_pktgen_config(pktgen_lcore_count)
-                        
-                        print(f'L3FWD Config: lcores={l3fwd_config["lcores"]}, config="{l3fwd_config["config"]}"')
-                        print(f'PKTGEN Config: lcores={pktgen_config["lcores"]}, port_map="{pktgen_config["port_map"]}"')
-                        
-                        # Run L3FWD with specific TX and RX descriptor values and lcore config
-                        run_l3fwd(l3fwd_tx_desc_value, l3fwd_rx_desc_value, l3fwd_config)
-                        
-                        # Run Pktgen with specific TX descriptor value and lcore config
-                        run_pktgen(pktgen_tx_desc_value, pktgen_config)
-                        
-                        # Stop processes
-                        kill_procs()
-                        time.sleep(3)
-                        
-                        # Parse results - pass all descriptor values and lcore counts
-                        print(f'================ {experiment_id} TEST COMPLETE =================')
-                        res = parse_dpdk_results(experiment_id, l3fwd_tx_desc_value, l3fwd_rx_desc_value, pktgen_tx_desc_value, l3fwd_lcore_count, pktgen_lcore_count)
-                        final_result = final_result + f'{res}'
-                        
-                        # Wait a bit between tests
-                        time.sleep(5)
+    print(f"Duration: {PKTGEN_DURATION} seconds")
+    print(f"Perf start delay: {PERF_START_DELAY} seconds")
+
+    # Extract txqs_min_inline from pktgen config
+    # Assuming format: "0000:31:00.1,txqs_min_inline=0"
+    pktgen_config_default = get_pktgen_config(2)  # Get any config to extract pci_address
+    pci_match = re.search(r'txqs_min_inline=(\d+)', pktgen_config_default["pci_address"])
+    txqs_min_inline = int(pci_match.group(1)) if pci_match else 0
+
+    for pktgen_lcore_count in PKTGEN_LCORE_VALUES:
+        for pktgen_tx_desc_value in PKTGEN_TX_DESC_VALUES:
+            print(f'\n================ TESTING PKTGEN_LCORE={pktgen_lcore_count}, PKTGEN_TX_DESC={pktgen_tx_desc_value} =================')
+
+            kill_procs()
+            experiment_id = datetime.datetime.now().strftime('%Y%m%d-%H%M%S.%f')
+            print(f'EXPTID: {experiment_id}')
+
+            setup_arp_tables()
+
+            # Generate pktgen configuration for current lcore count
+            pktgen_config = get_pktgen_config(pktgen_lcore_count)
+
+            print(f'PKTGEN Config: lcores={pktgen_config["lcores"]}, port_map="{pktgen_config["port_map"]}"')
+            print(f'txqs_min_inline={txqs_min_inline}, TX_DESC={pktgen_tx_desc_value}')
+
+            # Run Pktgen with perf monitoring
+            run_pktgen_with_perf(pktgen_tx_desc_value, pktgen_config)
+
+            # Stop processes
+            kill_procs()
+            time.sleep(3)
+
+            # Parse results
+            print(f'================ {experiment_id} TEST COMPLETE =================')
+            res = parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_value, pktgen_lcore_count)
+            final_result = final_result + f'{res}'
+
+            # Wait a bit between tests
+            time.sleep(5)
     
         
 
@@ -524,11 +864,11 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "experiment_id, pkt_size, l3fwd_tx_desc_value, l3fwd_rx_desc_value, pktgen_tx_desc_value, l3fwd_lcore_count, pktgen_lcore_count, pktgen_rx_rate, pktgen_tx_rate, pktgen_rx_fails, l3fwd_rx_rate, l3fwd_tx_rate, l3fwd_tx_fails, pktgen_hw_rx_missed, l3fwd_hw_rx_missed, pktgen_rx_l3_misses, pktgen_rx_l2_hit%, pktgen_rx_l3_hit%, pktgen_tx_l3_misses, pktgen_tx_l2_hit%, pktgen_tx_l3_hit%, l3fwd_l3_misses, l3fwd_l2_hit%, l3fwd_l3_hit%, pktgen_dram_read, pktgen_dram_write, pktgen_dram_read_bw, pktgen_dram_write_bw, l3fwd_dram_read, l3fwd_dram_write, l3fwd_dram_read_bw, l3fwd_dram_write_bw, pktgen_pcie_read, pktgen_pcie_write, pktgen_pcie_read_bw, pktgen_pcie_write_bw, l3fwd_pcie_read, l3fwd_pcie_write, l3fwd_pcie_read_bw, l3fwd_pcie_write_bw\n"
-        
+    result_header = "EXPTID, txqs_min_inline, # TX cores, DEFAULT_RX/TX_DESC, TX rate (Mpps), unc_cha_llc_lookup.data_read, unc_cha_llc_lookup.write, llc_misses.pcie_read (MB), llc_misses.pcie_write (MB), PCIRdCur (M), PCIe Rd (MB), PCIe Wr (MB), Outbound Stalled Reads, PCIe Inbound Used BW (Gb/s), PCIe Outbound Used BW (Gb/s)\n"
+
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
-    with open(f'{DATA_PATH}/dpdk_benchmark_results.txt', "w") as file:
+    with open(f'{DATA_PATH}/dpdk_perf_results.txt', "w") as file:
         file.write(f'{result_header}')
         file.write(final_result)
 
