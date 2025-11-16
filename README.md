@@ -379,10 +379,10 @@ State Space (input):
   │  → Update DT periodically           │
   └─────────────────────────────────────┘
   Key Insight:
-  - DT는 "current best knowledge"의 snapshot
-  - RL은 계속 학습하며 improve
-  - Distillation은 주기적으로 update
-  - Convergence guarantee 제공
+  - DT is a snapshot of "current best knowledge"
+  - RL continuously learns and improves
+  - Distillation periodically updates the model
+  - Provides convergence guarantee
 
   Contribution:
   1. Novel online learning architecture
