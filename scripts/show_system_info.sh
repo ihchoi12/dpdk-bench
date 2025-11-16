@@ -1,5 +1,19 @@
 #!/bin/bash
 
+echo "=== SYSTEM INFO ==="
+# OS version
+if [ -f /etc/os-release ]; then
+  os_name=$(grep '^PRETTY_NAME=' /etc/os-release | cut -d'"' -f2)
+  echo "OS: $os_name"
+else
+  echo "OS: $(uname -s)"
+fi
+
+# Kernel version
+kernel_version=$(uname -r)
+echo "Kernel: $kernel_version"
+
+echo ""
 echo "=== CPU INFO ==="
 lscpu | grep 'Model name' | sed 's/Model name:/CPU:/'
 gcc -march=native -Q --help=target 2>/dev/null | grep -- '-march=' | head -1 | awk '{print "Arch: " $2}'
@@ -55,63 +69,71 @@ while IFS= read -r line; do
 done < <(lscpu | grep "NUMA node[0-9]")
 
 echo ""
-echo "=== NIC DEVICES ==="
-lspci | grep -i ethernet
+echo "=== NETWORK INTERFACES ==="
 
-echo ""
-echo "=== NETWORK PORT STATUS ==="
-echo "Kernel driver:"
-for dev in $(ls /sys/class/net/ 2>/dev/null | grep -v lo); do
-  speed=$(ethtool $dev 2>/dev/null | grep "Speed:" | awk '{print $2}')
-  duplex=$(ethtool $dev 2>/dev/null | grep "Duplex:" | awk '{print $2}')
-  link=$(ethtool $dev 2>/dev/null | grep "Link detected:" | awk '{print $3}')
-  if [ -n "$speed" ] && [ "$speed" != "Unknown!" ]; then
-    pci_addr=$(ethtool -i $dev 2>/dev/null | grep "bus-info:" | awk '{print $2}')
-    numa_node=$(cat /sys/class/net/$dev/device/numa_node 2>/dev/null || echo "N/A")
-    echo "  $dev ($pci_addr): $speed $duplex (Link: $link, NUMA: $numa_node)"
-  fi
-done
-
-echo ""
-echo "DPDK driver:"
-# Check for DPDK-bound devices and temporarily unbind to get link speed
+# Get DPDK-bound devices info
+declare -A dpdk_ports
 if [ -f "./dpdk/usertools/dpdk-devbind.py" ]; then
-  dpdk_devs=$(./dpdk/usertools/dpdk-devbind.py --status 2>/dev/null | awk '/Network devices using DPDK-compatible driver/,/^$/' | grep "0000:" | grep -E "drv=(vfio-pci|uio_pci_generic|igb_uio)")
-  if [ -n "$dpdk_devs" ]; then
-    echo "$dpdk_devs" | while read line; do
+  while read line; do
+    if echo "$line" | grep -q "0000:" && echo "$line" | grep -qE "drv=(vfio-pci|uio_pci_generic|igb_uio)"; then
       pci=$(echo $line | awk '{print $1}')
-      desc=$(echo $line | cut -d"'" -f2)
       driver=$(echo $line | grep -o "drv=[^ ]*" | cut -d= -f2)
-      unused=$(echo $line | grep -o "unused=[^ ]*" | cut -d= -f2 | cut -d, -f1)
-      numa=$(echo $line | grep -o "numa_node=[0-9]*" | cut -d= -f2)
-
-      echo -n "  $pci ($desc): "
-
-      # Temporarily unbind from DPDK to check link speed
-      sudo ./dpdk/usertools/dpdk-devbind.py --bind=$unused $pci 2>/dev/null
-      sleep 0.5
-
-      # Find interface name and get link speed
-      iface=$(ls /sys/bus/pci/devices/$pci/net/ 2>/dev/null | head -1)
-      if [ -n "$iface" ]; then
-        sudo ip link set $iface up 2>/dev/null
-        sleep 1
-        link_speed=$(ethtool $iface 2>/dev/null | grep "Speed:" | awk '{print $2}')
-        link_status=$(ethtool $iface 2>/dev/null | grep "Link detected:" | awk '{print $3}')
-        echo -n "$link_speed (Link: $link_status) "
-        sudo ip link set $iface down 2>/dev/null
-      else
-        echo -n "N/A "
-      fi
-
-      # Re-bind to DPDK
-      sudo ./dpdk/usertools/dpdk-devbind.py --bind=$driver $pci 2>/dev/null
-
-      echo "driver=$driver NUMA=$numa"
-    done
-  else
-    echo "  (none)"
-  fi
-else
-  echo "  (dpdk-devbind.py not found)"
+      dpdk_ports[$pci]=$driver
+    fi
+  done < <(./dpdk/usertools/dpdk-devbind.py --status 2>/dev/null | awk '/Network devices using DPDK-compatible driver/,/^$/')
 fi
+
+# Process each Ethernet NIC
+lspci | grep -i ethernet | while read line; do
+  pci_short=$(echo "$line" | awk '{print $1}')
+  pci_full="0000:$pci_short"
+  desc=$(echo "$line" | cut -d: -f3- | sed 's/^ *//')
+
+  # Find interface name
+  iface=$(ls /sys/bus/pci/devices/$pci_full/net/ 2>/dev/null | head -1)
+
+  # Get NUMA node
+  numa_node=$(cat /sys/bus/pci/devices/$pci_full/numa_node 2>/dev/null || echo "N/A")
+
+  # Print header
+  if [ -n "$iface" ]; then
+    echo "$pci_full ($iface) - $desc"
+  else
+    echo "$pci_full (no interface) - $desc"
+  fi
+
+  # Check if DPDK-bound
+  if [ -n "${dpdk_ports[$pci_full]}" ]; then
+    # DPDK-bound device
+    driver="${dpdk_ports[$pci_full]}"
+    echo "  Driver: DPDK ($driver) | NUMA: $numa_node | Status: Bound to DPDK (link info unavailable)"
+  elif [ -n "$iface" ]; then
+    # Kernel driver
+    kernel_driver=$(ethtool -i $iface 2>/dev/null | grep "driver:" | awk '{print $2}')
+    speed=$(ethtool $iface 2>/dev/null | grep "Speed:" | awk '{print $2}')
+    duplex=$(ethtool $iface 2>/dev/null | grep "Duplex:" | awk '{print $2}')
+    link=$(ethtool $iface 2>/dev/null | grep "Link detected:" | awk '{print $3}')
+    ipv4=$(ip -4 addr show $iface 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+
+    # Format IP info
+    if [ -n "$ipv4" ]; then
+      ip_info="IP: $ipv4"
+    else
+      ip_info="IP: none"
+    fi
+
+    # Format link status
+    if [ "$link" = "yes" ] && [ -n "$speed" ] && [ "$speed" != "Unknown!" ]; then
+      link_info="UP ($speed $duplex)"
+    elif [ "$link" = "yes" ]; then
+      link_info="UP (speed unknown)"
+    else
+      link_info="DOWN"
+    fi
+
+    echo "  Driver: kernel ($kernel_driver) | NUMA: $numa_node | Link: $link_info | $ip_info"
+  else
+    echo "  Driver: none | NUMA: $numa_node | Status: No interface detected"
+  fi
+  echo ""
+done
