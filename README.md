@@ -25,11 +25,16 @@ Check CPU architecture and NIC bandwidth:
 ### 1. Install Dependencies
 
 ```bash
+# System dependencies
 sudo apt update && sudo apt install -y \
   meson ninja-build build-essential pkg-config git cmake \
   libnuma-dev libpcap-dev python3-pyelftools liblua5.3-dev \
   libibverbs-dev librdmacm-dev rdma-core ibverbs-providers libmlx5-1 \
-  libelf-dev libbsd-dev zlib1g-dev
+  libelf-dev libbsd-dev zlib1g-dev \
+  python3-pip python3-dev
+
+# Python dependencies for test runner (run_test.py)
+pip3 install --user --break-system-packages numpy pandas matplotlib cycler pyrem
 ```
 
 ### 2. Machine Setup

@@ -5,7 +5,8 @@ import numpy as np
 ################## PATHS #####################
 HOME = os.path.expanduser("~")
 LOCAL = HOME.replace("/homes", "/local")
-DPDK_BENCH_HOME = f'{HOME}/Autokernel/dpdk-bench'
+# Get the absolute path of the dpdk-bench directory (where this config file is located)
+DPDK_BENCH_HOME = os.path.dirname(os.path.abspath(__file__))
 DPDK_PATH = f'{DPDK_BENCH_HOME}/dpdk'
 PKTGEN_PATH = f'{DPDK_BENCH_HOME}/Pktgen-DPDK'
 RESULTS_PATH = f'{DPDK_BENCH_HOME}/results'
@@ -17,34 +18,25 @@ SCRIPTS_PATH = f'{DPDK_BENCH_HOME}/scripts'
 # Modify this section when changing nodes or cluster setup
 # ============================================================
 
-# Node5 Configuration (Current PKTGEN node)
-NODE5_HOSTNAME = 'node5'
-NODE5_IP = '10.0.1.5'
-NODE5_MAC = '08:c0:eb:xx:xx:xx'  # Update with actual MAC if needed
-NODE5_PCI_ADDRESS = '0000:b3:00.0'  # Mellanox ConnectX-5
-NODE5_NIC_DEVARGS = ''  # Mellanox-specific device args
+# PKTGEN Node Configuration
+PKTGEN_HOSTNAME = 'node0'
+PKTGEN_IP = '10.10.1.1'
+PKTGEN_MAC = 'b8:3f:d2:13:08:fe'
+PKTGEN_PCI_ADDRESS = '0000:51:00.0'  # Mellanox ConnectX-6 Dx
+PKTGEN_NIC_DEVARGS = ''  # Mellanox-specific device args
 
-# Node8 Configuration (Current L3FWD node)
-NODE8_HOSTNAME = 'node8'
-NODE8_IP = '10.0.1.8'
-NODE8_MAC = '08:c0:eb:b6:e8:05'
-NODE8_PCI_ADDRESS = '0000:31:00.1'  # Update with actual PCI address
-NODE8_NIC_DEVARGS = 'txqs_min_inline=0'  # Mellanox-specific device args
+# L3FWD Node Configuration (not used in current single-machine pktgen test)
+L3FWD_HOSTNAME = ''
+L3FWD_IP = ''
+L3FWD_MAC = ''
+L3FWD_PCI_ADDRESS = ''
+L3FWD_NIC_DEVARGS = ''
+L3FWD_ETH_DEST = ''
 
-# Active node assignments
-PKTGEN_NODE = NODE5_HOSTNAME
-PKTGEN_PCI_ADDRESS = NODE5_PCI_ADDRESS
-PKTGEN_NIC_DEVARGS = NODE5_NIC_DEVARGS
-
-L3FWD_NODE = NODE8_HOSTNAME
-L3FWD_PCI_ADDRESS = NODE8_PCI_ADDRESS
-L3FWD_NIC_DEVARGS = NODE8_NIC_DEVARGS
-L3FWD_ETH_DEST = NODE5_MAC  # L3FWD forwards to PKTGEN node
-
-# Legacy node info (for backward compatibility)
+# Legacy compatibility
+PKTGEN_NODE = PKTGEN_HOSTNAME
+L3FWD_NODE = L3FWD_HOSTNAME
 ALL_NODES = [PKTGEN_NODE, L3FWD_NODE]
-NODE7_IP = '10.0.1.7'
-NODE7_MAC = '08:c0:eb:b6:cd:5d'
 
 
 ################## DPDK CONFIG #####################

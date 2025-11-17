@@ -41,31 +41,36 @@ experiment_id = ''
 
 
 def kill_procs():
-    """Kill DPDK processes on all nodes"""
+    """Kill DPDK processes (pktgen locally, l3fwd remotely if configured)"""
 
-    # Kill pktgen processes on PKTGEN node
-    pktgen_cmd = ['sudo pkill -f pktgen']
-    pktgen_host = pyrem.host.RemoteHost(PKTGEN_NODE)
-    pktgen_task = pktgen_host.run(pktgen_cmd, quiet=False)
+    # Kill pktgen processes locally
+    print('Killing local pktgen processes...')
+    subprocess.run(['sudo', 'pkill', '-f', 'pktgen'], check=False)
 
-    # Kill dpdk-l3fwd on L3FWD node
-    l3fwd_cmd = ['sudo pkill dpdk-l3fwd']
-    l3fwd_host = pyrem.host.RemoteHost(L3FWD_NODE)
-    l3fwd_task = l3fwd_host.run(l3fwd_cmd, quiet=False)
+    # Kill dpdk-l3fwd on L3FWD node (if configured)
+    if L3FWD_NODE:
+        l3fwd_cmd = ['sudo pkill dpdk-l3fwd']
+        l3fwd_host = pyrem.host.RemoteHost(L3FWD_NODE)
+        l3fwd_task = l3fwd_host.run(l3fwd_cmd, quiet=False)
+        pyrem.task.Parallel([l3fwd_task], aggregate=True).start(wait=True)
 
-    pyrem.task.Parallel([pktgen_task, l3fwd_task], aggregate=True).start(wait=True)
     print('KILLED LEGACY PROCESSES')
 
 # Setup ARP tables
 def setup_arp_tables():
-    """Setup ARP tables on all nodes"""
-    arp_task = []
-    for node in ALL_NODES:
-        host = pyrem.host.RemoteHost(node)
+    """Setup ARP tables (local for pktgen, remote for l3fwd if configured)"""
+    # Setup ARP on local pktgen node
+    print('Setting up local ARP table...')
+    arp_file = f'{DPDK_BENCH_HOME}/scripts/arp_table'
+    if os.path.exists(arp_file):
+        subprocess.run(['sudo', 'arp', '-f', arp_file], check=False)
+
+    # Setup ARP on remote L3FWD node if configured
+    if L3FWD_NODE and L3FWD_NODE != PKTGEN_NODE:
+        host = pyrem.host.RemoteHost(L3FWD_NODE)
         cmd = [f'sudo arp -f {DPDK_BENCH_HOME}/scripts/arp_table']
         task = host.run(cmd, quiet=True)
-        arp_task.append(task)
-    pyrem.task.Parallel(arp_task, aggregate=True).start(wait=True)
+        pyrem.task.Parallel([task], aggregate=True).start(wait=True)
 
 def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None):
     """Run l3fwd on L3FWD node"""
@@ -104,9 +109,9 @@ def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None):
     time.sleep(3)
 
 def run_pktgen(tx_desc_value=None, pktgen_config=None):
-    """Run pktgen on PKTGEN node"""
+    """Run pktgen locally"""
     global experiment_id
-    print(f'RUNNING PKTGEN on {PKTGEN_NODE} with TX_DESC={tx_desc_value}')
+    print(f'RUNNING PKTGEN locally with TX_DESC={tx_desc_value}')
 
     # Use provided config or default
     config = pktgen_config if pktgen_config else PKTGEN_CONFIG
@@ -117,40 +122,35 @@ def run_pktgen(tx_desc_value=None, pktgen_config=None):
     if tx_desc_value and tx_desc_value != 1024:  # Only add if different from default
         tx_desc_arg = f" --txd={tx_desc_value}"
 
-    host = pyrem.host.RemoteHost(config["node"])
-    cmd = [f'cd {config["working_dir"]} && '
-           f'sudo -E {ENV} '
-           f'DISABLE_PCM=1 '  # Disable PCM
-           f'PKTGEN_DURATION={PKTGEN_DURATION} '
-           f'PKTGEN_PACKET_SIZE={PKTGEN_PACKET_SIZE} '
-           f'{config["binary_path"]} '
-           f'{config["lcores"]} '
-           f'{config["memory_channels"]} '
-           f'-a {config["pci_address"]} '
-           f'{config["proc_type"]} '
-           f'--file-prefix={config["file_prefix"]} '
-           f'-- -m "{config["port_map"]}" '
-           f'{config["app_args"]}'
-           f'{tx_desc_arg} '
-           f'-f {config["script_file"]} '
-           f'> {DATA_PATH}/{experiment_id}.pktgen 2>&1']
+    # Build command string
+    cmd_str = (f'cd {config["working_dir"]} && '
+               f'sudo -E {ENV} '
+               f'DISABLE_PCM=1 '  # Disable PCM
+               f'PKTGEN_DURATION={PKTGEN_DURATION} '
+               f'PKTGEN_PACKET_SIZE={PKTGEN_PACKET_SIZE} '
+               f'{config["binary_path"]} '
+               f'{config["lcores"]} '
+               f'{config["memory_channels"]} '
+               f'-a {config["pci_address"]} '
+               f'{config["proc_type"]} '
+               f'--file-prefix={config["file_prefix"]} '
+               f'-- -m "{config["port_map"]}" '
+               f'{config["app_args"]}'
+               f'{tx_desc_arg} '
+               f'-f {config["script_file"]} '
+               f'> {DATA_PATH}/{experiment_id}.pktgen 2>&1')
 
-    task = host.run(cmd, quiet=False)
-    print(f'PKTGEN command: {cmd}')
-    pyrem.task.Parallel([task], aggregate=True).start(wait=True)
+    print(f'PKTGEN command: {cmd_str}')
 
-    # Format and print L3FWD command with line breaks for readability
-    # cmd_formatted = cmd[0].replace(' && ', ' &&\n    ').replace(' -', '\n    -').replace(' --', '\n    --')
-    # Remove multiple consecutive newlines and fix spacing
-    # cmd_formatted = '\n    '.join(line.strip() for line in cmd_formatted.split('\n') if line.strip())
-    # print(f'PKTGEN command: {cmd}\n\n    {cmd_formatted}')
-
-    # time.sleep(3)
+    # Run locally using subprocess
+    result = subprocess.run(cmd_str, shell=True, check=False)
+    if result.returncode != 0:
+        print(f'PKTGEN exited with code {result.returncode}')
 
 def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
-    """Run pktgen on PKTGEN node and start perf stat after delay"""
+    """Run pktgen locally and start perf stat after delay"""
     global experiment_id
-    print(f'RUNNING PKTGEN on {PKTGEN_NODE} with TX_DESC={tx_desc_value} and perf monitoring')
+    print(f'RUNNING PKTGEN locally with TX_DESC={tx_desc_value} and perf monitoring')
 
     # Use provided config or default
     config = pktgen_config if pktgen_config else PKTGEN_CONFIG
@@ -159,8 +159,6 @@ def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
     tx_desc_arg = ""
     if tx_desc_value and tx_desc_value != 1024:
         tx_desc_arg = f" --txd={tx_desc_value}"
-
-    host = pyrem.host.RemoteHost(config["node"])
 
     # Calculate timing for sequential monitoring
     pcm_start_time = PERF_START_DELAY + PERF_DURATION + PCM_START_DELAY
@@ -201,10 +199,12 @@ def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
                   f'> {DATA_PATH}/{experiment_id}.neohost; '
                   f'wait $PKTGEN_PID 2>/dev/null || sleep {PKTGEN_DURATION - neohost_start_time - NEOHOST_DURATION}')
 
-    cmd = [pktgen_cmd]
-    task = host.run(cmd, quiet=False)
     print(f'PKTGEN+PERF command: {pktgen_cmd}')
-    pyrem.task.Parallel([task], aggregate=True).start(wait=True)
+
+    # Run locally using subprocess
+    result = subprocess.run(pktgen_cmd, shell=True, check=False)
+    if result.returncode != 0:
+        print(f'PKTGEN+PERF exited with code {result.returncode}')
 
 def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_value, pktgen_lcore_count):
     """Parse pktgen and perf stat results"""
@@ -897,14 +897,17 @@ if __name__ == '__main__':
     # Create data directory if it doesn't exist
     os.makedirs(DATA_PATH, exist_ok=True)
     os.makedirs(RESULTS_PATH, exist_ok=True)
-    
+
     if len(sys.argv) > 1 and sys.argv[1] == 'build':
         exit(run_compile())
-    
+
     atexit.register(exiting)
-    
+
     print("Starting DPDK Benchmark Tests")
-    print(f"L3FWD Node: {L3FWD_CONFIG['node']}")
-    print(f"Pktgen Node: {PKTGEN_CONFIG['node']}")
+    if L3FWD_NODE:
+        print(f"L3FWD Node: {L3FWD_NODE} (remote)")
+    else:
+        print(f"L3FWD Node: disabled")
+    print(f"Pktgen Node: {PKTGEN_NODE} (local)")
     print(f"Data Path: {DATA_PATH}")
     run_eval()

@@ -114,12 +114,20 @@ lspci | grep -i ethernet | while read line; do
     duplex=$(ethtool $iface 2>/dev/null | grep "Duplex:" | awk '{print $2}')
     link=$(ethtool $iface 2>/dev/null | grep "Link detected:" | awk '{print $3}')
     ipv4=$(ip -4 addr show $iface 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+    mac=$(cat /sys/class/net/$iface/address 2>/dev/null)
 
     # Format IP info
     if [ -n "$ipv4" ]; then
       ip_info="IP: $ipv4"
     else
       ip_info="IP: none"
+    fi
+
+    # Format MAC info
+    if [ -n "$mac" ]; then
+      mac_info="MAC: $mac"
+    else
+      mac_info="MAC: unknown"
     fi
 
     # Format link status
@@ -131,7 +139,7 @@ lspci | grep -i ethernet | while read line; do
       link_info="DOWN"
     fi
 
-    echo "  Driver: kernel ($kernel_driver) | NUMA: $numa_node | Link: $link_info | $ip_info"
+    echo "  Driver: kernel ($kernel_driver) | NUMA: $numa_node | Link: $link_info | $ip_info | $mac_info"
   else
     echo "  Driver: none | NUMA: $numa_node | Status: No interface detected"
   fi
