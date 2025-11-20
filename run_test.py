@@ -371,71 +371,111 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
             with open(pcm_file, "r", encoding='utf-8', errors='ignore') as file:
                 pcm_text = file.read()
 
-            # Parse pcm-pcie output
-            # Format: " 0       90 K       30 K     0       0     416 K    320 K    15 K      7767 K            28 M"
-            # Columns: Skt | PCIRdCur | RFO | CRd | DRd | ItoM | PRd | WiL | PCIe Rd (B) | PCIe Wr (B)
+            # Parse pcm-pcie output - dynamic column detection
+            # Format varies by machine, but always has: Skt | PCIRdCur | ... | PCIe Rd (B) | PCIe Wr (B)
             lines = pcm_text.strip().split('\n')
-            rdcur_values = []
-            rd_bytes_values = []
-            wr_bytes_values = []
+
+            # Helper functions to parse values with K/M/G suffixes
+            def parse_count(s):
+                s = s.strip()
+                if 'K' in s:
+                    return float(s.replace('K', '').strip()) * 1000
+                elif 'M' in s:
+                    return float(s.replace('M', '').strip()) * 1000000
+                elif 'G' in s:
+                    return float(s.replace('G', '').strip()) * 1000000000
+                else:
+                    try:
+                        return float(s)
+                    except:
+                        return 0
+
+            def parse_bytes(s):
+                s = s.strip()
+                if 'K' in s:
+                    return float(s.replace('K', '').strip()) * 1024
+                elif 'M' in s:
+                    return float(s.replace('M', '').strip()) * 1024 * 1024
+                elif 'G' in s:
+                    return float(s.replace('G', '').strip()) * 1024 * 1024 * 1024
+                else:
+                    try:
+                        return float(s)
+                    except:
+                        return 0
+
+            # Find header line to determine column indices
+            header_cols = None
+            rdcur_idx = None
+            pcie_rd_idx = None
+            pcie_wr_idx = None
 
             for line in lines:
-                # Skip header and separator lines
-                if 'Skt' in line or '---' in line or not line.strip():
-                    continue
+                if 'Skt' in line and 'PCIRdCur' in line and 'PCIe Rd (B)' in line:
+                    # Split header by | to get column names
+                    header_cols = [col.strip() for col in line.split('|')]
+                    for i, col in enumerate(header_cols):
+                        if col == 'PCIRdCur':
+                            rdcur_idx = i
+                        elif col == 'PCIe Rd (B)':
+                            pcie_rd_idx = i
+                        elif col == 'PCIe Wr (B)':
+                            pcie_wr_idx = i
+                    break
 
-                # Match data lines (socket 0 or aggregate *)
-                # Pattern: whitespace, socket number/*, then values
-                match = re.match(r'\s*[\d\*]\s+([\d\.]+\s*[KMG]?)\s+[\d\.]+\s*[KMG]?\s+[\d\.]+\s*[KMG]?\s+[\d\.]+\s*[KMG]?\s+[\d\.]+\s*[KMG]?\s+[\d\.]+\s*[KMG]?\s+[\d\.]+\s*[KMG]?\s+([\d\.]+\s*[KMG]?)\s+([\d\.]+\s*[KMG]?)', line)
-                if match:
-                    # Parse PCIRdCur (count, not bytes)
-                    def parse_count(s):
-                        s = s.strip()
-                        if 'K' in s:
-                            return float(s.replace('K', '').strip()) * 1000
-                        elif 'M' in s:
-                            return float(s.replace('M', '').strip()) * 1000000
-                        elif 'G' in s:
-                            return float(s.replace('G', '').strip()) * 1000000000
-                        else:
-                            return float(s) if s else 0
-
-                    # Parse PCIe Rd/Wr (bytes)
-                    def parse_bytes(s):
-                        s = s.strip()
-                        if 'K' in s:
-                            return float(s.replace('K', '').strip()) * 1024
-                        elif 'M' in s:
-                            return float(s.replace('M', '').strip()) * 1024 * 1024
-                        elif 'G' in s:
-                            return float(s.replace('G', '').strip()) * 1024 * 1024 * 1024
-                        else:
-                            return float(s) if s else 0
-
-                    rdcur = parse_count(match.group(1))
-                    rd_bytes = parse_bytes(match.group(2))
-                    wr_bytes = parse_bytes(match.group(3))
-
-                    rdcur_values.append(rdcur)
-                    rd_bytes_values.append(rd_bytes)
-                    wr_bytes_values.append(wr_bytes)
-
-            if rdcur_values and rd_bytes_values and wr_bytes_values:
-                # Skip first 2 samples for warm-up
-                rdcur_values_filtered = rdcur_values[2:] if len(rdcur_values) > 2 else rdcur_values
-                rd_bytes_values_filtered = rd_bytes_values[2:] if len(rd_bytes_values) > 2 else rd_bytes_values
-                wr_bytes_values_filtered = wr_bytes_values[2:] if len(wr_bytes_values) > 2 else wr_bytes_values
-
-                # Calculate averages
-                # PCIRdCur: convert to M (millions)
-                pcm_pcie_rdcur = round(sum(rdcur_values_filtered) / len(rdcur_values_filtered) / 1000000, 3) if rdcur_values_filtered else 0
-                # PCIe Rd/Wr: convert to MB
-                pcm_pcie_rd_mb = round(sum(rd_bytes_values_filtered) / len(rd_bytes_values_filtered) / (1024 * 1024), 3) if rd_bytes_values_filtered else 0
-                pcm_pcie_wr_mb = round(sum(wr_bytes_values_filtered) / len(wr_bytes_values_filtered) / (1024 * 1024), 3) if wr_bytes_values_filtered else 0
-                print(f"DEBUG PCM: Found {len(rdcur_values)} samples (using {len(rdcur_values_filtered)} after skipping first 2)")
-                print(f"DEBUG PCM: PCIRdCur: {pcm_pcie_rdcur} M, PCIe Rd: {pcm_pcie_rd_mb} MB, PCIe Wr: {pcm_pcie_wr_mb} MB")
+            if rdcur_idx is None or pcie_rd_idx is None or pcie_wr_idx is None:
+                print(f"DEBUG PCM: Could not find required columns in header")
             else:
-                print(f"DEBUG PCM: No data found")
+                rdcur_values = []
+                rd_bytes_values = []
+                wr_bytes_values = []
+
+                for line in lines:
+                    # Skip header and separator lines
+                    if 'Skt' in line or '---' in line or not line.strip():
+                        continue
+
+                    # Check if this is a data line (starts with socket number or *)
+                    if re.match(r'^\s*[\d\*]\s+', line):
+                        # Extract all "number + optional K/M/G" patterns
+                        # Pattern: one or more digits (optionally with decimal), optionally followed by whitespace and K/M/G
+                        value_pattern = r'(\d+(?:\.\d+)?)\s*([KMG]?)'
+                        matches = re.findall(value_pattern, line)
+
+                        # Combine number with unit
+                        values = []
+                        for num, unit in matches:
+                            values.append(num + unit if unit else num)
+
+                        if len(values) >= max(rdcur_idx, pcie_rd_idx, pcie_wr_idx) + 1:
+                            try:
+                                rdcur = parse_count(values[rdcur_idx])
+                                rd_bytes = parse_bytes(values[pcie_rd_idx])
+                                wr_bytes = parse_bytes(values[pcie_wr_idx])
+
+                                rdcur_values.append(rdcur)
+                                rd_bytes_values.append(rd_bytes)
+                                wr_bytes_values.append(wr_bytes)
+                            except Exception as e:
+                                # Skip malformed lines
+                                pass
+
+                if rdcur_values and rd_bytes_values and wr_bytes_values:
+                    # Skip first 2 samples for warm-up
+                    rdcur_values_filtered = rdcur_values[2:] if len(rdcur_values) > 2 else rdcur_values
+                    rd_bytes_values_filtered = rd_bytes_values[2:] if len(rd_bytes_values) > 2 else rd_bytes_values
+                    wr_bytes_values_filtered = wr_bytes_values[2:] if len(wr_bytes_values) > 2 else wr_bytes_values
+
+                    # Calculate averages
+                    # PCIRdCur: convert to M (millions)
+                    pcm_pcie_rdcur = round(sum(rdcur_values_filtered) / len(rdcur_values_filtered) / 1000000, 3) if rdcur_values_filtered else 0
+                    # PCIe Rd/Wr: convert to MB
+                    pcm_pcie_rd_mb = round(sum(rd_bytes_values_filtered) / len(rd_bytes_values_filtered) / (1024 * 1024), 3) if rd_bytes_values_filtered else 0
+                    pcm_pcie_wr_mb = round(sum(wr_bytes_values_filtered) / len(wr_bytes_values_filtered) / (1024 * 1024), 3) if wr_bytes_values_filtered else 0
+                    print(f"DEBUG PCM: Found {len(rdcur_values)} samples (using {len(rdcur_values_filtered)} after skipping first 2)")
+                    print(f"DEBUG PCM: PCIRdCur: {pcm_pcie_rdcur} M, PCIe Rd: {pcm_pcie_rd_mb} MB, PCIe Wr: {pcm_pcie_wr_mb} MB")
+                else:
+                    print(f"DEBUG PCM: No data found")
 
         except Exception as e:
             print(f"ERROR parsing PCM file {pcm_file}: {e}")
