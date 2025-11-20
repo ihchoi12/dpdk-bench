@@ -148,9 +148,20 @@ def run_pktgen(tx_desc_value=None, pktgen_config=None):
         print(f'PKTGEN exited with code {result.returncode}')
 
 def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
-    """Run pktgen locally and start perf stat after delay"""
+    """Run pktgen locally and start profilers (perf/pcm/neohost) based on configuration"""
     global experiment_id
-    print(f'RUNNING PKTGEN locally with TX_DESC={tx_desc_value} and perf monitoring')
+
+    # Build list of enabled profilers
+    enabled_profilers = []
+    if ENABLE_PERF:
+        enabled_profilers.append('perf')
+    if ENABLE_PCM:
+        enabled_profilers.append('pcm')
+    if ENABLE_NEOHOST:
+        enabled_profilers.append('neohost')
+
+    profilers_str = '+'.join(enabled_profilers) if enabled_profilers else 'none'
+    print(f'RUNNING PKTGEN locally with TX_DESC={tx_desc_value} and monitoring: {profilers_str}')
 
     # Use provided config or default
     config = pktgen_config if pktgen_config else PKTGEN_CONFIG
@@ -160,14 +171,10 @@ def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
     if tx_desc_value and tx_desc_value != 1024:
         tx_desc_arg = f" --txd={tx_desc_value}"
 
-    # Calculate timing for sequential monitoring
-    pcm_start_time = PERF_START_DELAY + PERF_DURATION + PCM_START_DELAY
-    neohost_start_time = pcm_start_time + PCM_DURATION + NEOHOST_START_DELAY
-
     # Extract PCI address (remove devargs like ",txqs_min_inline=0")
     pci_address = config["pci_address"].split(',')[0]
 
-    # Start pktgen in background, then run perf, pcm-pcie, and neohost sequentially
+    # Build pktgen command (runs in background)
     pktgen_cmd = (f'cd {config["working_dir"]} && '
                   f'sudo -E {ENV} '
                   f'DISABLE_PCM=1 '
@@ -184,27 +191,57 @@ def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
                   f'{tx_desc_arg} '
                   f'-f {config["script_file"]} '
                   f'> {DATA_PATH}/{experiment_id}.pktgen 2>&1 & '
-                  f'PKTGEN_PID=$!; '
-                  f'sleep {PERF_START_DELAY}; '
-                  f'sudo timeout {PERF_DURATION} perf stat -e llc_misses.pcie_read,llc_misses.pcie_write,unc_cha_llc_lookup.data_read,unc_cha_llc_lookup.write -I 1000 -a --per-socket '
-                  f'> {DATA_PATH}/{experiment_id}.perf 2>&1; '
-                  f'sleep {PCM_START_DELAY}; '
-                  f'sudo timeout {PCM_DURATION} {DPDK_BENCH_HOME}/pcm/build/bin/pcm-pcie -B '
-                  f'> {DATA_PATH}/{experiment_id}.pcm-pcie 2>&1; '
-                  f'sleep {NEOHOST_START_DELAY}; '
-                  f'sudo timeout {NEOHOST_DURATION} /homes/friedj/neohost/miniconda3/envs/py27/bin/python '
-                  f'/homes/friedj/neohost/sdk/opt/neohost/sdk/get_device_performance_counters.py '
-                  f'--dev-uid={pci_address} --get-analysis --run-loop 2>&1 | '
-                  f'sed "s/\\x1b\\[[0-9;]*m//g" '
-                  f'> {DATA_PATH}/{experiment_id}.neohost; '
-                  f'wait $PKTGEN_PID 2>/dev/null || sleep {PKTGEN_DURATION - neohost_start_time - NEOHOST_DURATION}')
+                  f'PKTGEN_PID=$!; ')
 
-    print(f'PKTGEN+PERF command: {pktgen_cmd}')
+    # Add initial warmup delay
+    pktgen_cmd += f'sleep {WARMUP_DELAY}; '
+
+    # Add perf monitoring if enabled
+    if ENABLE_PERF:
+        # Build event and metric lists from config
+        perf_args = []
+        if PERF_EVENTS:
+            perf_args.append(f'-e {",".join(PERF_EVENTS)}')
+        if PERF_METRICS:
+            perf_args.append(f'-M {",".join(PERF_METRICS)}')
+
+        perf_args_str = ' '.join(perf_args)
+        pktgen_cmd += (f'sudo timeout {PERF_DURATION} perf stat '
+                       f'{perf_args_str} '
+                       f'-I 1000 -a --per-socket '
+                       f'> {DATA_PATH}/{experiment_id}.perf 2>&1; ')
+
+    # Add PCM monitoring if enabled
+    if ENABLE_PCM:
+        pktgen_cmd += f'sleep {TOOL_INTERVAL}; '
+        pktgen_cmd += (f'sudo timeout {PCM_DURATION} {DPDK_BENCH_HOME}/pcm/build/bin/pcm-pcie -B '
+                       f'> {DATA_PATH}/{experiment_id}.pcm-pcie 2>&1; ')
+
+    # Add NeoHost monitoring if enabled
+    if ENABLE_NEOHOST:
+        # Check if neohost is available
+        neohost_python = f'{DPDK_BENCH_HOME}/neohost/miniconda3/envs/py27/bin/python'
+        neohost_sdk = f'{DPDK_BENCH_HOME}/neohost/sdk/opt/neohost/sdk/get_device_performance_counters.py'
+
+        if os.path.exists(neohost_python) and os.path.exists(neohost_sdk):
+            pktgen_cmd += f'sleep {TOOL_INTERVAL}; '
+            pktgen_cmd += (f'sudo timeout {NEOHOST_DURATION} {neohost_python} '
+                           f'{neohost_sdk} '
+                           f'--dev-uid={pci_address} --get-analysis --run-loop 2>&1 | '
+                           f'sed "s/\\x1b\\[[0-9;]*m//g" '
+                           f'> {DATA_PATH}/{experiment_id}.neohost; ')
+        else:
+            print(f'WARNING: NeoHost enabled but not available at {neohost_python}')
+
+    # Wait for pktgen to finish
+    pktgen_cmd += f'wait $PKTGEN_PID 2>/dev/null'
+
+    print(f'PKTGEN+PROFILERS command (duration={PKTGEN_DURATION}s): {pktgen_cmd[:200]}...')
 
     # Run locally using subprocess
     result = subprocess.run(pktgen_cmd, shell=True, check=False)
     if result.returncode != 0:
-        print(f'PKTGEN+PERF exited with code {result.returncode}')
+        print(f'PKTGEN+PROFILERS exited with code {result.returncode}')
 
 def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_value, pktgen_lcore_count):
     """Parse pktgen and perf stat results"""
@@ -251,80 +288,74 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
     duration_sec = PKTGEN_DURATION
     pktgen_tx_rate = round(pktgen_tx_pkts / (duration_sec * 1_000_000), 3) if pktgen_tx_pkts > 0 else 0
 
-    # Parse perf stat results
+    # Parse perf stat results dynamically based on config
     perf_file = f'{DATA_PATH}/{experiment_id}.perf'
-    llc_pcie_read_mb = 0
-    llc_pcie_write_mb = 0
-    unc_cha_llc_lookup_data_read = 0
-    unc_cha_llc_lookup_write = 0
+    # Initialize perf_results with all items from config (default to 0)
+    perf_results = {item: 0 for item in (PERF_EVENTS + PERF_METRICS)}
 
     if os.path.exists(perf_file):
         try:
             with open(perf_file, "r", encoding='utf-8', errors='ignore') as file:
                 perf_text = file.read()
 
-            # Parse perf stat output: "3.005254200 S0        1             85,760 Bytes llc_misses.pcie_read"
-            # Find matching pairs from same timestamp
             lines = perf_text.strip().split('\n')
             timestamp_data = {}
 
             for line in lines:
-                # Match pattern for Bytes events: timestamp S0 1 value Bytes event_name
-                match_bytes = re.match(r'\s*([\d\.]+)\s+S\d+\s+\d+\s+([\d,]+)\s+Bytes\s+(llc_misses\.pcie_(?:read|write))', line)
-                if match_bytes:
-                    timestamp = match_bytes.group(1)
-                    value_bytes = int(match_bytes.group(2).replace(',', ''))
-                    event = match_bytes.group(3)
-
-                    if timestamp not in timestamp_data:
-                        timestamp_data[timestamp] = {}
-                    timestamp_data[timestamp][event] = value_bytes
-
-                # Match pattern for count events: timestamp S0 1 value event_name (no unit)
-                match_count = re.match(r'\s*([\d\.]+)\s+S\d+\s+\d+\s+([\d,]+)\s+(unc_cha_llc_lookup\.(?:data_read|write))', line)
+                # Match pattern for count events: timestamp socket cpus value event_name
+                # Example: "1.001096320 S0       32            571,500      LLC-load-misses"
+                match_count = re.match(r'\s*([\d\.]+)\s+S\d+\s+\d+\s+([\d,]+)\s+(\S+?)(?:\s|$)', line)
                 if match_count:
                     timestamp = match_count.group(1)
-                    value_count = int(match_count.group(2).replace(',', ''))
+                    value_str = match_count.group(2)
                     event = match_count.group(3)
+
+                    # Skip lines with percentage or other non-event patterns
+                    if '%' not in event and not event.startswith('#'):
+                        try:
+                            value_count = int(value_str.replace(',', ''))
+                            if timestamp not in timestamp_data:
+                                timestamp_data[timestamp] = {}
+                            timestamp_data[timestamp][event] = value_count
+                        except ValueError:
+                            pass
+
+                # Match pattern for bandwidth metrics: timestamp socket cpus value event #    XXX.X MB/s  metric_name
+                # Example: "1.001096320 S0        1          2,513,972      UNC_CHA_REQUESTS.WRITES_LOCAL    #    160.9 MB/s  llc_miss_local_memory_bandwidth_write"
+                match_bw = re.match(r'\s*([\d\.]+)\s+S\d+\s+\d+\s+([\d,]+)\s+\S+\s+#\s+([\d\.]+)\s+MB/s\s+(\S+)', line)
+                if match_bw:
+                    timestamp = match_bw.group(1)
+                    bandwidth_mbs = float(match_bw.group(3))
+                    metric = match_bw.group(4)
 
                     if timestamp not in timestamp_data:
                         timestamp_data[timestamp] = {}
-                    timestamp_data[timestamp][event] = value_count
+                    timestamp_data[timestamp][metric] = bandwidth_mbs
 
-            # Average all complete sets (4 events)
-            read_values = []
-            write_values = []
-            lookup_data_read_values = []
-            lookup_write_values = []
+            # Collect values per event/metric from config
+            all_perf_items = PERF_EVENTS + PERF_METRICS
+            event_values = {item: [] for item in all_perf_items}
 
             for timestamp, events in timestamp_data.items():
-                if ('llc_misses.pcie_read' in events and 'llc_misses.pcie_write' in events and
-                    'unc_cha_llc_lookup.data_read' in events and 'unc_cha_llc_lookup.write' in events):
-                    read_values.append(events['llc_misses.pcie_read'])
-                    write_values.append(events['llc_misses.pcie_write'])
-                    lookup_data_read_values.append(events['unc_cha_llc_lookup.data_read'])
-                    lookup_write_values.append(events['unc_cha_llc_lookup.write'])
+                for item in all_perf_items:
+                    if item in events:
+                        event_values[item].append(events[item])
 
-            if read_values and write_values and lookup_data_read_values and lookup_write_values:
-                # Skip first 2 samples for warm-up
-                read_values_filtered = read_values[2:] if len(read_values) > 2 else read_values
-                write_values_filtered = write_values[2:] if len(write_values) > 2 else write_values
-                lookup_data_read_filtered = lookup_data_read_values[2:] if len(lookup_data_read_values) > 2 else lookup_data_read_values
-                lookup_write_filtered = lookup_write_values[2:] if len(lookup_write_values) > 2 else lookup_write_values
+            # Calculate averages (skip first 2 samples for warm-up)
+            def avg_skip_first_n(values, n=2):
+                filtered = values[n:] if len(values) > n else values
+                return round(sum(filtered) / len(filtered), 3) if filtered else 0
 
-                # Convert from Bytes to MB for llc_misses
-                llc_pcie_read_mb = round(sum(read_values_filtered) / len(read_values_filtered) / (1024 * 1024), 3) if read_values_filtered else 0
-                llc_pcie_write_mb = round(sum(write_values_filtered) / len(write_values_filtered) / (1024 * 1024), 3) if write_values_filtered else 0
+            # Store results in dictionary
+            for item in all_perf_items:
+                perf_results[item] = avg_skip_first_n(event_values[item])
 
-                # Keep raw count for unc_cha_llc_lookup
-                unc_cha_llc_lookup_data_read = round(sum(lookup_data_read_filtered) / len(lookup_data_read_filtered), 3) if lookup_data_read_filtered else 0
-                unc_cha_llc_lookup_write = round(sum(lookup_write_filtered) / len(lookup_write_filtered), 3) if lookup_write_filtered else 0
-
-                print(f"DEBUG Perf: Found {len(read_values)} samples (using {len(read_values_filtered)} after skipping first 2)")
-                print(f"DEBUG Perf: LLC PCIe Read: {llc_pcie_read_mb} MB, Write: {llc_pcie_write_mb} MB")
-                print(f"DEBUG Perf: LLC Lookup Data Read: {unc_cha_llc_lookup_data_read}, Write: {unc_cha_llc_lookup_write}")
-            else:
-                print(f"DEBUG Perf: No complete timestamp sets found (need all 4 events)")
+            # Print debug info
+            if event_values.get(all_perf_items[0] if all_perf_items else None):
+                print(f"DEBUG Perf: Found {len(event_values[all_perf_items[0]])} samples")
+            for item in all_perf_items:
+                if perf_results[item] > 0:
+                    print(f"DEBUG Perf: {item} = {perf_results[item]:,}")
 
         except Exception as e:
             print(f"ERROR parsing perf file {perf_file}: {e}")
@@ -475,15 +506,30 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
             print(f"ERROR parsing Neohost file {neohost_file}: {e}")
 
     print(f"Pktgen: TX={pktgen_tx_pkts:,} TX_rate={pktgen_tx_rate} Mpps ({pktgen_status})")
-    print(f"Perf: LLC Lookup Data Read={unc_cha_llc_lookup_data_read}, Write={unc_cha_llc_lookup_write}")
-    print(f"Perf: LLC PCIe Read={llc_pcie_read_mb} MB, Write={llc_pcie_write_mb} MB")
+
+    # Print perf results
+    if perf_results:
+        print("Perf results:")
+        for item, value in perf_results.items():
+            if value > 0:
+                print(f"  {item} = {value:,}")
+
     print(f"PCM: PCIRdCur={pcm_pcie_rdcur} M, PCIe Rd={pcm_pcie_rd_mb} MB, PCIe Wr={pcm_pcie_wr_mb} MB")
     print(f"Neohost: Outbound Stalled Reads={neohost_outbound_stalled_reads}, PCIe Inbound BW={neohost_pcie_inbound_bw} Gb/s, PCIe Outbound BW={neohost_pcie_outbound_bw} Gb/s")
 
-    # CSV format: EXPTID, txqs_min_inline, # TX cores, DEFAULT_RX/TX_DESC, TX rate (Mpps), unc_cha_llc_lookup.data_read, unc_cha_llc_lookup.write, llc_misses.pcie_read (MB), llc_misses.pcie_write (MB), PCIRdCur (M), PCIe Rd (MB), PCIe Wr (MB), Outbound Stalled Reads, PCIe Inbound Used BW (Gb/s), PCIe Outbound Used BW (Gb/s)
-    # TX cores = pktgen_lcore_count (which now directly represents TX core count, RX is always core 1)
+    # Build CSV row dynamically
     tx_cores = pktgen_lcore_count
-    result_str += f'{experiment_id}, {txqs_min_inline}, {tx_cores}, {pktgen_tx_desc_value}, {pktgen_tx_rate}, {unc_cha_llc_lookup_data_read}, {unc_cha_llc_lookup_write}, {llc_pcie_read_mb}, {llc_pcie_write_mb}, {pcm_pcie_rdcur}, {pcm_pcie_rd_mb}, {pcm_pcie_wr_mb}, {neohost_outbound_stalled_reads}, {neohost_pcie_inbound_bw}, {neohost_pcie_outbound_bw}\n'
+    csv_values = [experiment_id, txqs_min_inline, tx_cores, pktgen_tx_desc_value, pktgen_tx_rate]
+
+    # Add perf values in config order
+    for item in (PERF_EVENTS + PERF_METRICS):
+        csv_values.append(perf_results.get(item, 0))
+
+    # Add PCM and Neohost values
+    csv_values.extend([pcm_pcie_rdcur, pcm_pcie_rd_mb, pcm_pcie_wr_mb,
+                       neohost_outbound_stalled_reads, neohost_pcie_inbound_bw, neohost_pcie_outbound_bw])
+
+    result_str += ', '.join(map(str, csv_values)) + '\n'
 
     return result_str
 
@@ -813,17 +859,27 @@ def run_eval():
     global experiment_id
     global final_result
 
-    print("Starting DPDK Pktgen Tests with Perf Monitoring")
+    # Build profiler list
+    enabled_profilers = []
+    if ENABLE_PERF:
+        enabled_profilers.append('PERF')
+    if ENABLE_PCM:
+        enabled_profilers.append('PCM')
+    if ENABLE_NEOHOST:
+        enabled_profilers.append('NEOHOST')
+    profilers_str = '+'.join(enabled_profilers) if enabled_profilers else 'NONE'
+
+    print("Starting DPDK Pktgen Tests with Profiling")
+    print(f"Enabled profilers: {profilers_str}")
     print(f"Testing PKTGEN TX descriptor values: {PKTGEN_TX_DESC_VALUES}")
     print(f"Testing PKTGEN LCORE counts: {PKTGEN_LCORE_VALUES}")
-    print(f"Duration: {PKTGEN_DURATION} seconds")
-    print(f"Perf start delay: {PERF_START_DELAY} seconds")
+    print(f"Total duration: {PKTGEN_DURATION} seconds (warmup: {WARMUP_DELAY}s, interval: {TOOL_INTERVAL}s)")
 
     # Extract txqs_min_inline from pktgen config
     # Assuming format: "0000:31:00.1,txqs_min_inline=0"
     pktgen_config_default = get_pktgen_config(2)  # Get any config to extract pci_address
     pci_match = re.search(r'txqs_min_inline=(\d+)', pktgen_config_default["pci_address"])
-    txqs_min_inline = int(pci_match.group(1)) if pci_match else 0
+    txqs_min_inline = int(pci_match.group(1)) if pci_match else 8
 
     for pktgen_lcore_count in PKTGEN_LCORE_VALUES:
         for pktgen_tx_desc_value in PKTGEN_TX_DESC_VALUES:
@@ -864,7 +920,19 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    result_header = "EXPTID, txqs_min_inline, # TX cores, DEFAULT_RX/TX_DESC, TX rate (Mpps), unc_cha_llc_lookup.data_read, unc_cha_llc_lookup.write, llc_misses.pcie_read (MB), llc_misses.pcie_write (MB), PCIRdCur (M), PCIe Rd (MB), PCIe Wr (MB), Outbound Stalled Reads, PCIe Inbound Used BW (Gb/s), PCIe Outbound Used BW (Gb/s)\n"
+    # Build CSV header dynamically based on config
+    header_parts = ["EXPTID", "txqs_min_inline", "# TX cores", "DEFAULT_RX/TX_DESC", "TX rate (Mpps)"]
+
+    # Add perf event/metric headers with units from config
+    for item in (PERF_EVENTS + PERF_METRICS):
+        unit = PERF_UNITS.get(item, '')
+        header_parts.append(f"{item} ({unit})" if unit else item)
+
+    # Add PCM and Neohost headers
+    header_parts.extend(["PCIRdCur (M)", "PCIe Rd (MB)", "PCIe Wr (MB)",
+                         "Outbound Stalled Reads", "PCIe Inbound Used BW (Gb/s)", "PCIe Outbound Used BW (Gb/s)"])
+
+    result_header = ", ".join(header_parts) + "\n"
 
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
