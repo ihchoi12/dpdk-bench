@@ -9,3 +9,7 @@
 [submodule "pcm"]
 	path = pcm
 	url = https://github.com/intel/pcm.git
+[submodule "ddio-modify"]
+	path = ddio-modify
+	url = https://github.com/ihchoi12/ddio-modify.git
+	branch = autokernel
