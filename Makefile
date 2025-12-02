@@ -14,18 +14,18 @@ all: submodules
 # ========================================================================
 
 submodules:
-	@bash $(SCRIPTS_DIR)/init_submodules.sh build
+	@bash $(SCRIPTS_DIR)/build/init_submodules.sh build
 
 submodules-debug:
 	@echo ">> Building with TX/RX debug enabled..."
-	@RTE_LIBRTE_ETHDEV_DEBUG=1 bash $(SCRIPTS_DIR)/init_submodules.sh build
+	@RTE_LIBRTE_ETHDEV_DEBUG=1 bash $(SCRIPTS_DIR)/build/init_submodules.sh build
 
 submodules-ak:
 	@echo ">> Building with AK queue depth tracking enabled..."
-	@AK_ENABLE_QUEUE_DEPTH_TRACKING=1 bash $(SCRIPTS_DIR)/init_submodules.sh build
+	@AK_ENABLE_QUEUE_DEPTH_TRACKING=1 bash $(SCRIPTS_DIR)/build/init_submodules.sh build
 
 clean:
-	@bash $(SCRIPTS_DIR)/init_submodules.sh clean
+	@bash $(SCRIPTS_DIR)/build/init_submodules.sh clean
 
 # ========================================================================
 # Rebuild targets (for incremental development)

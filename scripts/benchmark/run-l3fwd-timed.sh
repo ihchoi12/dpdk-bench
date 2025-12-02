@@ -11,7 +11,7 @@
 #   L3FWD_NODE=node9 ./run-l3fwd-timed.sh   # Run on node9 instead
 
 # Source common header for DPDK scripts
-source "$(dirname "${BASH_SOURCE[0]}")/common-header.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../utils/common-header.sh"
 
 # L3FWD specific configuration
 L3FWD_BIN="${L3FWD_BIN:-${DPDK_PREFIX}/examples/dpdk-l3fwd}"
@@ -107,7 +107,7 @@ fi
 # Use here-document to avoid quoting issues with complex command
 ssh ${L3FWD_NODE} << EOF &
 cd ${REMOTE_REPO_ROOT}
-source scripts/common-header.sh
+source scripts/utils/common-header.sh
 sudo -E ${REMOTE_L3FWD_BIN} ${EAL_LCORES} ${EAL_MEMCH} -a ${PCI_ADDR} -- ${APP_ARGS}
 EOF
 

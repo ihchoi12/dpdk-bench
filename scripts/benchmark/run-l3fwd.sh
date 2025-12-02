@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Source common header for DPDK scripts
-source "$(dirname "${BASH_SOURCE[0]}")/common-header.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../utils/common-header.sh"
 
 # L3FWD specific configuration
 L3FWD_BIN="${L3FWD_BIN:-${DPDK_PREFIX}/examples/dpdk-l3fwd}"

@@ -93,7 +93,7 @@ make submodules
 - `make pktgen`: Rebuild only Pktgen
 - `make build-pcm`: Build Intel PCM library
 
-### Build Script (`scripts/init_submodules.sh`)
+### Build Script (`scripts/build/init_submodules.sh`)
 - Handles submodule initialization and compilation
 - Manages meson/ninja build configuration
 - Sets up PKG_CONFIG_PATH and LD_LIBRARY_PATH
@@ -116,40 +116,27 @@ make run-l3fwd
 make run-l3fwd-timed
 ```
 
-### Multi-Core Benchmarks
+### Automated Benchmarks
+Use `run_test.py` for comprehensive automated benchmarking:
+
 ```bash
-# Pktgen: Test 1-15 cores with different port mapping modes
-make benchmark-multi-core-tx-rate
-make benchmark-combined  # All cores handle both RX+TX
-make benchmark-split     # Dedicated RX/TX cores (even cores only)
+# Run full benchmark suite with multiple configurations
+python3 run_test.py
 
-# L3FWD: Test 1-16 cores on node8
-make benchmark-l3fwd-multi-core
-
-# Integrated test: L3FWD forwarding vs Pktgen TX/RX
-make benchmark-l3fwd-vs-pktgen
+# Configuration in test_config.py:
+# - Core counts: L3FWD_LCORE_VALUES, PKTGEN_LCORE_VALUES
+# - Descriptor sizes: L3FWD_TX_DESC_VALUES, L3FWD_RX_DESC_VALUES
+# - Packet sizes: PKTGEN_PACKET_SIZE
+# - Port mappings: get_pktgen_config() generates RX/TX core mappings
 ```
 
-### Port Mapping Modes
-- **Combined**: `[1-N].0` - All cores handle both RX and TX (optimal for small core counts)
-- **Split**: `[1-N/2:N/2+1-N].0` - Separate RX and TX cores (requires even core count)
-- Configuration in `test_config.py`: `get_pktgen_config()` generates mappings
-
-### Environment Variables
+### Simple Lua-based Tests
 ```bash
-# L3FWD configuration
-L3FWD_DURATION=10           # Test duration in seconds
-L3FWD_START_CORES=1         # Starting core count
-L3FWD_END_CORES=16          # Ending core count
-L3FWD_NODE=node8            # Target node
+# Quick functional test with Lua script
+make run-pktgen-with-lua-script
 
-# Pktgen configuration
-PKTGEN_DURATION=5           # Test duration
-PKTGEN_PACKET_SIZE=64       # Packet size in bytes
-
-# Example: Custom test
-L3FWD_DURATION=5 L3FWD_START_CORES=4 L3FWD_END_CORES=4 \
-  ./scripts/benchmark-l3fwd-multi-core.sh
+# Manual test with specific parameters
+PKTGEN_DURATION=10 PKTGEN_PACKET_SIZE=64 make run-pktgen-with-lua-script
 ```
 
 ## Test Parameters

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Source common header for DPDK scripts
-source "$(dirname "${BASH_SOURCE[0]}")/common-header.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../utils/common-header.sh"
 
 PKTGEN_BIN="${PKTGEN_BIN:-${REPO_ROOT}/Pktgen-DPDK/build/app/pktgen}"
 
