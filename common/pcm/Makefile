@@ -43,9 +43,6 @@ install: $(LIB_NAME)
 	@echo "Installing to $(REPO_ROOT)/lib"
 	mkdir -p $(REPO_ROOT)/lib
 	cp $(LIB_NAME) $(REPO_ROOT)/lib/
-	@echo "Installing headers to $(REPO_ROOT)/include"
-	mkdir -p $(REPO_ROOT)/include
-	cp common_pcm_wrapper.h pcm_config.h $(REPO_ROOT)/include/
 
 test:
 	@echo "Testing common PCM library..."
@@ -58,6 +55,6 @@ help:
 	@echo "Targets:"
 	@echo "  all      - Build static and shared libraries (default)"
 	@echo "  clean    - Remove built files"
-	@echo "  install  - Install library and headers to $(REPO_ROOT)/lib and include"
+	@echo "  install  - Install library to $(REPO_ROOT)/lib"
 	@echo "  test     - Run unit tests (TODO)"
 	@echo "  help     - Show this help message"

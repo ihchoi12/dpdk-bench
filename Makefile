@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 
 ROOT_PATH := .
-BUILD_DIR := $(ROOT_PATH)/build
+SCRIPTS_DIR := $(ROOT_PATH)/scripts
 
 .PHONY: all submodules submodules-debug clean
 .DEFAULT_GOAL := all
@@ -14,18 +14,18 @@ all: submodules
 # ========================================================================
 
 submodules:
-	@bash $(BUILD_DIR)/init_submodules.sh build
+	@bash $(SCRIPTS_DIR)/init_submodules.sh build
 
 submodules-debug:
 	@echo ">> Building with TX/RX debug enabled..."
-	@RTE_LIBRTE_ETHDEV_DEBUG=1 bash $(BUILD_DIR)/init_submodules.sh build
+	@RTE_LIBRTE_ETHDEV_DEBUG=1 bash $(SCRIPTS_DIR)/init_submodules.sh build
 
 submodules-ak:
 	@echo ">> Building with AK queue depth tracking enabled..."
-	@AK_ENABLE_QUEUE_DEPTH_TRACKING=1 bash $(BUILD_DIR)/init_submodules.sh build
+	@AK_ENABLE_QUEUE_DEPTH_TRACKING=1 bash $(SCRIPTS_DIR)/init_submodules.sh build
 
 clean:
-	@bash $(BUILD_DIR)/init_submodules.sh clean
+	@bash $(SCRIPTS_DIR)/init_submodules.sh clean
 
 # ========================================================================
 # Rebuild targets (for incremental development)

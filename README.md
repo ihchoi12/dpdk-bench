@@ -229,7 +229,7 @@ Works out of the box with MLX5 PMD (included in DPDK).
 
 2. **Enable SFC driver:**
 
-   Edit `build/init_submodules.sh` line 18, remove `net/sfc` from `DISABLE_DRIVERS`:
+   Edit `scripts/init_submodules.sh` line 25, remove `net/sfc` from `DISABLE_DRIVERS`:
    ```bash
    # Before: ...net/qede,net/sfc,net/softnic...
    # After:  ...net/qede,net/softnic...
@@ -311,8 +311,7 @@ dpdk-bench/
 ├── pcm/                   # Intel PCM submodule
 ├── common/
 │   └── pcm/               # Shared PCM wrapper (C/C++)
-├── scripts/               # Run and benchmark scripts
-├── build/
+├── scripts/
 │   └── init_submodules.sh # Build orchestration
 ├── Makefile               # Main build targets
 ├── pktgen.config          # Runtime configuration

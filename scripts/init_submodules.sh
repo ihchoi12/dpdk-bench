@@ -2,7 +2,7 @@
 set -euo pipefail
 trap 'echo "!! ERROR: ${BASH_SOURCE[0]}:${LINENO}: \"$BASH_COMMAND\" failed" >&2' ERR
 
-# repo root (this script lives in build/)
+# repo root (this script lives in scripts/)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
@@ -25,19 +25,12 @@ fi
 # Disable most drivers to keep build small; keep mlx5
 DISABLE_DRIVERS="${DISABLE_DRIVERS:-crypto/*,raw/*,baseband/*,dma/*,net/af_packet,net/af_xdp,net/ark,net/atlantic,net/avp,net/axgbe,net/bnx2x,net/bnxt,net/bonding,net/cnxk,net/cxgbe,net/dpaa,net/dpaa2,net/e1000,net/ena,net/enetc,net/enetfec,net/enic,net/fm10k,net/hinic,net/hns3,net/iavf,net/ice,net/igc,net/ionic,net/ipn3ke,net/kni,net/liquidio,net/memif,net/mlx4,net/mvneta,net/mvpp2,net/nfb,net/nfp,net/ngbe,net/octeontx,net/octeontx_ep,net/pcap,net/pfe,net/qede,net/softnic,net/thunderx,net/txgbe,net/vdev_netvsc,net/vhost,net/virtio,net/vmxnet3}"
 
-# make these absolute by default
-DPDK_PATCH_SERIES="${DPDK_PATCH_SERIES:-${REPO_ROOT}/build/patches/dpdk}"
-DPDK_PATCH_SINGLE="${DPDK_PATCH_SINGLE:-${REPO_ROOT}/build/dpdk.patch}"
-
 # -----------------------
 # Pktgen settings
 # -----------------------
 PKTGEN_DIR="${PKTGEN_DIR:-Pktgen-DPDK}"
 PKTGEN_BUILD="${PKTGEN_BUILD:-${PKTGEN_DIR}/build}"
 PKTGEN_MESON_FLAGS="${PKTGEN_MESON_FLAGS:--Denable_lua=true}"
-
-PKTGEN_PATCH_SERIES="${PKTGEN_PATCH_SERIES:-${REPO_ROOT}/build/patches/pktgen}"
-PKTGEN_PATCH_SINGLE="${PKTGEN_PATCH_SINGLE:-${REPO_ROOT}/build/pktgen.patch}"
 
 # -----------------------
 # PCM settings

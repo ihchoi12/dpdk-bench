@@ -39,15 +39,17 @@ The benchmark suite measures packet throughput (Mpps), RX/TX rates, hardware per
 
 ### Key Components
 
-1. **DPDK Submodule** (`dpdk/`): Core DPDK library with custom patches
-   - Modified MLX5 driver with debug logging (`build/dpdk.patch`)
+1. **DPDK Submodule** (`dpdk/`): Core DPDK library with custom modifications
+   - Modified MLX5 driver with debug logging
    - Custom logging via `ak_debug_log.h` for TX completion queue tracking
    - L3FWD application built as example
+   - Managed on `autokernel` branch
 
 2. **Pktgen-DPDK Submodule** (`Pktgen-DPDK/`): Packet generator
-   - Custom patches applied (`build/pktgen.patch`)
+   - Custom modifications for benchmarking
    - Lua scripting support for automated test sequences
    - Test scripts in `scripts/` directory
+   - Managed on `autokernel` branch
 
 3. **Intel PCM Submodule** (`pcm/`): Performance counter monitoring
    - Integrated into L3FWD for hardware performance metrics
@@ -91,17 +93,11 @@ make submodules
 - `make pktgen`: Rebuild only Pktgen
 - `make build-pcm`: Build Intel PCM library
 
-### Build Script (`build/init_submodules.sh`)
-- Handles submodule initialization, patching, and compilation
-- Applies custom patches from `build/dpdk.patch` and `build/pktgen.patch`
+### Build Script (`scripts/init_submodules.sh`)
+- Handles submodule initialization and compilation
 - Manages meson/ninja build configuration
 - Sets up PKG_CONFIG_PATH and LD_LIBRARY_PATH
-
-### Creating Patches
-```bash
-make dpdk-patch-all    # Generate build/dpdk.patch from changes
-make pktgen-patch-all  # Generate build/pktgen.patch from changes
-```
+- Submodule changes are managed directly via git on `autokernel` branch
 
 ## Running Benchmarks
 
@@ -227,8 +223,12 @@ make l3fwd-rebuild
 # 3. If build fails, do full L3FWD rebuild
 make l3fwd-clean && make l3fwd
 
-# 4. Save changes as patch
-make dpdk-patch-all
+# 4. Commit changes to submodule
+cd dpdk
+git add -u
+git commit -m "Description of changes"
+git push origin autokernel
+cd ..
 ```
 
 ### Modifying Pktgen Code
@@ -239,8 +239,12 @@ vim Pktgen-DPDK/app/pktgen-main.c
 # 2. Rebuild pktgen
 make pktgen-rebuild
 
-# 3. Save changes as patch
-make pktgen-patch-all
+# 3. Commit changes to submodule
+cd Pktgen-DPDK
+git add -u
+git commit -m "Description of changes"
+git push origin autokernel
+cd ..
 ```
 
 ### Adding New Test Scenarios

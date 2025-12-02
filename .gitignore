@@ -1,9 +1,7 @@
 # Ignore results directory
 results/
 
-# Ignore build artifacts but keep scripts
-build/*
-!build/*.sh
+# Ignore build artifacts
 *.o
 *.so
 *.a
