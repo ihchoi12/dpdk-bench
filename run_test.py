@@ -125,7 +125,7 @@ def run_pktgen(tx_desc_value=None, pktgen_config=None):
     # Build command string
     cmd_str = (f'cd {config["working_dir"]} && '
                f'sudo -E {ENV} '
-               f'DISABLE_PCM=1 '  # Disable PCM
+               f'ENABLE_PCM=0 '  # PCM disabled by default
                f'PKTGEN_DURATION={PKTGEN_DURATION} '
                f'PKTGEN_PACKET_SIZE={PKTGEN_PACKET_SIZE} '
                f'{config["binary_path"]} '
@@ -177,7 +177,7 @@ def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
     # Build pktgen command (runs in background)
     pktgen_cmd = (f'cd {config["working_dir"]} && '
                   f'sudo -E {ENV} '
-                  f'DISABLE_PCM=1 '
+                  f'ENABLE_PCM=0 '  # PCM disabled by default
                   f'PKTGEN_DURATION={PKTGEN_DURATION} '
                   f'PKTGEN_PACKET_SIZE={PKTGEN_PACKET_SIZE} '
                   f'{config["binary_path"]} '

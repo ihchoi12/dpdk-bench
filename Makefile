@@ -42,14 +42,24 @@ pktgen-rebuild:
 	@cd Pktgen-DPDK && ninja -C build
 
 # ========================================================================
+# System Configuration
+# ========================================================================
+
+.PHONY: get-system-info
+
+get-system-info:
+	@echo ">> Detecting and updating system configuration..."
+	@./scripts/utils/get_system_info.sh
+
+# ========================================================================
 # Run targets
 # ========================================================================
 
 .PHONY: run-pktgen-with-lua-script monitor-ddio-perf
 
 run-pktgen-with-lua-script:
-	@./scripts/run-pktgen-with-lua-script.sh
+	@./scripts/benchmark/run-pktgen-with-lua-script.sh
 
 monitor-ddio-perf:
 	@echo ">> Starting DDIO monitoring with perf..."
-	@sudo ./scripts/monitor-ddio-perf.sh
+	@sudo ./scripts/utils/monitor-ddio-perf.sh

@@ -4,17 +4,27 @@ source "$(dirname "${BASH_SOURCE[0]}")/../utils/common-header.sh"
 
 PKTGEN_BIN="${PKTGEN_BIN:-${REPO_ROOT}/Pktgen-DPDK/build/app/pktgen}"
 
-# Load parameters from config file (can be overridden by environment)
+# Load parameters from config files
+# - system.config: PKTGEN_NIC_PCI (hardware)
+# - test.config: PKTGEN_* (test parameters)
 LCORES="${LCORES:-${PKTGEN_LCORES:--l 0-1}}"
 MEMCH="${MEMCH:-${PKTGEN_MEMCH:--n 4}}"
-PCI_ADDR="${PCI_ADDR:-${PKTGEN_PCI_ADDR:-0000:31:00.1}}"
 FILE_PREFIX="${FILE_PREFIX:-${PKTGEN_FILE_PREFIX:-pktgen1}}"
 PORTMAP="${PORTMAP:-${PKTGEN_PORTMAP:-[1].0}}"
 PROC_TYPE="${PROC_TYPE:-${PKTGEN_PROC_TYPE:---proc-type auto}}"
 APP_ARGS="${APP_ARGS:-${PKTGEN_APP_ARGS:--P -T}}"
 
+# Build PCI address with device args from system.config + test.config
+NIC_PCI="${PKTGEN_NIC_PCI:-0000:31:00.1}"
+NIC_DEVARGS="${PKTGEN_NIC_DEVARGS:-}"
+if [ -n "$NIC_DEVARGS" ]; then
+    PCI_ADDR="${NIC_PCI},${NIC_DEVARGS}"
+else
+    PCI_ADDR="${NIC_PCI}"
+fi
+
 # Script file to execute (can be overridden by command line argument or environment)
-SCRIPT_FILE="${1:-${SCRIPT_FILE:-${REPO_ROOT}/Pktgen-DPDK/scripts/tx-pkts.lua}}"
+SCRIPT_FILE="${1:-${SCRIPT_FILE:-${REPO_ROOT}/config/simple-pktgen-test.lua}}"
 
 # Convert to relative path from Pktgen-DPDK directory
 SCRIPT_REL_PATH=$(realpath --relative-to="${REPO_ROOT}/Pktgen-DPDK" "${SCRIPT_FILE}")
@@ -59,7 +69,7 @@ cd "${REPO_ROOT}/Pktgen-DPDK"
 sudo bash -lc "LD_LIBRARY_PATH='${LD_LIBRARY_PATH}' \
   PKG_CONFIG_PATH='${PKG_CONFIG_PATH}' \
   PCIE_LOG_ENABLE='${PCIE_LOG_ENABLE:-0}' \
-  DISABLE_PCM='${DISABLE_PCM:-0}' \
+  ENABLE_PCM='${ENABLE_PCM:-0}' \
   exec '${PKTGEN_BIN}' \
   ${LCORES} ${MEMCH} ${PROC_TYPE} --file-prefix '${FILE_PREFIX}' --allow='${PCI_ADDR}' \
   -- ${APP_ARGS} -m '${PORTMAP}' -f '${SCRIPT_REL_PATH}'"

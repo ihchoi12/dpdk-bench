@@ -28,29 +28,49 @@ trap 'restore_tty' EXIT INT TERM
 trap 'on_error; restore_tty' ERR
 
 # Common path variables
+# REPO_ROOT is calculated from common-header.sh location (scripts/utils/)
+COMMON_HEADER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${COMMON_HEADER_DIR}/../.." && pwd)"
+# SCRIPT_DIR is the calling script's directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DPDK_PREFIX="${DPDK_PREFIX:-${REPO_ROOT}/dpdk/build}"
 
-# Load configuration file
-CONFIG_FILE="${REPO_ROOT}/pktgen.config"
-if [ -f "$CONFIG_FILE" ]; then
-  echo ">> Loading configuration from: $CONFIG_FILE"
-  # Source the config file, ignoring comments and empty lines
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    # Skip comments and empty lines
-    if [[ "$line" =~ ^[[:space:]]*# ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
-      continue
-    fi
-    # Export the variable
-    if [[ "$line" =~ ^[[:space:]]*([A-Z_][A-Z0-9_]*)=(.*)$ ]]; then
-      export "${BASH_REMATCH[1]}"="${BASH_REMATCH[2]}"
-    fi
-  done < "$CONFIG_FILE"
-else
-  echo ">> Warning: Configuration file not found: $CONFIG_FILE"
-  echo "   Using default values..."
-fi
+# Load configuration files
+# 1. cluster.config: Cluster node assignments (PKTGEN_NODE, L3FWD_NODE)
+# 2. system.config: Hardware configuration (auto-generated)
+# 3. test.config: Test parameters for PKTGEN and L3FWD
+
+load_config_file() {
+  local config_file="$1"
+  if [ -f "$config_file" ]; then
+    echo ">> Loading configuration from: $config_file"
+    # Source the config file, ignoring comments and empty lines
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      # Skip comments and empty lines
+      if [[ "$line" =~ ^[[:space:]]*# ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
+        continue
+      fi
+      # Export the variable
+      if [[ "$line" =~ ^[[:space:]]*([A-Z_][A-Z0-9_]*)=(.*)$ ]]; then
+        export "${BASH_REMATCH[1]}"="${BASH_REMATCH[2]}"
+      fi
+    done < "$config_file"
+  else
+    echo ">> Warning: Configuration file not found: $config_file"
+  fi
+}
+
+# Load cluster configuration first (node assignments)
+CLUSTER_CONFIG="${REPO_ROOT}/cluster.config"
+load_config_file "$CLUSTER_CONFIG"
+
+# Load system configuration (hardware info)
+SYSTEM_CONFIG="${REPO_ROOT}/config/system.config"
+load_config_file "$SYSTEM_CONFIG"
+
+# Load test configuration (PKTGEN/L3FWD parameters)
+TEST_CONFIG="${REPO_ROOT}/config/test.config"
+load_config_file "$TEST_CONFIG"
 
 # Setup DPDK runtime environment
 setup_dpdk_env() {

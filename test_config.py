@@ -2,6 +2,27 @@ import os
 import pandas as pd
 import numpy as np
 
+################## CONFIG LOADER #####################
+def load_bash_config(config_file):
+    """Parse bash-style config file (KEY=value) and return dict"""
+    config = {}
+    if not os.path.exists(config_file):
+        return config
+
+    with open(config_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            # Skip comments and empty lines
+            if not line or line.startswith('#'):
+                continue
+            # Parse KEY=value
+            if '=' in line:
+                key, value = line.split('=', 1)
+                key = key.strip()
+                value = value.strip()
+                config[key] = value
+    return config
+
 ################## PATHS #####################
 HOME = os.path.expanduser("~")
 LOCAL = HOME.replace("/homes", "/local")
@@ -12,30 +33,36 @@ PKTGEN_PATH = f'{DPDK_BENCH_HOME}/Pktgen-DPDK'
 RESULTS_PATH = f'{DPDK_BENCH_HOME}/results'
 SCRIPTS_PATH = f'{DPDK_BENCH_HOME}/scripts'
 
+# Load configuration files
+CLUSTER_CONFIG_FILE = f'{DPDK_BENCH_HOME}/cluster.config'
+CLUSTER_CONFIG = load_bash_config(CLUSTER_CONFIG_FILE)
+
+SYSTEM_CONFIG_FILE = f'{DPDK_BENCH_HOME}/config/system.config'
+SYSTEM_CONFIG = load_bash_config(SYSTEM_CONFIG_FILE)
+
 ################## CLUSTER CONFIG #####################
 # ============================================================
 # CLUSTER NODE CONFIGURATION
-# Modify this section when changing nodes or cluster setup
+# Node assignments from cluster.config
+# Hardware info from system.config (current machine)
 # ============================================================
 
-# PKTGEN Node Configuration
-PKTGEN_HOSTNAME = 'node0'
-PKTGEN_IP = '10.10.1.1'
-PKTGEN_MAC = 'b8:3f:d2:13:08:fe'
-PKTGEN_PCI_ADDRESS = '0000:51:00.0'  # Mellanox ConnectX-6 Dx
-PKTGEN_NIC_DEVARGS = 'txqs_min_inline=0'  # Mellanox-specific device args
+# Node assignments (from cluster.config)
+PKTGEN_NODE = CLUSTER_CONFIG.get('PKTGEN_NODE', 'node7')
+L3FWD_NODE = CLUSTER_CONFIG.get('L3FWD_NODE', 'node8')
 
-# L3FWD Node Configuration (not used in current single-machine pktgen test)
-L3FWD_HOSTNAME = ''
-L3FWD_IP = ''
-L3FWD_MAC = ''
-L3FWD_PCI_ADDRESS = ''
-L3FWD_NIC_DEVARGS = ''
-L3FWD_ETH_DEST = ''
+# PKTGEN Node Configuration (auto-loaded from system.config)
+PKTGEN_IP = SYSTEM_CONFIG.get('PKTGEN_NIC_IP', '')
+PKTGEN_MAC = SYSTEM_CONFIG.get('PKTGEN_NIC_MAC', '')
+PKTGEN_PCI_ADDRESS = SYSTEM_CONFIG.get('PKTGEN_NIC_PCI', '')
 
-# Legacy compatibility
-PKTGEN_NODE = PKTGEN_HOSTNAME
-L3FWD_NODE = L3FWD_HOSTNAME
+# L3FWD Node Configuration (to be added via system.config later)
+L3FWD_IP = SYSTEM_CONFIG.get('L3FWD_NIC_IP', '')
+L3FWD_MAC = SYSTEM_CONFIG.get('L3FWD_NIC_MAC', '')
+L3FWD_PCI_ADDRESS = SYSTEM_CONFIG.get('L3FWD_NIC_PCI', '')
+L3FWD_ETH_DEST = PKTGEN_MAC  # Forward to PKTGEN node
+
+# All nodes in cluster
 ALL_NODES = [PKTGEN_NODE, L3FWD_NODE]
 
 

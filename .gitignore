@@ -1,6 +1,9 @@
 # Ignore results directory
 results/
 
+# Ignore auto-generated system config (machine-specific)
+config/system.config
+
 # Ignore build artifacts
 *.o
 *.so

@@ -140,25 +140,25 @@ PKTGEN_MEMORY_CHANNELS=4
 
 Intel PCM (Performance Counter Monitor) is integrated for hardware-level performance monitoring. PCM tracks CPU cache hits/misses, memory bandwidth, PCIe bandwidth, and other low-level metrics.
 
-### Disabling PCM
+### Enabling PCM
 
-To disable PCM monitoring and eliminate all performance counter overhead, set the `DISABLE_PCM` environment variable:
+PCM monitoring is disabled by default. To enable PCM and collect performance counter metrics, set the `ENABLE_PCM` environment variable:
 
 ```bash
-# Disable PCM for a single run
-DISABLE_PCM=1 make run-pktgen-with-lua-script
+# Enable PCM for a single run
+ENABLE_PCM=1 make run-pktgen-with-lua-script
 
-# Disable PCM globally in your shell session
-export DISABLE_PCM=1
+# Enable PCM globally in your shell session
+export ENABLE_PCM=1
 make run-pktgen-with-lua-script
 ```
 
-**When PCM is disabled:**
+**When PCM is disabled (default):**
 - No performance counter reads occur (zero overhead)
 - All PCM initialization and measurement functions return immediately
 - PCM library logs may still appear during startup (these are harmless)
 
-**Use cases for disabling PCM:**
+**Use cases for enabling PCM:**
 - Maximum packet processing performance (no measurement overhead)
 - Running on systems without MSR access
 - Comparing performance with and without monitoring
@@ -263,17 +263,21 @@ Metrics are automatically collected during L3FWD runs and logged with packet sta
 
 ### NeoHost Profiling Tool
 
-NeoHost provides device-level performance counter analysis for network interfaces:
+NeoHost provides device-level performance counter analysis for Mellanox network interfaces.
 
+**Setup (first time only):**
 ```bash
-# Run NeoHost profiling (replace device UID as needed)
-sudo /homes/friedj/neohost/miniconda3/envs/py27/bin/python \
-  /homes/friedj/neohost/sdk/opt/neohost/sdk/get_device_performance_counters.py \
-  --dev-uid=0000:31:00.0 \
-  --get-analysis \
-  --run-loop
+cd neohost
+./setup_neohost.sh
+```
 
-**Note:** Switch `--dev-uid` parameter based on which NIC port you are using (0000:31:00.0 or 0000:31:00.1).
+**Usage:**
+```bash
+# Run NeoHost profiling (replace device UID with your NIC's PCI address)
+./neohost/run_neohost.sh --dev-uid=0000:b3:00.0 --get-analysis --run-loop
+```
+
+**Note:** Use your NIC's PCI address from `lspci | grep Mellanox` or `config/system.config`.
 
 ## Troubleshooting
 

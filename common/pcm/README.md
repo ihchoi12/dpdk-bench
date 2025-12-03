@@ -48,7 +48,7 @@ L3FWD         Pktgen      Other Apps
 
 ### Environment Variables
 
-- `DISABLE_PCM=1` - Disable PCM monitoring entirely
+- `ENABLE_PCM=1` - Enable PCM monitoring (disabled by default)
 - `PCM_VERBOSE=1` - Enable verbose debug output
 - `PCM_NO_MSR=1` - Run without MSR access (reduced metrics)
 
@@ -136,8 +136,8 @@ make test-pcm
 # Run with verbose debugging
 PCM_VERBOSE=1 make run-l3fwd
 
-# Run without PCM
-DISABLE_PCM=1 make run-pktgen
+# Run with PCM enabled
+ENABLE_PCM=1 make run-pktgen
 ```
 
 ## Contributing
