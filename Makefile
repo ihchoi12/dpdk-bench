@@ -4,28 +4,44 @@ SHELL := /bin/bash
 ROOT_PATH := .
 SCRIPTS_DIR := $(ROOT_PATH)/scripts
 
-.PHONY: all submodules submodules-debug clean
+.PHONY: all build build-all build-debug clean clean-all
 .DEFAULT_GOAL := all
 
-all: submodules
+all: build
 
 # ========================================================================
 # Build targets
 # ========================================================================
 
-submodules:
+# Full build: PCM + DPDK + Pktgen (for new machines or profiling tool updates)
+build-all:
+	@bash $(SCRIPTS_DIR)/build/init_submodules.sh build-all
+
+# Full build with debug: PCM + DPDK + Pktgen with TX/RX debug logging
+build-all-debug:
+	@echo ">> Full build with TX/RX debug enabled..."
+	@RTE_LIBRTE_ETHDEV_DEBUG=1 bash $(SCRIPTS_DIR)/build/init_submodules.sh build-all
+
+# DPDK + Pktgen clean rebuild (skips PCM if already built)
+build:
 	@bash $(SCRIPTS_DIR)/build/init_submodules.sh build
 
-submodules-debug:
+# DPDK + Pktgen with debug logging
+build-debug:
 	@echo ">> Building with TX/RX debug enabled..."
 	@RTE_LIBRTE_ETHDEV_DEBUG=1 bash $(SCRIPTS_DIR)/build/init_submodules.sh build
 
-submodules-ak:
-	@echo ">> Building with AK queue depth tracking enabled..."
-	@AK_ENABLE_QUEUE_DEPTH_TRACKING=1 bash $(SCRIPTS_DIR)/build/init_submodules.sh build
+# Legacy aliases
+submodules: build
+submodules-debug: build-debug
 
+# Clean DPDK + Pktgen only (preserves PCM)
 clean:
 	@bash $(SCRIPTS_DIR)/build/init_submodules.sh clean
+
+# Clean everything including PCM
+clean-all:
+	@bash $(SCRIPTS_DIR)/build/init_submodules.sh clean-all
 
 # ========================================================================
 # Rebuild targets (for incremental development)
@@ -55,10 +71,17 @@ get-system-info:
 # Run targets
 # ========================================================================
 
-.PHONY: run-pktgen-with-lua-script monitor-ddio-perf
+.PHONY: run-simple-pktgen-test run-full-benchmark monitor-ddio-perf
 
-run-pktgen-with-lua-script:
-	@./scripts/benchmark/run-pktgen-with-lua-script.sh
+run-simple-pktgen-test:
+	@mkdir -p results
+	@echo ">> Running simple pktgen test (logging to results/simple-pktgen-test.log)..."
+	@./scripts/benchmark/run-simple-pktgen-test.sh 2>&1 | tee results/simple-pktgen-test.log
+
+run-full-benchmark:
+	@mkdir -p results
+	@echo ">> Running full benchmark (see test_config.py for parameters)..."
+	@cd scripts/benchmark && python3 run_test.py
 
 monitor-ddio-perf:
 	@echo ">> Starting DDIO monitoring with perf..."

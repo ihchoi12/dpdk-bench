@@ -34,6 +34,12 @@ print_menu() {
     echo -e "  ${YELLOW}2)${NC} Build"
     echo -e "     ${CYAN}→${NC} Build DPDK, Pktgen, and related components"
     echo ""
+    echo -e "  ${YELLOW}3)${NC} Run Simple Pktgen Test"
+    echo -e "     ${CYAN}→${NC} Run pktgen with simple-pktgen-test.lua"
+    echo ""
+    echo -e "  ${YELLOW}4)${NC} Run Full Benchmark"
+    echo -e "     ${CYAN}→${NC} Run benchmark suite (see scripts/benchmark/test_config.py)"
+    echo ""
     echo -e "  ${YELLOW}0)${NC} Exit"
     echo ""
     echo -e "${GREEN}────────────────────────────────────────────────────────────${NC}"
@@ -69,21 +75,17 @@ option_build() {
     echo -e "${BLUE}  Build Options${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "  ${YELLOW}1)${NC} Full Clean Build"
-    echo -e "     ${CYAN}→${NC} make clean && make submodules"
-    echo -e "       (rebuilds everything from scratch)"
+    echo -e "  ${YELLOW}1)${NC} Full Build (PCM + NeoHost + DPDK + Pktgen)"
+    echo -e "     ${CYAN}→${NC} make clean-all && make build-all"
+    echo -e "       (for new machines or profiling tool updates)"
     echo ""
-    echo -e "  ${YELLOW}2)${NC} Full Clean Build (Debug)"
-    echo -e "     ${CYAN}→${NC} make clean && make submodules-debug"
-    echo -e "       (rebuilds with TX/RX debug logging enabled)"
+    echo -e "  ${YELLOW}2)${NC} DPDK + Pktgen Rebuild"
+    echo -e "     ${CYAN}→${NC} make clean && make build"
+    echo -e "       (clean rebuild, skips PCM if already built)"
     echo ""
-    echo -e "  ${YELLOW}3)${NC} Rebuild Pktgen Only"
-    echo -e "     ${CYAN}→${NC} make pktgen-rebuild"
-    echo -e "       (quick incremental build for Pktgen-DPDK changes)"
-    echo ""
-    echo -e "  ${YELLOW}4)${NC} Rebuild L3FWD Only"
-    echo -e "     ${CYAN}→${NC} make l3fwd-rebuild"
-    echo -e "       (quick incremental build for L3FWD changes)"
+    echo -e "  ${YELLOW}3)${NC} Light Rebuild"
+    echo -e "     ${CYAN}→${NC} pktgen-rebuild / l3fwd-rebuild"
+    echo -e "       (quick incremental build for app changes only)"
     echo ""
     echo -e "  ${YELLOW}0)${NC} Back to Main Menu"
     echo ""
@@ -94,11 +96,11 @@ option_build() {
     case $build_choice in
         1)
             echo ""
-            echo -e "${BLUE}>> Running make clean...${NC}"
-            make clean
+            echo -e "${BLUE}>> Running make clean-all...${NC}"
+            make clean-all
             echo ""
-            echo -e "${BLUE}>> Running make submodules...${NC}"
-            make submodules
+            echo -e "${BLUE}>> Running make build-all...${NC}"
+            make build-all
             echo ""
             echo -e "${GREEN}✓ Full build completed!${NC}"
             ;;
@@ -107,24 +109,20 @@ option_build() {
             echo -e "${BLUE}>> Running make clean...${NC}"
             make clean
             echo ""
-            echo -e "${BLUE}>> Running make submodules-debug...${NC}"
-            make submodules-debug
+            echo -e "${BLUE}>> Running make build...${NC}"
+            make build
             echo ""
-            echo -e "${GREEN}✓ Full debug build completed!${NC}"
+            echo -e "${GREEN}✓ DPDK + Pktgen build completed!${NC}"
             ;;
         3)
             echo ""
             echo -e "${BLUE}>> Running make pktgen-rebuild...${NC}"
             make pktgen-rebuild
             echo ""
-            echo -e "${GREEN}✓ Pktgen rebuild completed!${NC}"
-            ;;
-        4)
-            echo ""
             echo -e "${BLUE}>> Running make l3fwd-rebuild...${NC}"
             make l3fwd-rebuild
             echo ""
-            echo -e "${GREEN}✓ L3FWD rebuild completed!${NC}"
+            echo -e "${GREEN}✓ Light rebuild completed (Pktgen + L3FWD)!${NC}"
             ;;
         0)
             return
@@ -133,6 +131,42 @@ option_build() {
             echo -e "${RED}Invalid option.${NC}"
             ;;
     esac
+}
+
+# Option 3: Run Simple Pktgen Test
+option_simple_test() {
+    echo ""
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  Simple Pktgen Test${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${CYAN}Script: config/simple-pktgen-test.lua${NC}"
+    echo -e "${CYAN}Log: results/simple-pktgen-test.log${NC}"
+    echo ""
+
+    make run-simple-pktgen-test
+
+    echo ""
+    echo -e "${GREEN}✓ Test completed! Log saved to results/simple-pktgen-test.log${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+}
+
+# Option 4: Run Full Benchmark
+option_full_benchmark() {
+    echo ""
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  Full Benchmark${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${CYAN}Config: scripts/benchmark/test_config.py${NC}"
+    echo -e "${CYAN}Results: results/${NC}"
+    echo ""
+
+    make run-full-benchmark
+
+    echo ""
+    echo -e "${GREEN}✓ Benchmark completed! Results saved to results/${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 }
 
 # Wait for user to press Enter
@@ -157,6 +191,14 @@ main_menu() {
                 ;;
             2)
                 option_build
+                press_enter
+                ;;
+            3)
+                option_simple_test
+                press_enter
+                ;;
+            4)
+                option_full_benchmark
                 press_enter
                 ;;
             0)

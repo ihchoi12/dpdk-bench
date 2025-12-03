@@ -242,13 +242,47 @@ build_pcm() {
 # -----------------------
 # Main
 # -----------------------
-# ... Keep the above functions as is, only extending the case statement ...
 case "$CMD" in
-  build)
+  build-all)
+    # Full build: PCM + DPDK + Pktgen + NeoHost (for new machines or profiling tool updates)
     need git; need meson; need ninja
-    # PCM (must be built before DPDK since l3fwd depends on it)
+    echo ">> FULL BUILD: PCM + DPDK + Pktgen + NeoHost"
+    # PCM
+    sync_pcm
+    reset_pcm
+    build_pcm
+    # DPDK
+    sync_dpdk
+    reset_dpdk
+    build_dpdk
+    # Pktgen
+    sync_pktgen
+    reset_pktgen
+    build_pktgen
+    # NeoHost
+    echo ""
+    if [ -d "${REPO_ROOT}/neohost/miniconda3/envs/py27" ]; then
+      echo ">> NeoHost already set up, skipping"
+    elif [ -f "${REPO_ROOT}/neohost/setup_neohost.sh" ]; then
+      echo ">> Setting up NeoHost..."
+      bash "${REPO_ROOT}/neohost/setup_neohost.sh"
+    else
+      echo ">> NeoHost setup script not found, skipping"
+    fi
+    echo ""
+    echo ">> Full build complete!"
+    echo ">> Environment setup:"
+    echo "   export PKG_CONFIG_PATH=\"${DPDK_PREFIX}/lib/pkgconfig:${DPDK_PREFIX}/lib/x86_64-linux-gnu/pkgconfig:\$PKG_CONFIG_PATH\""
+    echo "   export LD_LIBRARY_PATH=\"${DPDK_PREFIX}/lib:${DPDK_PREFIX}/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH\""
+    ;;
+  build)
+    # DPDK + Pktgen only (skip PCM if already built)
+    need git; need meson; need ninja
+    echo ">> BUILD: DPDK + Pktgen (profiling tools skipped)"
+    # Check PCM exists (needed for L3FWD)
     sync_pcm
     if [ ! -f "${PCM_DIR}/build/src/libpcm.a" ]; then
+      echo ">> PCM not found, building first..."
       build_pcm
     else
       echo ">> PCM already built, skipping"
@@ -273,6 +307,19 @@ case "$CMD" in
     build_l3fwd
     ;;
   clean)
+    # Clean only DPDK + Pktgen (preserve PCM)
+    echo ">> Cleaning DPDK + Pktgen (PCM preserved)"
+    sync_dpdk
+    reset_dpdk
+    rm -rf "$DPDK_BUILD"
+    sync_pktgen
+    reset_pktgen
+    rm -rf "$PKTGEN_BUILD"
+    echo ">> Cleaned DPDK and Pktgen build directories"
+    ;;
+  clean-all)
+    # Clean everything including PCM
+    echo ">> Cleaning ALL (including PCM)"
     sync_dpdk
     reset_dpdk
     rm -rf "$DPDK_BUILD"
@@ -285,7 +332,13 @@ case "$CMD" in
     echo ">> Cleaned all build directories"
     ;;
   *)
-    echo "usage: $0 {build|l3fwd|clean}"
+    echo "usage: $0 {build-all|build|l3fwd|clean|clean-all}"
+    echo ""
+    echo "  build-all  : Full build (PCM + DPDK + Pktgen)"
+    echo "  build      : DPDK + Pktgen only (skips PCM if already built)"
+    echo "  l3fwd      : Rebuild L3FWD example only"
+    echo "  clean      : Clean DPDK + Pktgen (preserves PCM)"
+    echo "  clean-all  : Clean everything including PCM"
     exit 1
     ;;
 esac

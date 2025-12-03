@@ -1,70 +1,44 @@
 import os
-import pandas as pd
-import numpy as np
 
-################## CONFIG LOADER #####################
 def load_bash_config(config_file):
     """Parse bash-style config file (KEY=value) and return dict"""
     config = {}
     if not os.path.exists(config_file):
         return config
-
     with open(config_file, 'r') as f:
         for line in f:
             line = line.strip()
-            # Skip comments and empty lines
             if not line or line.startswith('#'):
                 continue
-            # Parse KEY=value
             if '=' in line:
                 key, value = line.split('=', 1)
-                key = key.strip()
-                value = value.strip()
-                config[key] = value
+                config[key.strip()] = value.strip()
     return config
 
 ################## PATHS #####################
-HOME = os.path.expanduser("~")
-LOCAL = HOME.replace("/homes", "/local")
-# Get the absolute path of the dpdk-bench directory (where this config file is located)
-DPDK_BENCH_HOME = os.path.dirname(os.path.abspath(__file__))
+DPDK_BENCH_HOME = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DPDK_PATH = f'{DPDK_BENCH_HOME}/dpdk'
 PKTGEN_PATH = f'{DPDK_BENCH_HOME}/Pktgen-DPDK'
 RESULTS_PATH = f'{DPDK_BENCH_HOME}/results'
-SCRIPTS_PATH = f'{DPDK_BENCH_HOME}/scripts'
+DATA_PATH = RESULTS_PATH
 
 # Load configuration files
-CLUSTER_CONFIG_FILE = f'{DPDK_BENCH_HOME}/cluster.config'
-CLUSTER_CONFIG = load_bash_config(CLUSTER_CONFIG_FILE)
-
-SYSTEM_CONFIG_FILE = f'{DPDK_BENCH_HOME}/config/system.config'
-SYSTEM_CONFIG = load_bash_config(SYSTEM_CONFIG_FILE)
+CLUSTER_CONFIG = load_bash_config(f'{DPDK_BENCH_HOME}/cluster.config')
+SYSTEM_CONFIG = load_bash_config(f'{DPDK_BENCH_HOME}/config/system.config')
+TEST_CONFIG = load_bash_config(f'{DPDK_BENCH_HOME}/config/test.config')
 
 ################## CLUSTER CONFIG #####################
-# ============================================================
-# CLUSTER NODE CONFIGURATION
-# Node assignments from cluster.config
-# Hardware info from system.config (current machine)
-# ============================================================
-
-# Node assignments (from cluster.config)
 PKTGEN_NODE = CLUSTER_CONFIG.get('PKTGEN_NODE', 'node7')
 L3FWD_NODE = CLUSTER_CONFIG.get('L3FWD_NODE', 'node8')
 
-# PKTGEN Node Configuration (auto-loaded from system.config)
-PKTGEN_IP = SYSTEM_CONFIG.get('PKTGEN_NIC_IP', '')
+# NIC Configuration (from system.config + test.config)
 PKTGEN_MAC = SYSTEM_CONFIG.get('PKTGEN_NIC_MAC', '')
 PKTGEN_PCI_ADDRESS = SYSTEM_CONFIG.get('PKTGEN_NIC_PCI', '')
+PKTGEN_NIC_DEVARGS = TEST_CONFIG.get('PKTGEN_NIC_DEVARGS', '')
 
-# L3FWD Node Configuration (to be added via system.config later)
-L3FWD_IP = SYSTEM_CONFIG.get('L3FWD_NIC_IP', '')
-L3FWD_MAC = SYSTEM_CONFIG.get('L3FWD_NIC_MAC', '')
 L3FWD_PCI_ADDRESS = SYSTEM_CONFIG.get('L3FWD_NIC_PCI', '')
-L3FWD_ETH_DEST = PKTGEN_MAC  # Forward to PKTGEN node
-
-# All nodes in cluster
-ALL_NODES = [PKTGEN_NODE, L3FWD_NODE]
-
+L3FWD_NIC_DEVARGS = TEST_CONFIG.get('L3FWD_NIC_DEVARGS', '')
+L3FWD_ETH_DEST = PKTGEN_MAC
 
 ################## DPDK CONFIG #####################
 
@@ -205,38 +179,14 @@ def _calculate_profiling_time():
 
 PKTGEN_DURATION = _calculate_profiling_time()  # Auto-calculated based on enabled profilers
 
-# L3FWD Descriptor configuration
-L3FWD_TX_DESC_VALUES = [1024] #[128, 512, 1024, 1024*2, 1024*4, 1024*8, 1024*16, 1024*32]  # L3FWD TX descriptor sizes
-L3FWD_RX_DESC_VALUES = [1024]  # L3FWD RX descriptor sizes
+# Descriptor configuration
+L3FWD_TX_DESC_VALUES = [1024]
+L3FWD_RX_DESC_VALUES = [1024]
+PKTGEN_TX_DESC_VALUES = [1024]
 
-# PKTGEN TX Descriptor configuration  
-PKTGEN_TX_DESC_VALUES = [1024]  # PKTGEN TX descriptor sizes - simplified for testing
-
-# LCORE test configuration  
-# L3FWD LCORE configuration - can use any number of cores
-L3FWD_LCORE_COUNTS = [2]  # L3FWD core counts to test
-L3FWD_LCORE_VALUES = L3FWD_LCORE_COUNTS
-
-# PKTGEN LCORE configuration - number of TX cores (RX is always core 1, TX cores start from core 2)
-PKTGEN_LCORE_COUNTS = [1,2,4,8]  # Number of TX cores to test
-PKTGEN_LCORE_VALUES = PKTGEN_LCORE_COUNTS
-
-################## BUILD CONFIG #####################
-LIBOS = 'dpdk'  # DPDK-based applications
-# FEATURES = [
-#     'high-performance',
-#     'low-latency',
-# ]
-
+# LCORE configuration
+L3FWD_LCORE_VALUES = [2]
+PKTGEN_LCORE_VALUES = [1, 2, 4, 8]  # TX cores (RX always core 1, TX starts from core 2)
 
 ################## ENV VARS #####################
-### DPDK ###
 ENV = f'LD_LIBRARY_PATH={DPDK_PATH}/build/lib:{DPDK_PATH}/build/lib/x86_64-linux-gnu'
-### DATA COLLECTION ###
-DATA_PATH = f'{DPDK_BENCH_HOME}/results'
-
-# Remove unused imports and configs
-
-# commands
-# python3 -u run_test.py 2>&1 | tee -a /homes/inho/Autokernel/dpdk-bench/results/experiment_history.txt
-# python3 run_test.py build
