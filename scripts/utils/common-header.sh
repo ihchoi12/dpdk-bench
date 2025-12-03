@@ -38,7 +38,7 @@ DPDK_PREFIX="${DPDK_PREFIX:-${REPO_ROOT}/dpdk/build}"
 # Load configuration files
 # 1. cluster.config: Cluster node assignments (PKTGEN_NODE, L3FWD_NODE)
 # 2. system.config: Hardware configuration (auto-generated)
-# 3. test.config: Test parameters for PKTGEN and L3FWD
+# 3. simple-test/simple-test.config: Test parameters for PKTGEN and L3FWD
 
 load_config_file() {
   local config_file="$1"
@@ -69,7 +69,7 @@ SYSTEM_CONFIG="${REPO_ROOT}/config/system.config"
 load_config_file "$SYSTEM_CONFIG"
 
 # Load test configuration (PKTGEN/L3FWD parameters)
-TEST_CONFIG="${REPO_ROOT}/config/test.config"
+TEST_CONFIG="${REPO_ROOT}/config/simple-test/simple-test.config"
 load_config_file "$TEST_CONFIG"
 
 # Setup DPDK runtime environment

@@ -6,7 +6,7 @@ PKTGEN_BIN="${PKTGEN_BIN:-${REPO_ROOT}/Pktgen-DPDK/build/app/pktgen}"
 
 # Load parameters from config files
 # - system.config: PKTGEN_NIC_PCI (hardware)
-# - test.config: PKTGEN_* (test parameters)
+# - simple-test/simple-test.config: PKTGEN_* (test parameters)
 LCORES="${LCORES:-${PKTGEN_LCORES:--l 0-1}}"
 MEMCH="${MEMCH:-${PKTGEN_MEMCH:--n 4}}"
 FILE_PREFIX="${FILE_PREFIX:-${PKTGEN_FILE_PREFIX:-pktgen1}}"
@@ -24,7 +24,7 @@ else
 fi
 
 # Script file to execute (can be overridden by command line argument or environment)
-SCRIPT_FILE="${1:-${SCRIPT_FILE:-${REPO_ROOT}/config/simple-pktgen-test.lua}}"
+SCRIPT_FILE="${1:-${SCRIPT_FILE:-${REPO_ROOT}/config/simple-test/simple-pktgen-test.lua}}"
 
 # Convert to relative path from Pktgen-DPDK directory
 SCRIPT_REL_PATH=$(realpath --relative-to="${REPO_ROOT}/Pktgen-DPDK" "${SCRIPT_FILE}")

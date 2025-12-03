@@ -39,22 +39,32 @@ from test_config import *
 final_result = ''
 experiment_id = ''
 
+def fmt_count(n):
+    """Format count: <1K as-is, ≥1K as K, ≥1M as M"""
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.1f}M"
+    elif n >= 1_000:
+        return f"{n/1_000:.1f}K"
+    return str(int(n))
+
+def fmt_bw(value, unit='MB/s'):
+    """Format bandwidth with unit, auto-convert to GB if ≥1000MB"""
+    if unit == 'MB/s' and value >= 1000:
+        return f"{value/1000:.2f}GB/s"
+    elif unit == 'Gb/s' and value >= 1000:
+        return f"{value/1000:.2f}Tb/s"
+    return f"{value:.2f}{unit}"
 
 def kill_procs():
     """Kill DPDK processes (pktgen locally, l3fwd remotely if configured)"""
-
-    # Kill pktgen processes locally
-    print('Killing local pktgen processes...')
+    print('Killing processes...', end=' ', flush=True)
     subprocess.run(['sudo', 'pkill', '-f', 'pktgen'], check=False)
-
-    # Kill dpdk-l3fwd on L3FWD node (if configured)
     if L3FWD_NODE:
         l3fwd_cmd = ['sudo pkill dpdk-l3fwd']
         l3fwd_host = pyrem.host.RemoteHost(L3FWD_NODE)
         l3fwd_task = l3fwd_host.run(l3fwd_cmd, quiet=False)
         pyrem.task.Parallel([l3fwd_task], aggregate=True).start(wait=True)
-
-    print('KILLED LEGACY PROCESSES')
+    print('DONE')
 
 # Setup ARP tables
 def setup_arp_tables():
@@ -75,11 +85,10 @@ def setup_arp_tables():
 def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None):
     """Run l3fwd on L3FWD node"""
     global experiment_id
-    print(f'RUNNING L3FWD on {L3FWD_NODE} with TX_DESC={tx_desc_value}, RX_DESC={rx_desc_value}')
-    
-    # Use provided config or default
-    config = l3fwd_config if l3fwd_config else L3FWD_CONFIG
-    
+    if not l3fwd_config:
+        raise ValueError("l3fwd_config is required - use get_l3fwd_config()")
+
+    config = l3fwd_config
     host = pyrem.host.RemoteHost(config["node"])
     
     # Build tx-queue-size and rx-queue-size arguments if specified
@@ -111,10 +120,10 @@ def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None):
 def run_pktgen(tx_desc_value=None, pktgen_config=None):
     """Run pktgen locally"""
     global experiment_id
-    print(f'RUNNING PKTGEN locally with TX_DESC={tx_desc_value}')
+    if not pktgen_config:
+        raise ValueError("pktgen_config is required - use get_pktgen_config()")
 
-    # Use provided config or default
-    config = pktgen_config if pktgen_config else PKTGEN_CONFIG
+    config = pktgen_config
 
     # Build TX descriptor argument if specified
     # Note: --txd is an application option, goes after -- separator
@@ -150,6 +159,10 @@ def run_pktgen(tx_desc_value=None, pktgen_config=None):
 def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
     """Run pktgen locally and start profilers (perf/pcm/neohost) based on configuration"""
     global experiment_id
+    if not pktgen_config:
+        raise ValueError("pktgen_config is required - use get_pktgen_config()")
+
+    config = pktgen_config
 
     # Build list of enabled profilers
     enabled_profilers = []
@@ -161,10 +174,7 @@ def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
         enabled_profilers.append('neohost')
 
     profilers_str = '+'.join(enabled_profilers) if enabled_profilers else 'none'
-    print(f'RUNNING PKTGEN locally with TX_DESC={tx_desc_value} and monitoring: {profilers_str}')
-
-    # Use provided config or default
-    config = pktgen_config if pktgen_config else PKTGEN_CONFIG
+    print(f'Running pktgen with profilers: {profilers_str}')
 
     # Build TX descriptor argument if specified
     tx_desc_arg = ""
@@ -236,7 +246,7 @@ def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
     # Wait for pktgen to finish
     pktgen_cmd += f'wait $PKTGEN_PID 2>/dev/null'
 
-    print(f'PKTGEN+PROFILERS command (duration={PKTGEN_DURATION}s): {pktgen_cmd[:200]}...')
+    print(f'PKTGEN+PROFILERS command (duration={PKTGEN_DURATION}s): {pktgen_cmd[:]}...')
 
     # Run locally using subprocess
     result = subprocess.run(pktgen_cmd, shell=True, check=False)
@@ -557,17 +567,28 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
     print(f"PCM: PCIRdCur={pcm_pcie_rdcur} M, PCIe Rd={pcm_pcie_rd_mb} MB, PCIe Wr={pcm_pcie_wr_mb} MB")
     print(f"Neohost: Outbound Stalled Reads={neohost_outbound_stalled_reads}, PCIe Inbound BW={neohost_pcie_inbound_bw} Gb/s, PCIe Outbound BW={neohost_pcie_outbound_bw} Gb/s")
 
-    # Build CSV row dynamically
+    # Build CSV row dynamically with formatted values
     tx_cores = pktgen_lcore_count
-    csv_values = [experiment_id, txqs_min_inline, tx_cores, pktgen_tx_desc_value, pktgen_tx_rate]
+    csv_values = [experiment_id, txqs_min_inline, tx_cores, pktgen_tx_desc_value, f"{pktgen_tx_rate}Mpps"]
 
-    # Add perf values in config order
+    # Add perf values in config order (formatted)
     for item in (PERF_EVENTS + PERF_METRICS):
-        csv_values.append(perf_results.get(item, 0))
+        val = perf_results.get(item, 0)
+        unit = PERF_UNITS.get(item, 'count')
+        if unit == 'MB/s':
+            csv_values.append(fmt_bw(val, 'MB/s'))
+        else:
+            csv_values.append(fmt_count(val))
 
-    # Add PCM and Neohost values
-    csv_values.extend([pcm_pcie_rdcur, pcm_pcie_rd_mb, pcm_pcie_wr_mb,
-                       neohost_outbound_stalled_reads, neohost_pcie_inbound_bw, neohost_pcie_outbound_bw])
+    # Add PCM values (formatted)
+    csv_values.append(f"{pcm_pcie_rdcur:.1f}M")  # PCIRdCur already in M
+    csv_values.append(fmt_bw(pcm_pcie_rd_mb, 'MB/s'))
+    csv_values.append(fmt_bw(pcm_pcie_wr_mb, 'MB/s'))
+
+    # Add Neohost values (formatted)
+    csv_values.append(fmt_count(neohost_outbound_stalled_reads))
+    csv_values.append(fmt_bw(neohost_pcie_inbound_bw, 'Gb/s'))
+    csv_values.append(fmt_bw(neohost_pcie_outbound_bw, 'Gb/s'))
 
     result_str += ', '.join(map(str, csv_values)) + '\n'
 
@@ -912,7 +933,7 @@ def run_eval():
     print("Starting DPDK Pktgen Tests with Profiling")
     print(f"Enabled profilers: {profilers_str}")
     print(f"Testing PKTGEN TX descriptor values: {PKTGEN_TX_DESC_VALUES}")
-    print(f"Testing PKTGEN LCORE counts: {PKTGEN_LCORE_VALUES}")
+    print(f"Testing PKTGEN LCORE counts: {PKTGEN_TX_CORE_VALUES}")
     print(f"Total duration: {PKTGEN_DURATION} seconds (warmup: {WARMUP_DELAY}s, interval: {TOOL_INTERVAL}s)")
 
     # Extract txqs_min_inline from pktgen config
@@ -921,7 +942,7 @@ def run_eval():
     pci_match = re.search(r'txqs_min_inline=(\d+)', pktgen_config_default["pci_address"])
     txqs_min_inline = int(pci_match.group(1)) if pci_match else 8
 
-    for pktgen_lcore_count in PKTGEN_LCORE_VALUES:
+    for pktgen_lcore_count in PKTGEN_TX_CORE_VALUES:
         for pktgen_tx_desc_value in PKTGEN_TX_DESC_VALUES:
             print(f'\n================ TESTING PKTGEN_LCORE={pktgen_lcore_count}, PKTGEN_TX_DESC={pktgen_tx_desc_value} =================')
 
@@ -1011,7 +1032,6 @@ if __name__ == '__main__':
 
     atexit.register(exiting)
 
-    print("Starting DPDK Benchmark Tests")
     if L3FWD_NODE:
         print(f"L3FWD Node: {L3FWD_NODE} (remote)")
     else:

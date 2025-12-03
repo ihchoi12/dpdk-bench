@@ -35,10 +35,13 @@ print_menu() {
     echo -e "     ${CYAN}→${NC} Build DPDK, Pktgen, and related components"
     echo ""
     echo -e "  ${YELLOW}3)${NC} Run Simple Pktgen Test"
-    echo -e "     ${CYAN}→${NC} Run pktgen with simple-pktgen-test.lua"
+    echo -e "     ${CYAN}→${NC} Run pktgen with simple-test config"
     echo ""
     echo -e "  ${YELLOW}4)${NC} Run Full Benchmark"
     echo -e "     ${CYAN}→${NC} Run benchmark suite (see scripts/benchmark/test_config.py)"
+    echo ""
+    echo -e "  ${YELLOW}5)${NC} DDIO Control"
+    echo -e "     ${CYAN}→${NC} Enable/Disable DDIO, adjust LLC ways"
     echo ""
     echo -e "  ${YELLOW}0)${NC} Exit"
     echo ""
@@ -140,7 +143,7 @@ option_simple_test() {
     echo -e "${BLUE}  Simple Pktgen Test${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "${CYAN}Script: config/simple-pktgen-test.lua${NC}"
+    echo -e "${CYAN}Script: config/simple-test/simple-pktgen-test.lua${NC}"
     echo -e "${CYAN}Log: results/simple-pktgen-test.log${NC}"
     echo ""
 
@@ -167,6 +170,18 @@ option_full_benchmark() {
     echo ""
     echo -e "${GREEN}✓ Benchmark completed! Results saved to results/${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+}
+
+# Option 5: DDIO Control
+option_ddio_control() {
+    DDIO_BIN="$SCRIPT_DIR/ddio-modify/build/ddio_modify"
+    if [ -x "$DDIO_BIN" ]; then
+        sudo "$DDIO_BIN"
+    else
+        echo -e "${RED}✗ Error: ddio_modify not found or not built${NC}"
+        echo -e "  ${CYAN}→${NC} Build with: cd ddio-modify && mkdir -p build && cd build && cmake .. && make"
+        return 1
+    fi
 }
 
 # Wait for user to press Enter
@@ -199,6 +214,10 @@ main_menu() {
                 ;;
             4)
                 option_full_benchmark
+                press_enter
+                ;;
+            5)
+                option_ddio_control
                 press_enter
                 ;;
             0)

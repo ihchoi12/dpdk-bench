@@ -1,6 +1,9 @@
 import os
+import subprocess
 
-def load_bash_config(config_file):
+################## HELPER FUNCTIONS #####################
+
+def _load_bash_config(config_file):
     """Parse bash-style config file (KEY=value) and return dict"""
     config = {}
     if not os.path.exists(config_file):
@@ -15,45 +18,103 @@ def load_bash_config(config_file):
                 config[key.strip()] = value.strip()
     return config
 
+def _detect_perf_events():
+    """Auto-detect available LLC-related perf events from system"""
+    try:
+        result = subprocess.run(['sudo', 'perf', 'list'], capture_output=True, text=True, timeout=10)
+        available = result.stdout + result.stderr
+    except:
+        return [], []
+
+    llc_event_candidates = [
+        'LLC-loads', 'LLC-load-misses', 'LLC-stores', 'LLC-store-misses',
+        'unc_cha_llc_lookup.data_read', 'unc_cha_llc_lookup.write', 'unc_cha_llc_lookup.any',
+    ]
+    metric_candidates = [
+        'llc_miss_local_memory_bandwidth_read', 'llc_miss_local_memory_bandwidth_write',
+    ]
+    return [e for e in llc_event_candidates if e in available], [m for m in metric_candidates if m in available]
+
+def _calculate_profiling_time(warmup, perf_dur, pcm_dur, neohost_dur, interval, enable_perf, enable_pcm, enable_neohost):
+    """Calculate total time needed for enabled profilers"""
+    total = warmup
+    if enable_perf:
+        total += perf_dur
+    if enable_pcm:
+        total += interval + pcm_dur
+    if enable_neohost:
+        neohost_python = f'{DPDK_BENCH_HOME}/neohost/miniconda3/envs/py27/bin/python'
+        neohost_sdk = f'{DPDK_BENCH_HOME}/neohost/sdk/opt/neohost/sdk/get_device_performance_counters.py'
+        if os.path.exists(neohost_python) and os.path.exists(neohost_sdk):
+            total += interval + neohost_dur
+    return total + interval
+
 ################## PATHS #####################
 DPDK_BENCH_HOME = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DPDK_PATH = f'{DPDK_BENCH_HOME}/dpdk'
 PKTGEN_PATH = f'{DPDK_BENCH_HOME}/Pktgen-DPDK'
 RESULTS_PATH = f'{DPDK_BENCH_HOME}/results'
 DATA_PATH = RESULTS_PATH
+ENV = f'LD_LIBRARY_PATH={DPDK_PATH}/build/lib:{DPDK_PATH}/build/lib/x86_64-linux-gnu'
 
-# Load configuration files
-CLUSTER_CONFIG = load_bash_config(f'{DPDK_BENCH_HOME}/cluster.config')
-SYSTEM_CONFIG = load_bash_config(f'{DPDK_BENCH_HOME}/config/system.config')
-TEST_CONFIG = load_bash_config(f'{DPDK_BENCH_HOME}/config/test.config')
+################## LOAD CONFIG FILES #####################
+CLUSTER_CONFIG = _load_bash_config(f'{DPDK_BENCH_HOME}/cluster.config')
+SYSTEM_CONFIG = _load_bash_config(f'{DPDK_BENCH_HOME}/config/system.config')
 
 ################## CLUSTER CONFIG #####################
 PKTGEN_NODE = CLUSTER_CONFIG.get('PKTGEN_NODE', 'node7')
 L3FWD_NODE = CLUSTER_CONFIG.get('L3FWD_NODE', 'node8')
 
-# NIC Configuration (from system.config + test.config)
+################## NIC CONFIG #####################
 PKTGEN_MAC = SYSTEM_CONFIG.get('PKTGEN_NIC_MAC', '')
 PKTGEN_PCI_ADDRESS = SYSTEM_CONFIG.get('PKTGEN_NIC_PCI', '')
-PKTGEN_NIC_DEVARGS = TEST_CONFIG.get('PKTGEN_NIC_DEVARGS', '')
+PKTGEN_NIC_DEVARGS = 'txqs_min_inline=8'
 
 L3FWD_PCI_ADDRESS = SYSTEM_CONFIG.get('L3FWD_NIC_PCI', '')
-L3FWD_NIC_DEVARGS = TEST_CONFIG.get('L3FWD_NIC_DEVARGS', '')
+L3FWD_NIC_DEVARGS = 'txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256'
 L3FWD_ETH_DEST = PKTGEN_MAC
 
-################## DPDK CONFIG #####################
+################## PROFILER CONFIG #####################
+ENABLE_PERF = True
+ENABLE_PCM = True
+ENABLE_NEOHOST = True
+
+WARMUP_DELAY = 10
+TOOL_INTERVAL = 5
+PERF_DURATION = 15
+PCM_DURATION = 15
+NEOHOST_DURATION = 20
+
+PERF_EVENTS, PERF_METRICS = _detect_perf_events()
+PERF_UNITS = {
+    'LLC-loads': 'count', 'LLC-load-misses': 'count',
+    'LLC-stores': 'count', 'LLC-store-misses': 'count',
+    'unc_cha_llc_lookup.data_read': 'count', 'unc_cha_llc_lookup.write': 'count',
+    'unc_cha_llc_lookup.any': 'count',
+    'llc_miss_local_memory_bandwidth_read': 'MB/s', 'llc_miss_local_memory_bandwidth_write': 'MB/s',
+}
+
+PKTGEN_DURATION = _calculate_profiling_time(
+    WARMUP_DELAY, PERF_DURATION, PCM_DURATION, NEOHOST_DURATION,
+    TOOL_INTERVAL, ENABLE_PERF, ENABLE_PCM, ENABLE_NEOHOST
+)
+
+################## TEST PARAMETERS #####################
+PKTGEN_PACKET_SIZE = 64
+
+L3FWD_TX_DESC_VALUES = [1024]
+L3FWD_RX_DESC_VALUES = [1024]
+PKTGEN_TX_DESC_VALUES = [1024]
+
+L3FWD_LCORE_VALUES = [2]
+PKTGEN_TX_CORE_VALUES = [1, 2, 4, 8]
+
+################## CONFIG GENERATORS #####################
 
 def get_l3fwd_config(lcore_count):
     """Generate L3FWD configuration for given lcore count"""
-    # L3FWD uses cores 1 to lcore_count (core 0 is main)
     lcores = f"-l 0-{lcore_count}"
-
-    # Generate config string: (port,queue,lcore) for each working core
-    config_parts = []
-    for i in range(1, lcore_count + 1):
-        queue_id = i - 1  # Queue starts from 0
-        config_parts.append(f"(0,{queue_id},{i})")
-    config = ",".join(config_parts)
-
+    config_parts = [f"(0,{i-1},{i})" for i in range(1, lcore_count + 1)]
     return {
         "binary_path": f"{DPDK_PATH}/build/examples/dpdk-l3fwd",
         "node": L3FWD_NODE,
@@ -61,43 +122,22 @@ def get_l3fwd_config(lcore_count):
         "memory_channels": "-n 4",
         "pci_address": f"{L3FWD_PCI_ADDRESS},{L3FWD_NIC_DEVARGS}",
         "port_mask": "-p 0x1",
-        "config": config,
+        "config": ",".join(config_parts),
         "eth_dest": L3FWD_ETH_DEST
     }
 
 def get_pktgen_config(tx_core_count):
     """Generate PKTGEN configuration for given TX core count
 
-    Args:
-        tx_core_count: Number of TX cores (RX core is always core 1, TX cores start from core 2)
-
-    Example:
-        tx_core_count=2 → cores: 0(main), 1(RX), 2-3(TX)
-        tx_core_count=3 → cores: 0(main), 1(RX), 2-4(TX)
+    tx_core_count=2 → cores: 0(main), 1(RX), 2-3(TX)
     """
-    # Total cores needed: 1(main) + 1(RX) + tx_core_count(TX)
-    # lcores: 0 to (1 + tx_core_count)
     total_lcore = 1 + tx_core_count
-    lcores = f"-l 0-{total_lcore}"
-
-    # RX: always core 1 only, TX: cores 2 to (1 + tx_core_count)
-    rx_core = 1
-    tx_start = 2
-    tx_end = total_lcore
-
-    # Generate port_map: [RX_core:TX_start-TX_end].port
-    if tx_core_count == 1:
-        # Special case: only 1 TX core (core 2)
-        port_map = f"[{rx_core}:{tx_start}].0"
-    else:
-        # Multiple TX cores
-        port_map = f"[{rx_core}:{tx_start}-{tx_end}].0"
-
+    port_map = f"[1:{2}].0" if tx_core_count == 1 else f"[1:2-{total_lcore}].0"
     return {
         "binary_path": f"{PKTGEN_PATH}/build/app/pktgen",
-        "working_dir": f"{PKTGEN_PATH}",
+        "working_dir": PKTGEN_PATH,
         "node": PKTGEN_NODE,
-        "lcores": lcores,
+        "lcores": f"-l 0-{total_lcore}",
         "memory_channels": "-n 4",
         "pci_address": f"{PKTGEN_PCI_ADDRESS},{PKTGEN_NIC_DEVARGS}",
         "proc_type": "--proc-type auto",
@@ -106,87 +146,3 @@ def get_pktgen_config(tx_core_count):
         "app_args": "-P -T",
         "script_file": "scripts/simple-tx-test.lua"
     }
-
-# Default configurations (for backward compatibility)
-L3FWD_CONFIG = get_l3fwd_config(4)  # Default to 4 lcores
-PKTGEN_CONFIG = get_pktgen_config(14)  # Default to 14 TX cores
-
-################## TEST CONFIG #####################
-PKTGEN_PACKET_SIZE = 64  # Packet size in bytes
-
-# Profiler enable/disable flags
-ENABLE_PERF = True      # Enable perf stat monitoring
-ENABLE_PCM = True       # Enable Intel PCM monitoring
-ENABLE_NEOHOST = False   # Enable NeoHost monitoring (requires compatible NIC firmware)
-
-# Perf event configuration
-# Events: raw performance counters (use with -e flag)
-PERF_EVENTS = [
-    'LLC-load-misses',                        # LLC load miss count
-    'LLC-store-misses',                       # LLC store miss count
-    'unc_cha_llc_lookup.data_read',           # LLC data read lookups
-    'unc_cha_llc_lookup.writes_and_other',    # LLC write lookups
-    'unc_cha_llc_lookup.data_read_miss',      # LLC data read miss count
-    'unc_cha_llc_lookup.rfo_miss',            # LLC write miss count
-]
-
-# Metrics: derived metrics (use with -M flag)
-PERF_METRICS = [
-    'llc_miss_local_memory_bandwidth_read',   # LLC miss read bandwidth
-    'llc_miss_local_memory_bandwidth_write',  # LLC miss write bandwidth
-]
-
-# Units for each event/metric (for CSV headers)
-PERF_UNITS = {
-    'LLC-load-misses': 'count',
-    'LLC-store-misses': 'count',
-    'unc_cha_llc_lookup.data_read': 'count',
-    'unc_cha_llc_lookup.writes_and_other': 'count',
-    'unc_cha_llc_lookup.data_read_miss': 'count',
-    'unc_cha_llc_lookup.rfo_miss': 'count',
-    'llc_miss_local_memory_bandwidth_read': 'MB/s',
-    'llc_miss_local_memory_bandwidth_write': 'MB/s',
-}
-
-# Profiler timing configuration
-WARMUP_DELAY = 10       # Delay before starting first profiler (warmup period)
-TOOL_INTERVAL = 5       # Interval between profilers and final buffer
-PERF_DURATION = 15      # Duration in seconds for perf stat monitoring
-PCM_DURATION = 15       # Duration in seconds for pcm-pcie monitoring
-NEOHOST_DURATION = 20   # Duration in seconds for neohost monitoring
-
-# Calculate total profiling time based on enabled profilers
-def _calculate_profiling_time():
-    """Calculate total time needed for enabled profilers"""
-    total = WARMUP_DELAY  # Initial warmup delay
-
-    if ENABLE_PERF:
-        total += PERF_DURATION
-
-    if ENABLE_PCM:
-        total += TOOL_INTERVAL + PCM_DURATION
-
-    if ENABLE_NEOHOST:
-        # Check if neohost is actually available
-        neohost_python = f'{DPDK_BENCH_HOME}/neohost/miniconda3/envs/py27/bin/python'
-        neohost_sdk = f'{DPDK_BENCH_HOME}/neohost/sdk/opt/neohost/sdk/get_device_performance_counters.py'
-        if os.path.exists(neohost_python) and os.path.exists(neohost_sdk):
-            total += TOOL_INTERVAL + NEOHOST_DURATION
-
-    # Add final buffer
-    total += TOOL_INTERVAL
-    return total
-
-PKTGEN_DURATION = _calculate_profiling_time()  # Auto-calculated based on enabled profilers
-
-# Descriptor configuration
-L3FWD_TX_DESC_VALUES = [1024]
-L3FWD_RX_DESC_VALUES = [1024]
-PKTGEN_TX_DESC_VALUES = [1024]
-
-# LCORE configuration
-L3FWD_LCORE_VALUES = [2]
-PKTGEN_LCORE_VALUES = [1, 2, 4, 8]  # TX cores (RX always core 1, TX starts from core 2)
-
-################## ENV VARS #####################
-ENV = f'LD_LIBRARY_PATH={DPDK_PATH}/build/lib:{DPDK_PATH}/build/lib/x86_64-linux-gnu'
