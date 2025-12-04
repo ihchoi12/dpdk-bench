@@ -19,21 +19,19 @@ def _load_bash_config(config_file):
     return config
 
 def _detect_perf_events():
-    """Auto-detect available LLC-related perf events from system"""
+    """Auto-detect available I/O LLC hit/miss perf events from system"""
     try:
         result = subprocess.run(['sudo', 'perf', 'list'], capture_output=True, text=True, timeout=10)
         available = result.stdout + result.stderr
     except:
-        return [], []
+        return []
 
-    llc_event_candidates = [
-        'LLC-loads', 'LLC-load-misses', 'LLC-stores', 'LLC-store-misses',
-        'unc_cha_llc_lookup.data_read', 'unc_cha_llc_lookup.write', 'unc_cha_llc_lookup.any',
+    # Only track NIC TX (PCIe RdCur) LLC hit/miss events
+    io_event_candidates = [
+        'unc_i_coherent_ops.pcirdcur',       # Total PCIe RdCur requests (NIC TX)
+        'unc_cha_tor_inserts.io_miss_rdcur', # RdCur LLC misses
     ]
-    metric_candidates = [
-        'llc_miss_local_memory_bandwidth_read', 'llc_miss_local_memory_bandwidth_write',
-    ]
-    return [e for e in llc_event_candidates if e in available], [m for m in metric_candidates if m in available]
+    return [e for e in io_event_candidates if e in available]
 
 def _calculate_profiling_time(warmup, perf_dur, pcm_dur, neohost_dur, interval, enable_perf, enable_pcm, enable_neohost):
     """Calculate total time needed for enabled profilers"""
@@ -75,7 +73,7 @@ L3FWD_NIC_DEVARGS = 'txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256'
 L3FWD_ETH_DEST = PKTGEN_MAC
 
 ################## PROFILER CONFIG #####################
-ENABLE_PERF = True
+ENABLE_PERF = False  # Disabled: using pcm-pcie -e for DDIO miss rate instead
 ENABLE_PCM = True
 ENABLE_NEOHOST = True
 
@@ -85,13 +83,10 @@ PERF_DURATION = 15
 PCM_DURATION = 15
 NEOHOST_DURATION = 20
 
-PERF_EVENTS, PERF_METRICS = _detect_perf_events()
+PERF_EVENTS = _detect_perf_events()
 PERF_UNITS = {
-    'LLC-loads': 'count', 'LLC-load-misses': 'count',
-    'LLC-stores': 'count', 'LLC-store-misses': 'count',
-    'unc_cha_llc_lookup.data_read': 'count', 'unc_cha_llc_lookup.write': 'count',
-    'unc_cha_llc_lookup.any': 'count',
-    'llc_miss_local_memory_bandwidth_read': 'MB/s', 'llc_miss_local_memory_bandwidth_write': 'MB/s',
+    'unc_i_coherent_ops.pcirdcur': 'count',       # Total PCIe RdCur requests
+    'unc_cha_tor_inserts.io_miss_rdcur': 'count', # RdCur LLC misses
 }
 
 PKTGEN_DURATION = _calculate_profiling_time(

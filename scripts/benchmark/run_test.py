@@ -212,8 +212,6 @@ def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
         perf_args = []
         if PERF_EVENTS:
             perf_args.append(f'-e {",".join(PERF_EVENTS)}')
-        if PERF_METRICS:
-            perf_args.append(f'-M {",".join(PERF_METRICS)}')
 
         perf_args_str = ' '.join(perf_args)
         pktgen_cmd += (f'sudo timeout {PERF_DURATION} perf stat '
@@ -224,7 +222,7 @@ def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
     # Add PCM monitoring if enabled
     if ENABLE_PCM:
         pktgen_cmd += f'sleep {TOOL_INTERVAL}; '
-        pktgen_cmd += (f'sudo timeout {PCM_DURATION} {DPDK_BENCH_HOME}/pcm/build/bin/pcm-pcie -B '
+        pktgen_cmd += (f'sudo timeout {PCM_DURATION} {DPDK_BENCH_HOME}/pcm/build/bin/pcm-pcie -B -e '
                        f'> {DATA_PATH}/{experiment_id}.pcm-pcie 2>&1; ')
 
     # Add NeoHost monitoring if enabled
@@ -301,7 +299,7 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
     # Parse perf stat results dynamically based on config
     perf_file = f'{DATA_PATH}/{experiment_id}.perf'
     # Initialize perf_results with all items from config (default to 0)
-    perf_results = {item: 0 for item in (PERF_EVENTS + PERF_METRICS)}
+    perf_results = {item: 0 for item in PERF_EVENTS}
 
     if os.path.exists(perf_file):
         try:
@@ -343,7 +341,7 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
                     timestamp_data[timestamp][metric] = bandwidth_mbs
 
             # Collect values per event/metric from config
-            all_perf_items = PERF_EVENTS + PERF_METRICS
+            all_perf_items = PERF_EVENTS
             event_values = {item: [] for item in all_perf_items}
 
             for timestamp, events in timestamp_data.items():
@@ -370,9 +368,11 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
         except Exception as e:
             print(f"ERROR parsing perf file {perf_file}: {e}")
 
-    # Parse pcm-pcie results
+    # Parse pcm-pcie results (with -B -e options: includes Total/Miss/Hit rows)
     pcm_file = f'{DATA_PATH}/{experiment_id}.pcm-pcie'
-    pcm_pcie_rdcur = 0
+    pcm_pcie_rdcur_total = 0
+    pcm_pcie_rdcur_miss = 0
+    pcm_pcie_ddio_miss_rate = 0
     pcm_pcie_rd_mb = 0
     pcm_pcie_wr_mb = 0
 
@@ -436,7 +436,9 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
             if rdcur_idx is None or pcie_rd_idx is None or pcie_wr_idx is None:
                 print(f"DEBUG PCM: Could not find required columns in header")
             else:
-                rdcur_values = []
+                # With -e option, output has (Total), (Miss), (Hit) rows
+                rdcur_total_values = []
+                rdcur_miss_values = []
                 rd_bytes_values = []
                 wr_bytes_values = []
 
@@ -447,8 +449,11 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
 
                     # Check if this is a data line (starts with socket number or *)
                     if re.match(r'^\s*[\d\*]\s+', line):
+                        # Determine row type: (Total), (Miss), (Hit), or Aggregate
+                        is_total = '(Total)' in line or '(Aggregate)' in line
+                        is_miss = '(Miss)' in line
+
                         # Extract all "number + optional K/M/G" patterns
-                        # Pattern: one or more digits (optionally with decimal), optionally followed by whitespace and K/M/G
                         value_pattern = r'(\d+(?:\.\d+)?)\s*([KMG]?)'
                         matches = re.findall(value_pattern, line)
 
@@ -463,27 +468,36 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
                                 rd_bytes = parse_bytes(values[pcie_rd_idx])
                                 wr_bytes = parse_bytes(values[pcie_wr_idx])
 
-                                rdcur_values.append(rdcur)
-                                rd_bytes_values.append(rd_bytes)
-                                wr_bytes_values.append(wr_bytes)
+                                if is_total:
+                                    rdcur_total_values.append(rdcur)
+                                    rd_bytes_values.append(rd_bytes)
+                                    wr_bytes_values.append(wr_bytes)
+                                elif is_miss:
+                                    rdcur_miss_values.append(rdcur)
                             except Exception as e:
                                 # Skip malformed lines
                                 pass
 
-                if rdcur_values and rd_bytes_values and wr_bytes_values:
+                if rdcur_total_values:
                     # Skip first 2 samples for warm-up
-                    rdcur_values_filtered = rdcur_values[2:] if len(rdcur_values) > 2 else rdcur_values
-                    rd_bytes_values_filtered = rd_bytes_values[2:] if len(rd_bytes_values) > 2 else rd_bytes_values
-                    wr_bytes_values_filtered = wr_bytes_values[2:] if len(wr_bytes_values) > 2 else wr_bytes_values
+                    total_filtered = rdcur_total_values[2:] if len(rdcur_total_values) > 2 else rdcur_total_values
+                    miss_filtered = rdcur_miss_values[2:] if len(rdcur_miss_values) > 2 else rdcur_miss_values
+                    rd_bytes_filtered = rd_bytes_values[2:] if len(rd_bytes_values) > 2 else rd_bytes_values
+                    wr_bytes_filtered = wr_bytes_values[2:] if len(wr_bytes_values) > 2 else wr_bytes_values
 
                     # Calculate averages
-                    # PCIRdCur: convert to M (millions)
-                    pcm_pcie_rdcur = round(sum(rdcur_values_filtered) / len(rdcur_values_filtered) / 1000000, 3) if rdcur_values_filtered else 0
-                    # PCIe Rd/Wr: convert to MB
-                    pcm_pcie_rd_mb = round(sum(rd_bytes_values_filtered) / len(rd_bytes_values_filtered) / (1024 * 1024), 3) if rd_bytes_values_filtered else 0
-                    pcm_pcie_wr_mb = round(sum(wr_bytes_values_filtered) / len(wr_bytes_values_filtered) / (1024 * 1024), 3) if wr_bytes_values_filtered else 0
-                    print(f"DEBUG PCM: Found {len(rdcur_values)} samples (using {len(rdcur_values_filtered)} after skipping first 2)")
-                    print(f"DEBUG PCM: PCIRdCur: {pcm_pcie_rdcur} M, PCIe Rd: {pcm_pcie_rd_mb} MB, PCIe Wr: {pcm_pcie_wr_mb} MB")
+                    pcm_pcie_rdcur_total = round(sum(total_filtered) / len(total_filtered) / 1000000, 3) if total_filtered else 0
+                    pcm_pcie_rdcur_miss = round(sum(miss_filtered) / len(miss_filtered) / 1000000, 3) if miss_filtered else 0
+                    pcm_pcie_rd_mb = round(sum(rd_bytes_filtered) / len(rd_bytes_filtered) / (1024 * 1024), 3) if rd_bytes_filtered else 0
+                    pcm_pcie_wr_mb = round(sum(wr_bytes_filtered) / len(wr_bytes_filtered) / (1024 * 1024), 3) if wr_bytes_filtered else 0
+
+                    # Calculate DDIO miss rate
+                    if pcm_pcie_rdcur_total > 0:
+                        pcm_pcie_ddio_miss_rate = round((pcm_pcie_rdcur_miss / pcm_pcie_rdcur_total) * 100, 2)
+
+                    print(f"DEBUG PCM: Found {len(rdcur_total_values)} samples (using {len(total_filtered)} after skipping first 2)")
+                    print(f"DEBUG PCM: PCIRdCur Total: {pcm_pcie_rdcur_total}M, Miss: {pcm_pcie_rdcur_miss}M, DDIO Miss Rate: {pcm_pcie_ddio_miss_rate}%")
+                    print(f"DEBUG PCM: PCIe Rd: {pcm_pcie_rd_mb} MB, PCIe Wr: {pcm_pcie_wr_mb} MB")
                 else:
                     print(f"DEBUG PCM: No data found")
 
@@ -564,24 +578,23 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
             if value > 0:
                 print(f"  {item} = {value:,}")
 
-    print(f"PCM: PCIRdCur={pcm_pcie_rdcur} M, PCIe Rd={pcm_pcie_rd_mb} MB, PCIe Wr={pcm_pcie_wr_mb} MB")
+    print(f"PCM: PCIRdCur Total={pcm_pcie_rdcur_total}M, Miss={pcm_pcie_rdcur_miss}M, DDIO Miss Rate={pcm_pcie_ddio_miss_rate}%, PCIe Rd={pcm_pcie_rd_mb}MB, Wr={pcm_pcie_wr_mb}MB")
     print(f"Neohost: Outbound Stalled Reads={neohost_outbound_stalled_reads}, PCIe Inbound BW={neohost_pcie_inbound_bw} Gb/s, PCIe Outbound BW={neohost_pcie_outbound_bw} Gb/s")
 
     # Build CSV row dynamically with formatted values
     tx_cores = pktgen_lcore_count
     csv_values = [experiment_id, txqs_min_inline, tx_cores, pktgen_tx_desc_value, f"{pktgen_tx_rate}Mpps"]
 
-    # Add perf values in config order (formatted)
-    for item in (PERF_EVENTS + PERF_METRICS):
-        val = perf_results.get(item, 0)
-        unit = PERF_UNITS.get(item, 'count')
-        if unit == 'MB/s':
-            csv_values.append(fmt_bw(val, 'MB/s'))
-        else:
+    # Add perf values in config order (formatted) - only if ENABLE_PERF is True
+    if ENABLE_PERF:
+        for item in PERF_EVENTS:
+            val = perf_results.get(item, 0)
             csv_values.append(fmt_count(val))
 
-    # Add PCM values (formatted)
-    csv_values.append(f"{pcm_pcie_rdcur:.1f}M")  # PCIRdCur already in M
+    # Add PCM values (formatted) - includes DDIO miss rate from pcm-pcie -e
+    csv_values.append(f"{pcm_pcie_rdcur_total:.1f}M")
+    csv_values.append(f"{pcm_pcie_rdcur_miss:.1f}M")
+    csv_values.append(f"{pcm_pcie_ddio_miss_rate:.2f}%")
     csv_values.append(fmt_bw(pcm_pcie_rd_mb, 'MB/s'))
     csv_values.append(fmt_bw(pcm_pcie_wr_mb, 'MB/s'))
 
@@ -984,14 +997,18 @@ def exiting():
     # Build CSV header dynamically based on config
     header_parts = ["EXPTID", "txqs_min_inline", "# TX cores", "DEFAULT_RX/TX_DESC", "TX rate (Mpps)"]
 
-    # Add perf event/metric headers with units from config
-    for item in (PERF_EVENTS + PERF_METRICS):
-        unit = PERF_UNITS.get(item, '')
-        header_parts.append(f"{item} ({unit})" if unit else item)
+    # Add perf event/metric headers with units from config - only if ENABLE_PERF is True
+    if ENABLE_PERF:
+        for item in PERF_EVENTS:
+            unit = PERF_UNITS.get(item, 'count')
+            header_parts.append(f"{item} ({unit})")
 
-    # Add PCM and Neohost headers
-    header_parts.extend(["PCIRdCur (M)", "PCIe Rd (MB)", "PCIe Wr (MB)",
-                         "Outbound Stalled Reads", "PCIe Inbound Used BW (Gb/s)", "PCIe Outbound Used BW (Gb/s)"])
+    # Add PCM headers (includes DDIO miss rate from pcm-pcie -e)
+    header_parts.extend(["PCIRdCur Total (M)", "PCIRdCur Miss (M)", "DDIO Miss Rate (%)",
+                         "PCIe Rd (MB)", "PCIe Wr (MB)"])
+
+    # Add Neohost headers
+    header_parts.extend(["Outbound Stalled Reads", "PCIe Inbound Used BW (Gb/s)", "PCIe Outbound Used BW (Gb/s)"])
 
     result_header = ", ".join(header_parts) + "\n"
 
