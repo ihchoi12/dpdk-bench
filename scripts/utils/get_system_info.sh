@@ -221,11 +221,29 @@ lspci | grep -i ethernet | while read line; do
       mac_info="MAC: unknown"
     fi
 
+    # Get max supported speed (for DOWN links)
+    max_speed_supported=""
+    if [ "$link" != "yes" ] || [ -z "$speed" ] || [ "$speed" = "Unknown!" ]; then
+      # Try to get max speed from supported link modes (matches: 100000baseSR4, 25000baseCR, 10000baseT, etc.)
+      max_speed_supported=$(ethtool $iface 2>/dev/null | grep -A 50 "Supported link modes:" | grep -oP '\d+(?=base)' | sort -rn | head -1)
+      if [ -z "$max_speed_supported" ]; then
+        # Fallback: try advertised auto-negotiation speeds
+        max_speed_supported=$(ethtool $iface 2>/dev/null | grep -A 50 "Advertised link modes:" | grep -oP '\d+(?=base)' | sort -rn | head -1)
+      fi
+    fi
+
     # Format link status
     if [ "$link" = "yes" ] && [ -n "$speed" ] && [ "$speed" != "Unknown!" ]; then
       link_info="UP ($speed $duplex)"
     elif [ "$link" = "yes" ]; then
       link_info="UP (speed unknown)"
+    elif [ -n "$max_speed_supported" ]; then
+      # Show max supported speed for DOWN links (speed is in Mbps: 100000=100G, 10000=10G, 1000=1G)
+      if [ "$max_speed_supported" -ge 1000 ]; then
+        link_info="DOWN (max $((max_speed_supported/1000))Gb/s)"
+      else
+        link_info="DOWN (max ${max_speed_supported}Mb/s)"
+      fi
     else
       link_info="DOWN"
     fi
@@ -238,6 +256,9 @@ lspci | grep -i ethernet | while read line; do
       speed_mbps=${BASH_REMATCH[1]}
     elif [[ "$speed" =~ ([0-9]+)Gb/s ]]; then
       speed_mbps=$((${BASH_REMATCH[1]} * 1000))
+    elif [ -n "$max_speed_supported" ]; then
+      # Use max supported speed for DOWN links
+      speed_mbps=$max_speed_supported
     fi
 
     # Write to temp file (subshell workaround)

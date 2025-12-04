@@ -66,7 +66,7 @@ L3FWD_NODE = CLUSTER_CONFIG.get('L3FWD_NODE', 'node8')
 ################## NIC CONFIG #####################
 PKTGEN_MAC = SYSTEM_CONFIG.get('PKTGEN_NIC_MAC', '')
 PKTGEN_PCI_ADDRESS = SYSTEM_CONFIG.get('PKTGEN_NIC_PCI', '')
-PKTGEN_NIC_DEVARGS = 'txqs_min_inline=8'
+PKTGEN_NIC_DEVARGS = 'txqs_min_inline=0'
 
 L3FWD_PCI_ADDRESS = SYSTEM_CONFIG.get('L3FWD_NIC_PCI', '')
 L3FWD_NIC_DEVARGS = 'txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256'
@@ -102,7 +102,7 @@ L3FWD_RX_DESC_VALUES = [1024]
 PKTGEN_TX_DESC_VALUES = [1024]
 
 L3FWD_LCORE_VALUES = [2]
-PKTGEN_TX_CORE_VALUES = [1, 2, 4, 8]
+PKTGEN_TX_CORE_VALUES = [10, 12]
 
 ################## CONFIG GENERATORS #####################
 

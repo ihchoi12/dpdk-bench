@@ -276,16 +276,16 @@ case "$CMD" in
     echo "   export LD_LIBRARY_PATH=\"${DPDK_PREFIX}/lib:${DPDK_PREFIX}/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH\""
     ;;
   build)
-    # DPDK + Pktgen only (skip PCM if already built)
+    # DPDK + Pktgen only (assumes PCM already built via build-all)
     need git; need meson; need ninja
-    echo ">> BUILD: DPDK + Pktgen (profiling tools skipped)"
-    # Check PCM exists (needed for L3FWD)
-    sync_pcm
+    echo ">> BUILD: DPDK + Pktgen only"
+    # Check PCM exists (needed for L3FWD linking)
     if [ ! -f "${PCM_DIR}/build/src/libpcm.a" ]; then
-      echo ">> PCM not found, building first..."
-      build_pcm
-    else
-      echo ">> PCM already built, skipping"
+      echo ""
+      echo "ERROR: PCM not found at ${PCM_DIR}/build/src/libpcm.a"
+      echo "       Run 'make build-all' first to build PCM and other profilers."
+      echo ""
+      exit 1
     fi
     # DPDK
     sync_dpdk

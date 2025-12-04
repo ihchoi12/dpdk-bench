@@ -47,6 +47,18 @@ def fmt_count(n):
         return f"{n/1_000:.1f}K"
     return str(int(n))
 
+def fmt_small_value(value, unit='M'):
+    """Format small values with enough decimals to show first non-zero digit.
+    For values >= 0.1, show 1 decimal. For smaller values, show up to first non-zero digit (rounded)."""
+    if value == 0:
+        return f"0{unit}"
+    if value >= 0.1:
+        return f"{value:.1f}{unit}"
+    # Find first non-zero decimal place: e.g., 0.03 -> 2, 0.001 -> 3, 0.0004 -> 4
+    decimals = -int(math.floor(math.log10(value)))
+    decimals = min(decimals, 6)  # Cap at 6 decimal places
+    return f"{value:.{decimals}f}{unit}"
+
 def fmt_bw(value, unit='MB/s'):
     """Format bandwidth with unit, auto-convert to GB if ≥1000MB"""
     if unit == 'MB/s' and value >= 1000:
@@ -448,7 +460,13 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
                         continue
 
                     # Check if this is a data line (starts with socket number or *)
-                    if re.match(r'^\s*[\d\*]\s+', line):
+                    # Only use Socket 0 data (where NIC is connected)
+                    socket_match = re.match(r'^\s*(\d+)\s+', line)
+                    if socket_match:
+                        socket_num = int(socket_match.group(1))
+                        if socket_num != 0:
+                            continue  # Skip non-Socket 0 data
+
                         # Determine row type: (Total), (Miss), (Hit), or Aggregate
                         is_total = '(Total)' in line or '(Aggregate)' in line
                         is_miss = '(Miss)' in line
@@ -495,7 +513,7 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
                     if pcm_pcie_rdcur_total > 0:
                         pcm_pcie_ddio_miss_rate = round((pcm_pcie_rdcur_miss / pcm_pcie_rdcur_total) * 100, 2)
 
-                    print(f"DEBUG PCM: Found {len(rdcur_total_values)} samples (using {len(total_filtered)} after skipping first 2)")
+                    print(f"DEBUG PCM: Found {len(rdcur_total_values)} Socket 0 samples (using {len(total_filtered)} after skipping first 2)")
                     print(f"DEBUG PCM: PCIRdCur Total: {pcm_pcie_rdcur_total}M, Miss: {pcm_pcie_rdcur_miss}M, DDIO Miss Rate: {pcm_pcie_ddio_miss_rate}%")
                     print(f"DEBUG PCM: PCIe Rd: {pcm_pcie_rd_mb} MB, PCIe Wr: {pcm_pcie_wr_mb} MB")
                 else:
@@ -593,7 +611,7 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
 
     # Add PCM values (formatted) - includes DDIO miss rate from pcm-pcie -e
     csv_values.append(f"{pcm_pcie_rdcur_total:.1f}M")
-    csv_values.append(f"{pcm_pcie_rdcur_miss:.1f}M")
+    csv_values.append(fmt_small_value(pcm_pcie_rdcur_miss, 'M'))
     csv_values.append(f"{pcm_pcie_ddio_miss_rate:.2f}%")
     csv_values.append(fmt_bw(pcm_pcie_rd_mb, 'MB/s'))
     csv_values.append(fmt_bw(pcm_pcie_wr_mb, 'MB/s'))
