@@ -130,45 +130,6 @@ def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None):
     time.sleep(3)
 
 def run_pktgen(tx_desc_value=None, pktgen_config=None):
-    """Run pktgen locally"""
-    global experiment_id
-    if not pktgen_config:
-        raise ValueError("pktgen_config is required - use get_pktgen_config()")
-
-    config = pktgen_config
-
-    # Build TX descriptor argument if specified
-    # Note: --txd is an application option, goes after -- separator
-    tx_desc_arg = ""
-    if tx_desc_value and tx_desc_value != 1024:  # Only add if different from default
-        tx_desc_arg = f" --txd={tx_desc_value}"
-
-    # Build command string
-    cmd_str = (f'cd {config["working_dir"]} && '
-               f'sudo -E {ENV} '
-               f'ENABLE_PCM=0 '  # PCM disabled by default
-               f'PKTGEN_DURATION={PKTGEN_DURATION} '
-               f'PKTGEN_PACKET_SIZE={PKTGEN_PACKET_SIZE} '
-               f'{config["binary_path"]} '
-               f'{config["lcores"]} '
-               f'{config["memory_channels"]} '
-               f'-a {config["pci_address"]} '
-               f'{config["proc_type"]} '
-               f'--file-prefix={config["file_prefix"]} '
-               f'-- -m "{config["port_map"]}" '
-               f'{config["app_args"]}'
-               f'{tx_desc_arg} '
-               f'-f {config["script_file"]} '
-               f'> {DATA_PATH}/{experiment_id}.pktgen 2>&1')
-
-    print(f'PKTGEN command: {cmd_str}')
-
-    # Run locally using subprocess
-    result = subprocess.run(cmd_str, shell=True, check=False)
-    if result.returncode != 0:
-        print(f'PKTGEN exited with code {result.returncode}')
-
-def run_pktgen_with_perf(tx_desc_value=None, pktgen_config=None):
     """Run pktgen locally and start profilers (perf/pcm/neohost) based on configuration"""
     global experiment_id
     if not pktgen_config:
@@ -990,7 +951,7 @@ def run_eval():
             print(f'txqs_min_inline={txqs_min_inline}, TX_DESC={pktgen_tx_desc_value}')
 
             # Run Pktgen with perf monitoring
-            run_pktgen_with_perf(pktgen_tx_desc_value, pktgen_config)
+            run_pktgen(pktgen_tx_desc_value, pktgen_config)
 
             # Stop processes
             kill_procs()
