@@ -65,11 +65,27 @@ echo ""
 # Change to Pktgen-DPDK directory so Lua can find Pktgen.lua
 cd "${REPO_ROOT}/Pktgen-DPDK"
 
+# Validate required MAC addresses from system.config
+if [ -z "${PKTGEN_NIC_MAC:-}" ]; then
+    echo "ERROR: PKTGEN_NIC_MAC not set in system.config"
+    echo "       Run 'entry.sh' option 1 to configure NIC settings"
+    exit 1
+fi
+if [ -z "${L3FWD_NIC_MAC:-}" ]; then
+    echo "ERROR: L3FWD_NIC_MAC not set in system.config"
+    echo "       Run 'entry.sh' option 1 to configure NIC settings"
+    exit 1
+fi
+
 # Run under sudo while preserving env inside the root shell
 sudo bash -lc "LD_LIBRARY_PATH='${LD_LIBRARY_PATH}' \
   PKG_CONFIG_PATH='${PKG_CONFIG_PATH}' \
   PCIE_LOG_ENABLE='${PCIE_LOG_ENABLE:-0}' \
   ENABLE_PCM='${ENABLE_PCM:-0}' \
+  PKTGEN_DURATION='${PKTGEN_DURATION:-10}' \
+  PKTGEN_PACKET_SIZE='${PKTGEN_PACKET_SIZE:-64}' \
+  PKTGEN_SRC_MAC='${PKTGEN_NIC_MAC}' \
+  PKTGEN_DST_MAC='${L3FWD_NIC_MAC}' \
   exec '${PKTGEN_BIN}' \
   ${LCORES} ${MEMCH} ${PROC_TYPE} --file-prefix '${FILE_PREFIX}' --allow='${PCI_ADDR}' \
   -- ${APP_ARGS} -m '${PORTMAP}' -f '${SCRIPT_REL_PATH}'"

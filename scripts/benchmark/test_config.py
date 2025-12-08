@@ -51,12 +51,16 @@ def get_l3fwd_config(lcore_count):
     """Generate L3FWD configuration for given lcore count"""
     lcores = f"-l 0-{lcore_count}"
     config_parts = [f"(0,{i-1},{i})" for i in range(1, lcore_count + 1)]
+    # Build PCI address with optional devargs
+    pci_addr = L3FWD_PCI_ADDRESS
+    if L3FWD_NIC_DEVARGS:
+        pci_addr = f"{L3FWD_PCI_ADDRESS},{L3FWD_NIC_DEVARGS}"
     return {
         "binary_path": f"{DPDK_PATH}/build/examples/dpdk-l3fwd",
         "node": L3FWD_NODE,
         "lcores": lcores,
         "memory_channels": "-n 4",
-        "pci_address": f"{L3FWD_PCI_ADDRESS},{L3FWD_NIC_DEVARGS}",
+        "pci_address": pci_addr,
         "port_mask": "-p 0x1",
         "config": ",".join(config_parts),
         "eth_dest": L3FWD_ETH_DEST
@@ -69,13 +73,17 @@ def get_pktgen_config(tx_core_count):
     """
     total_lcore = 1 + tx_core_count
     port_map = f"[1:{2}].0" if tx_core_count == 1 else f"[1:2-{total_lcore}].0"
+    # Build PCI address with optional devargs
+    pci_addr = PKTGEN_PCI_ADDRESS
+    if PKTGEN_NIC_DEVARGS:
+        pci_addr = f"{PKTGEN_PCI_ADDRESS},{PKTGEN_NIC_DEVARGS}"
     return {
         "binary_path": f"{PKTGEN_PATH}/build/app/pktgen",
         "working_dir": PKTGEN_PATH,
         "node": PKTGEN_NODE,
         "lcores": f"-l 0-{total_lcore}",
         "memory_channels": "-n 4",
-        "pci_address": f"{PKTGEN_PCI_ADDRESS},{PKTGEN_NIC_DEVARGS}",
+        "pci_address": pci_addr,
         "proc_type": "--proc-type auto",
         "file_prefix": "pktgen1",
         "port_map": port_map,
@@ -99,14 +107,38 @@ SYSTEM_CONFIG = _load_bash_config(f'{DPDK_BENCH_HOME}/config/system.config')
 PKTGEN_NODE = CLUSTER_CONFIG.get('PKTGEN_NODE', 'node7')
 L3FWD_NODE = CLUSTER_CONFIG.get('L3FWD_NODE', 'node8')
 
+################## LOAD TEST CONFIG #####################
+TEST_CONFIG = _load_bash_config(f'{DPDK_BENCH_HOME}/config/simple-test/simple-test.config')
+
 ################## NIC CONFIG #####################
 PKTGEN_MAC = SYSTEM_CONFIG.get('PKTGEN_NIC_MAC', '')
 PKTGEN_PCI_ADDRESS = SYSTEM_CONFIG.get('PKTGEN_NIC_PCI', '')
-PKTGEN_NIC_DEVARGS = 'txqs_min_inline=8'
+PKTGEN_NIC_DEVARGS = TEST_CONFIG.get('PKTGEN_NIC_DEVARGS', '')
 
+L3FWD_MAC = SYSTEM_CONFIG.get('L3FWD_NIC_MAC', '')
 L3FWD_PCI_ADDRESS = SYSTEM_CONFIG.get('L3FWD_NIC_PCI', '')
-L3FWD_NIC_DEVARGS = 'txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256'
+L3FWD_NIC_DEVARGS = TEST_CONFIG.get('L3FWD_NIC_DEVARGS', '')
 L3FWD_ETH_DEST = PKTGEN_MAC
+
+def validate_config():
+    """Validate required configuration before running tests"""
+    errors = []
+    if not PKTGEN_MAC:
+        errors.append("PKTGEN_NIC_MAC not set in config/system.config")
+    if not PKTGEN_PCI_ADDRESS:
+        errors.append("PKTGEN_NIC_PCI not set in config/system.config")
+    if not L3FWD_MAC:
+        errors.append("L3FWD_NIC_MAC not set in config/system.config")
+    if not L3FWD_PCI_ADDRESS:
+        errors.append("L3FWD_NIC_PCI not set in config/system.config")
+
+    if errors:
+        print("ERROR: Missing required configuration:")
+        for e in errors:
+            print(f"  - {e}")
+        print("\nRun 'entry.sh' option 1 to configure NIC settings")
+        return False
+    return True
 
 ################## PROFILER CONFIG #####################
 ENABLE_PERF = False  # Disabled: using pcm-pcie -e for DDIO miss rate instead
@@ -138,4 +170,4 @@ L3FWD_RX_DESC_VALUES = [1024]
 PKTGEN_TX_DESC_VALUES = [1024]
 
 L3FWD_LCORE_VALUES = [2]
-PKTGEN_TX_CORE_VALUES = [1, 2, 4, 8]
+PKTGEN_TX_CORE_VALUES = [1]

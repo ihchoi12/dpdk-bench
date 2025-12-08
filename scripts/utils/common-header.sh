@@ -52,7 +52,14 @@ load_config_file() {
       fi
       # Export the variable
       if [[ "$line" =~ ^[[:space:]]*([A-Z_][A-Z0-9_]*)=(.*)$ ]]; then
-        export "${BASH_REMATCH[1]}"="${BASH_REMATCH[2]}"
+        local var_name="${BASH_REMATCH[1]}"
+        local var_value="${BASH_REMATCH[2]}"
+        # Strip leading and trailing quotes (single or double)
+        var_value="${var_value#\"}"
+        var_value="${var_value%\"}"
+        var_value="${var_value#\'}"
+        var_value="${var_value%\'}"
+        export "${var_name}"="${var_value}"
       fi
     done < "$config_file"
   else

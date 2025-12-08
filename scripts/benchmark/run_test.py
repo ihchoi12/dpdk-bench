@@ -908,7 +908,7 @@ def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_va
     return result_str
 
 def run_eval():
-    """Main DPDK evaluation function - Pktgen only with perf monitoring"""
+    """Main DPDK evaluation function - L3FWD + Pktgen with profiling"""
     global experiment_id
     global final_result
 
@@ -922,48 +922,61 @@ def run_eval():
         enabled_profilers.append('NEOHOST')
     profilers_str = '+'.join(enabled_profilers) if enabled_profilers else 'NONE'
 
-    print("Starting DPDK Pktgen Tests with Profiling")
+    print("Starting DPDK L3FWD + Pktgen Tests with Profiling")
+    print(f"Cluster: PKTGEN={PKTGEN_NODE} (local), L3FWD={L3FWD_NODE} (remote)")
     print(f"Enabled profilers: {profilers_str}")
+    print(f"Testing L3FWD TX descriptor values: {L3FWD_TX_DESC_VALUES}")
+    print(f"Testing L3FWD RX descriptor values: {L3FWD_RX_DESC_VALUES}")
+    print(f"Testing L3FWD LCORE counts: {L3FWD_LCORE_VALUES}")
     print(f"Testing PKTGEN TX descriptor values: {PKTGEN_TX_DESC_VALUES}")
-    print(f"Testing PKTGEN LCORE counts: {PKTGEN_TX_CORE_VALUES}")
+    print(f"Testing PKTGEN TX core counts: {PKTGEN_TX_CORE_VALUES}")
     print(f"Total duration: {PKTGEN_DURATION} seconds (warmup: {WARMUP_DELAY}s, interval: {TOOL_INTERVAL}s)")
 
     # Extract txqs_min_inline from pktgen config
-    # Assuming format: "0000:31:00.1,txqs_min_inline=0"
-    pktgen_config_default = get_pktgen_config(2)  # Get any config to extract pci_address
+    pktgen_config_default = get_pktgen_config(2)
     pci_match = re.search(r'txqs_min_inline=(\d+)', pktgen_config_default["pci_address"])
     txqs_min_inline = int(pci_match.group(1)) if pci_match else 8
 
-    for pktgen_lcore_count in PKTGEN_TX_CORE_VALUES:
-        for pktgen_tx_desc_value in PKTGEN_TX_DESC_VALUES:
-            print(f'\n================ TESTING PKTGEN_LCORE={pktgen_lcore_count}, PKTGEN_TX_DESC={pktgen_tx_desc_value} =================')
+    for l3fwd_lcore_count in L3FWD_LCORE_VALUES:
+        for l3fwd_tx_desc_value in L3FWD_TX_DESC_VALUES:
+            for l3fwd_rx_desc_value in L3FWD_RX_DESC_VALUES:
+                for pktgen_lcore_count in PKTGEN_TX_CORE_VALUES:
+                    for pktgen_tx_desc_value in PKTGEN_TX_DESC_VALUES:
+                        print(f'\n================ TESTING L3FWD_LCORE={l3fwd_lcore_count}, L3FWD_TX_DESC={l3fwd_tx_desc_value}, L3FWD_RX_DESC={l3fwd_rx_desc_value}, PKTGEN_LCORE={pktgen_lcore_count}, PKTGEN_TX_DESC={pktgen_tx_desc_value} =================')
 
-            kill_procs()
-            experiment_id = datetime.datetime.now().strftime('%Y%m%d-%H%M%S.%f')
-            print(f'EXPTID: {experiment_id}')
+                        kill_procs()
+                        experiment_id = datetime.datetime.now().strftime('%Y%m%d-%H%M%S.%f')
+                        print(f'EXPTID: {experiment_id}')
 
-            setup_arp_tables()
+                        setup_arp_tables()
 
-            # Generate pktgen configuration for current lcore count
-            pktgen_config = get_pktgen_config(pktgen_lcore_count)
+                        # Generate L3FWD configuration
+                        l3fwd_config = get_l3fwd_config(l3fwd_lcore_count)
+                        print(f'L3FWD Config: node={l3fwd_config["node"]}, lcores={l3fwd_config["lcores"]}, config="{l3fwd_config["config"]}"')
+                        print(f'L3FWD TX_DESC={l3fwd_tx_desc_value}, RX_DESC={l3fwd_rx_desc_value}')
 
-            print(f'PKTGEN Config: lcores={pktgen_config["lcores"]}, port_map="{pktgen_config["port_map"]}"')
-            print(f'txqs_min_inline={txqs_min_inline}, TX_DESC={pktgen_tx_desc_value}')
+                        # Start L3FWD on remote node
+                        run_l3fwd(l3fwd_tx_desc_value, l3fwd_rx_desc_value, l3fwd_config)
 
-            # Run Pktgen with perf monitoring
-            run_pktgen(pktgen_tx_desc_value, pktgen_config)
+                        # Generate pktgen configuration
+                        pktgen_config = get_pktgen_config(pktgen_lcore_count)
+                        print(f'PKTGEN Config: lcores={pktgen_config["lcores"]}, port_map="{pktgen_config["port_map"]}"')
+                        print(f'txqs_min_inline={txqs_min_inline}, TX_DESC={pktgen_tx_desc_value}')
 
-            # Stop processes
-            kill_procs()
-            time.sleep(3)
+                        # Run Pktgen with profiling
+                        run_pktgen(pktgen_tx_desc_value, pktgen_config)
 
-            # Parse results
-            print(f'================ {experiment_id} TEST COMPLETE =================')
-            res = parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_value, pktgen_lcore_count)
-            final_result = final_result + f'{res}'
+                        # Stop processes
+                        kill_procs()
+                        time.sleep(3)
 
-            # Wait a bit between tests
-            time.sleep(5)
+                        # Parse results from both L3FWD and Pktgen
+                        print(f'================ {experiment_id} TEST COMPLETE =================')
+                        res = parse_dpdk_results(experiment_id, l3fwd_tx_desc_value, l3fwd_rx_desc_value, pktgen_tx_desc_value, l3fwd_lcore_count, pktgen_lcore_count)
+                        final_result = final_result + f'{res}'
+
+                        # Wait between tests
+                        time.sleep(5)
     
         
 
@@ -973,27 +986,29 @@ def exiting():
     """Exit handler for cleanup"""
     global final_result
     print('EXITING')
-    # Build CSV header dynamically based on config
-    header_parts = ["EXPTID", "txqs_min_inline", "# TX cores", "DEFAULT_RX/TX_DESC", "TX rate (Mpps)"]
 
-    # Add perf event/metric headers with units from config - only if ENABLE_PERF is True
-    if ENABLE_PERF:
-        for item in PERF_EVENTS:
-            unit = PERF_UNITS.get(item, 'count')
-            header_parts.append(f"{item} ({unit})")
-
-    # Add PCM headers (includes DDIO miss rate from pcm-pcie -e)
-    header_parts.extend(["PCIRdCur Total (M)", "PCIRdCur Miss (M)", "DDIO Miss Rate (%)",
-                         "PCIe Rd (MB)", "PCIe Wr (MB)"])
-
-    # Add Neohost headers
-    header_parts.extend(["Outbound Stalled Reads", "PCIe Inbound Used BW (Gb/s)", "PCIe Outbound Used BW (Gb/s)"])
+    # Build CSV header for L3FWD + PKTGEN results (matching parse_dpdk_results output)
+    header_parts = [
+        "EXPTID", "pkt_size",
+        "l3fwd_tx_desc", "l3fwd_rx_desc", "pktgen_tx_desc",
+        "l3fwd_lcores", "pktgen_lcores",
+        "pktgen_rx_rate", "pktgen_tx_rate", "pktgen_rx_fails",
+        "l3fwd_rx_rate", "l3fwd_tx_rate", "l3fwd_tx_fails",
+        "pktgen_hw_rx_missed", "l3fwd_hw_rx_missed",
+        "pktgen_rx_l3_misses", "pktgen_rx_l2_hit", "pktgen_rx_l3_hit",
+        "pktgen_tx_l3_misses", "pktgen_tx_l2_hit", "pktgen_tx_l3_hit",
+        "l3fwd_l3_misses", "l3fwd_l2_hit", "l3fwd_l3_hit",
+        "pktgen_dram_read", "pktgen_dram_write", "pktgen_dram_read_bw", "pktgen_dram_write_bw",
+        "l3fwd_dram_read", "l3fwd_dram_write", "l3fwd_dram_read_bw", "l3fwd_dram_write_bw",
+        "pktgen_pcie_read", "pktgen_pcie_write", "pktgen_pcie_read_bw", "pktgen_pcie_write_bw",
+        "l3fwd_pcie_read", "l3fwd_pcie_write", "l3fwd_pcie_read_bw", "l3fwd_pcie_write_bw"
+    ]
 
     result_header = ", ".join(header_parts) + "\n"
 
     print(f'\n\n\n\n\n{result_header}')
     print(final_result)
-    with open(f'{DATA_PATH}/dpdk_perf_results.txt', "w") as file:
+    with open(f'{DATA_PATH}/dpdk_benchmark_results.txt', "w") as file:
         file.write(f'{result_header}')
         file.write(final_result)
 
