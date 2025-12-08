@@ -1,4 +1,5 @@
--- RX/TX Rate Measurement Script (based on measure-tx-rate.lua)
+-- Simple Test Script for PKTGEN
+-- All configuration must be provided via environment variables
 
 -- Since we run from Pktgen-DPDK directory, just add current directory to path
 package.path = package.path .. ";./?.lua;?.lua;test/?.lua;app/?.lua;"
@@ -6,30 +7,43 @@ package.path = package.path .. ";./?.lua;?.lua;test/?.lua;app/?.lua;"
 require "Pktgen"
 
 local port = 0
-local sleeptime = tonumber(os.getenv("PKTGEN_DURATION")) or 10
-local packet_size = tonumber(os.getenv("PKTGEN_PACKET_SIZE")) or 64
 
--- MAC addresses from environment (REQUIRED - set by run script from system.config)
+-- Get configuration from environment variables (all required)
 local src_mac = os.getenv("PKTGEN_SRC_MAC")
 local dst_mac = os.getenv("PKTGEN_DST_MAC")
+local sleeptime_str = os.getenv("PKTGEN_DURATION")
+local packet_size_str = os.getenv("PKTGEN_PACKET_SIZE")
 
 -- Validate required environment variables
 if not src_mac or src_mac == "" then
     print("ERROR: PKTGEN_SRC_MAC environment variable not set")
-    print("       Run 'entry.sh' option 1 to configure system.config")
+    print("       Set in config/system.config or run 'entry.sh' option 1")
     os.exit(1)
 end
 if not dst_mac or dst_mac == "" then
     print("ERROR: PKTGEN_DST_MAC environment variable not set")
-    print("       Run 'entry.sh' option 1 to configure system.config")
+    print("       Set in config/system.config or run 'entry.sh' option 1")
+    os.exit(1)
+end
+if not sleeptime_str or sleeptime_str == "" then
+    print("ERROR: PKTGEN_DURATION environment variable not set")
+    os.exit(1)
+end
+if not packet_size_str or packet_size_str == "" then
+    print("ERROR: PKTGEN_PACKET_SIZE environment variable not set")
     os.exit(1)
 end
 
-print("Configuration:")
+local sleeptime = tonumber(sleeptime_str)
+local packet_size = tonumber(packet_size_str)
+
+print("=== PKTGEN Configuration ===")
 print("  Source MAC (PKTGEN): " .. src_mac)
 print("  Dest MAC (L3FWD):    " .. dst_mac)
-print("  Packet Size:         " .. packet_size)
-print("  Duration:            " .. sleeptime .. "s")
+print("  Packet Size:         " .. packet_size .. " bytes")
+print("  Duration:            " .. sleeptime .. " sec")
+print("  Dest IP:             198.18.0.1 (L3FWD LPM route)")
+print("============================")
 
 pktgen.stop(port)
 pktgen.clear(port)

@@ -67,6 +67,16 @@ def fmt_bw(value, unit='MB/s'):
         return f"{value/1000:.2f}Tb/s"
     return f"{value:.2f}{unit}"
 
+def fmt_bytes(value):
+    """Format bytes with K/M/G suffix for readability"""
+    if value >= 1_000_000_000:
+        return f"{value/1_000_000_000:.1f}G"
+    elif value >= 1_000_000:
+        return f"{value/1_000_000:.1f}M"
+    elif value >= 1_000:
+        return f"{value/1_000:.1f}K"
+    return str(int(value))
+
 def kill_procs():
     """Kill DPDK processes (pktgen locally, l3fwd remotely if configured)"""
     print('Killing processes...', end=' ', flush=True)
@@ -609,14 +619,17 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
 
 def parse_pcm_pcie_file(pcm_file):
     """Parse pcm-pcie output file (with -B -e options: includes Total/Miss/Hit rows)
-    Returns dict with: rdcur_total, rdcur_miss, ddio_miss_rate, rd_mb, wr_mb
+    Returns dict with separate read/write metrics:
+    - rd_total_bytes, rd_miss_bytes, rd_miss_rate (DDIO Rd Miss %)
+    - wr_total_bytes, wr_miss_bytes, wr_miss_rate (DDIO Wr Miss %)
     """
     result = {
-        'rdcur_total': 0,
-        'rdcur_miss': 0,
-        'ddio_miss_rate': 0,
-        'rd_mb': 0,
-        'wr_mb': 0,
+        'rd_total_bytes': 0,
+        'rd_miss_bytes': 0,
+        'rd_miss_rate': 0,
+        'wr_total_bytes': 0,
+        'wr_miss_bytes': 0,
+        'wr_miss_rate': 0,
     }
 
     if not os.path.exists(pcm_file):
@@ -679,10 +692,10 @@ def parse_pcm_pcie_file(pcm_file):
             return result
 
         # With -e option, output has (Total), (Miss), (Hit) rows
-        rdcur_total_values = []
-        rdcur_miss_values = []
-        rd_bytes_values = []
-        wr_bytes_values = []
+        rd_total_values = []
+        rd_miss_values = []
+        wr_total_values = []
+        wr_miss_values = []
 
         for line in lines:
             if 'Skt' in line or '---' in line or not line.strip():
@@ -706,33 +719,34 @@ def parse_pcm_pcie_file(pcm_file):
 
                 if len(values) >= max(rdcur_idx, pcie_rd_idx, pcie_wr_idx) + 1:
                     try:
-                        rdcur = parse_count(values[rdcur_idx])
                         rd_bytes = parse_bytes(values[pcie_rd_idx])
                         wr_bytes = parse_bytes(values[pcie_wr_idx])
 
                         if is_total:
-                            rdcur_total_values.append(rdcur)
-                            rd_bytes_values.append(rd_bytes)
-                            wr_bytes_values.append(wr_bytes)
+                            rd_total_values.append(rd_bytes)
+                            wr_total_values.append(wr_bytes)
                         elif is_miss:
-                            rdcur_miss_values.append(rdcur)
+                            rd_miss_values.append(rd_bytes)
+                            wr_miss_values.append(wr_bytes)
                     except Exception:
                         pass
 
-        if rdcur_total_values:
+        if rd_total_values:
             # Skip first 2 samples for warm-up
-            total_filtered = rdcur_total_values[2:] if len(rdcur_total_values) > 2 else rdcur_total_values
-            miss_filtered = rdcur_miss_values[2:] if len(rdcur_miss_values) > 2 else rdcur_miss_values
-            rd_bytes_filtered = rd_bytes_values[2:] if len(rd_bytes_values) > 2 else rd_bytes_values
-            wr_bytes_filtered = wr_bytes_values[2:] if len(wr_bytes_values) > 2 else wr_bytes_values
+            rd_total_filtered = rd_total_values[2:] if len(rd_total_values) > 2 else rd_total_values
+            rd_miss_filtered = rd_miss_values[2:] if len(rd_miss_values) > 2 else rd_miss_values
+            wr_total_filtered = wr_total_values[2:] if len(wr_total_values) > 2 else wr_total_values
+            wr_miss_filtered = wr_miss_values[2:] if len(wr_miss_values) > 2 else wr_miss_values
 
-            result['rdcur_total'] = round(sum(total_filtered) / len(total_filtered) / 1000000, 3) if total_filtered else 0
-            result['rdcur_miss'] = round(sum(miss_filtered) / len(miss_filtered) / 1000000, 3) if miss_filtered else 0
-            result['rd_mb'] = round(sum(rd_bytes_filtered) / len(rd_bytes_filtered) / (1024 * 1024), 3) if rd_bytes_filtered else 0
-            result['wr_mb'] = round(sum(wr_bytes_filtered) / len(wr_bytes_filtered) / (1024 * 1024), 3) if wr_bytes_filtered else 0
+            result['rd_total_bytes'] = round(sum(rd_total_filtered) / len(rd_total_filtered), 0) if rd_total_filtered else 0
+            result['rd_miss_bytes'] = round(sum(rd_miss_filtered) / len(rd_miss_filtered), 0) if rd_miss_filtered else 0
+            result['wr_total_bytes'] = round(sum(wr_total_filtered) / len(wr_total_filtered), 0) if wr_total_filtered else 0
+            result['wr_miss_bytes'] = round(sum(wr_miss_filtered) / len(wr_miss_filtered), 0) if wr_miss_filtered else 0
 
-            if result['rdcur_total'] > 0:
-                result['ddio_miss_rate'] = round((result['rdcur_miss'] / result['rdcur_total']) * 100, 2)
+            if result['rd_total_bytes'] > 0:
+                result['rd_miss_rate'] = round((result['rd_miss_bytes'] / result['rd_total_bytes']) * 100, 2)
+            if result['wr_total_bytes'] > 0:
+                result['wr_miss_rate'] = round((result['wr_miss_bytes'] / result['wr_total_bytes']) * 100, 2)
 
     except Exception as e:
         print(f"ERROR parsing PCM file {pcm_file}: {e}")
@@ -1064,11 +1078,12 @@ def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_va
     pktgen_pcm = parse_pcm_pcie_file(f'{DATA_PATH}/{experiment_id}.pcm-pcie')
     l3fwd_pcm = parse_pcm_pcie_file(f'{DATA_PATH}/{experiment_id}.l3fwd-pcm-pcie')
 
-    print(f"PKTGEN PCM: RdCur Total={pktgen_pcm['rdcur_total']}M, Miss={pktgen_pcm['rdcur_miss']}M, DDIO Miss={pktgen_pcm['ddio_miss_rate']}%, Rd={pktgen_pcm['rd_mb']}MB/s, Wr={pktgen_pcm['wr_mb']}MB/s")
-    print(f"L3FWD PCM: RdCur Total={l3fwd_pcm['rdcur_total']}M, Miss={l3fwd_pcm['rdcur_miss']}M, DDIO Miss={l3fwd_pcm['ddio_miss_rate']}%, Rd={l3fwd_pcm['rd_mb']}MB/s, Wr={l3fwd_pcm['wr_mb']}MB/s")
+    print(f"PKTGEN PCM: Rd Total={pktgen_pcm['rd_total_bytes']/1e6:.1f}MB, Rd Miss={pktgen_pcm['rd_miss_bytes']/1e6:.1f}MB ({pktgen_pcm['rd_miss_rate']}%), Wr Total={pktgen_pcm['wr_total_bytes']/1e6:.1f}MB, Wr Miss={pktgen_pcm['wr_miss_bytes']/1e6:.1f}MB ({pktgen_pcm['wr_miss_rate']}%)")
+    print(f"L3FWD PCM: Rd Total={l3fwd_pcm['rd_total_bytes']/1e6:.1f}MB, Rd Miss={l3fwd_pcm['rd_miss_bytes']/1e6:.1f}MB ({l3fwd_pcm['rd_miss_rate']}%), Wr Total={l3fwd_pcm['wr_total_bytes']/1e6:.1f}MB, Wr Miss={l3fwd_pcm['wr_miss_bytes']/1e6:.1f}MB ({l3fwd_pcm['wr_miss_rate']}%)")
 
     # Build structured result with pktgen row and l3fwd row
-    # Each row contains: Expt ID, Node, TX_DESC, RX_DESC, #Cores, TX Rate, RX Rate, DDIO Miss%, PCIe Rd, PCIe Wr
+    # Each row contains: Expt ID, Node, TX_DESC, RX_DESC, #Cores, TX Rate, RX Rate,
+    #                    DDIO Rd Miss%, PCIe Rd Total, PCIe Rd Miss, DDIO Wr Miss%, PCIe Wr Total, PCIe Wr Miss
 
     # PKTGEN row
     result['pktgen_row'] = [
@@ -1079,9 +1094,12 @@ def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_va
         str(pktgen_lcore_count),
         f'{pktgen_tx_rate}',
         f'{pktgen_rx_rate}',
-        f'{pktgen_pcm["ddio_miss_rate"]}',
-        f'{pktgen_pcm["rd_mb"]:.2f}',
-        f'{pktgen_pcm["wr_mb"]:.2f}',
+        f'{pktgen_pcm["rd_miss_rate"]}',
+        fmt_bytes(pktgen_pcm["rd_total_bytes"]),
+        fmt_bytes(pktgen_pcm["rd_miss_bytes"]),
+        f'{pktgen_pcm["wr_miss_rate"]}',
+        fmt_bytes(pktgen_pcm["wr_total_bytes"]),
+        fmt_bytes(pktgen_pcm["wr_miss_bytes"]),
     ]
 
     # L3FWD row
@@ -1093,9 +1111,12 @@ def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_va
         str(l3fwd_lcore_count),
         f'{l3fwd_tx_rate}',
         f'{l3fwd_rx_rate}',
-        f'{l3fwd_pcm["ddio_miss_rate"]}',
-        f'{l3fwd_pcm["rd_mb"]:.2f}',
-        f'{l3fwd_pcm["wr_mb"]:.2f}',
+        f'{l3fwd_pcm["rd_miss_rate"]}',
+        fmt_bytes(l3fwd_pcm["rd_total_bytes"]),
+        fmt_bytes(l3fwd_pcm["rd_miss_bytes"]),
+        f'{l3fwd_pcm["wr_miss_rate"]}',
+        fmt_bytes(l3fwd_pcm["wr_total_bytes"]),
+        fmt_bytes(l3fwd_pcm["wr_miss_bytes"]),
     ]
 
     return result
@@ -1195,9 +1216,12 @@ def exiting():
         '# Cores',
         'TX Rate (Mpps)',
         'RX Rate (Mpps)',
-        'DDIO Miss (%)',
-        'PCIe Rd (MB/s)',
-        'PCIe Wr (MB/s)',
+        'DDIO Rd Miss (%)',
+        'PCIe Rd (B) Total',
+        'PCIe Rd (B) Miss',
+        'DDIO Wr Miss (%)',
+        'PCIe Wr (B) Total',
+        'PCIe Wr (B) Miss',
     ]
 
     output_lines = []

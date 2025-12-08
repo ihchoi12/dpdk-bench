@@ -20,4 +20,4 @@ config/system.config
 *.orig
 
 .vscode/*
-*.pyc
+*.pycddio-bench/

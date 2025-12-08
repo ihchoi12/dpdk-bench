@@ -88,7 +88,7 @@ def get_pktgen_config(tx_core_count):
         "file_prefix": "pktgen1",
         "port_map": port_map,
         "app_args": "-P -T",
-        "script_file": "scripts/simple-tx-test.lua"
+        "script_file": f"{DPDK_BENCH_HOME}/config/simple-test/simple-test.lua"
     }
 
 ################## PATHS #####################

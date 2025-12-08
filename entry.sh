@@ -22,6 +22,13 @@ print_header() {
     echo -e "${CYAN}║${NC}  ${BLUE}DPDK Benchmark Suite - Interactive Menu${NC}              ${CYAN}║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
 
+    # Check L3FWD DROP MODE status
+    L3FWD_LPM_FILE="$SCRIPT_DIR/dpdk/examples/l3fwd/l3fwd_lpm.c"
+    if [ -f "$L3FWD_LPM_FILE" ] && grep -q "^#define L3FWD_DROP_MODE" "$L3FWD_LPM_FILE"; then
+        echo -e "  ${RED}⚠ L3FWD DROP MODE ENABLED${NC} - Packets received but NOT forwarded"
+        echo -e "    ${YELLOW}→ To disable: comment out '#define L3FWD_DROP_MODE' in l3fwd_lpm.c, then rebuild${NC}"
+    fi
+
     # Show cluster config
     CLUSTER_CONFIG="$SCRIPT_DIR/cluster.config"
     if [ -f "$CLUSTER_CONFIG" ]; then
@@ -49,7 +56,7 @@ print_menu() {
     echo ""
     echo -e "  ${YELLOW}4)${NC} Run Simple Test"
     echo -e "     ${CYAN}→${NC} config/simple-test/simple-test.config"
-    echo -e "     ${CYAN}→${NC} config/simple-test/simple-pktgen-test.lua"
+    echo -e "     ${CYAN}→${NC} config/simple-test/simple-test.lua"
     echo ""
     echo -e "  ${YELLOW}5)${NC} Run Full Benchmark"
     echo -e "     ${CYAN}→${NC} scripts/benchmark/test_config.py"
@@ -699,7 +706,7 @@ option_simple_test() {
     echo -e "  L3FWD:  ${GREEN}$L3FWD_NODE${NC} (remote) - Packet Forwarder"
     echo ""
     echo -e "${CYAN}Config: config/simple-test/simple-test.config${NC}"
-    echo -e "${CYAN}Script: config/simple-test/simple-pktgen-test.lua${NC}"
+    echo -e "${CYAN}Script: config/simple-test/simple-test.lua${NC}"
     echo ""
 
     # Load test config
