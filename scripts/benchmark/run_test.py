@@ -36,7 +36,7 @@ import pty
 
 from test_config import *
 
-final_result = ''
+final_result = []  # List of structured result dicts
 experiment_id = ''
 
 def fmt_count(n):
@@ -94,15 +94,18 @@ def setup_arp_tables():
         task = host.run(cmd, quiet=True)
         pyrem.task.Parallel([task], aggregate=True).start(wait=True)
 
-def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None):
-    """Run l3fwd on L3FWD node"""
+def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None, duration=None):
+    """Run l3fwd on L3FWD node with profilers (pcm-pcie)"""
     global experiment_id
     if not l3fwd_config:
         raise ValueError("l3fwd_config is required - use get_l3fwd_config()")
 
     config = l3fwd_config
     host = pyrem.host.RemoteHost(config["node"])
-    
+
+    # Calculate L3FWD duration (PKTGEN duration + 5 seconds buffer)
+    l3fwd_duration = (duration or PKTGEN_DURATION) + 5
+
     # Build tx-queue-size and rx-queue-size arguments if specified
     tx_queue_arg = ""
     rx_queue_arg = ""
@@ -110,9 +113,10 @@ def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None):
         tx_queue_arg = f" --tx-queue-size={tx_desc_value}"
     if rx_desc_value:
         rx_queue_arg = f" --rx-queue-size={rx_desc_value}"
-    
-    cmd = [f'cd {os.path.dirname(config["binary_path"])} && '
-           f'sudo -E {ENV} ' 
+
+    # Build L3FWD command with timeout
+    l3fwd_cmd = (f'cd {os.path.dirname(config["binary_path"])} && '
+           f'timeout {l3fwd_duration} sudo -E {ENV} '
            f'{config["binary_path"]} '
            f'{config["lcores"]} '
            f'{config["memory_channels"]} '
@@ -122,10 +126,24 @@ def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None):
            f'--eth-dest=0,{config["eth_dest"]}'
            f'{tx_queue_arg}'
            f'{rx_queue_arg} '
-           f'> {DATA_PATH}/{experiment_id}.l3fwd 2>&1']
-    
+           f'> {DATA_PATH}/{experiment_id}.l3fwd 2>&1 & '
+           f'L3FWD_PID=$!; ')
+
+    # Add warmup delay before starting profilers
+    l3fwd_cmd += f'sleep {WARMUP_DELAY}; '
+
+    # Add PCM monitoring on L3FWD node if enabled
+    if ENABLE_PCM:
+        l3fwd_cmd += f'sleep {TOOL_INTERVAL}; '
+        l3fwd_cmd += (f'sudo timeout {PCM_DURATION} {DPDK_BENCH_HOME}/pcm/build/bin/pcm-pcie -B -e '
+                      f'> {DATA_PATH}/{experiment_id}.l3fwd-pcm-pcie 2>&1; ')
+
+    # Wait for L3FWD to finish
+    l3fwd_cmd += f'wait $L3FWD_PID 2>/dev/null'
+
+    cmd = [l3fwd_cmd]
     task = host.run(cmd, quiet=False)
-    print(f'L3FWD command: {cmd}')
+    print(f'L3FWD+PROFILERS command (duration={l3fwd_duration}s): {l3fwd_cmd[:200]}...')
     pyrem.task.Parallel([task], aggregate=True).start(wait=False)
     time.sleep(3)
 
@@ -163,6 +181,9 @@ def run_pktgen(tx_desc_value=None, pktgen_config=None):
                   f'ENABLE_PCM=0 '  # PCM disabled by default
                   f'PKTGEN_DURATION={PKTGEN_DURATION} '
                   f'PKTGEN_PACKET_SIZE={PKTGEN_PACKET_SIZE} '
+                  f'PKTGEN_SRC_MAC={PKTGEN_MAC} '
+                  f'PKTGEN_DST_MAC={L3FWD_MAC} '
+                  f'PKTGEN_DST_IP=198.18.0.1 '
                   f'{config["binary_path"]} '
                   f'{config["lcores"]} '
                   f'{config["memory_channels"]} '
@@ -586,10 +607,149 @@ def parse_perf_pktgen_results(experiment_id, txqs_min_inline, pktgen_tx_desc_val
 
     return result_str
 
+def parse_pcm_pcie_file(pcm_file):
+    """Parse pcm-pcie output file (with -B -e options: includes Total/Miss/Hit rows)
+    Returns dict with: rdcur_total, rdcur_miss, ddio_miss_rate, rd_mb, wr_mb
+    """
+    result = {
+        'rdcur_total': 0,
+        'rdcur_miss': 0,
+        'ddio_miss_rate': 0,
+        'rd_mb': 0,
+        'wr_mb': 0,
+    }
+
+    if not os.path.exists(pcm_file):
+        return result
+
+    try:
+        with open(pcm_file, "r", encoding='utf-8', errors='ignore') as file:
+            pcm_text = file.read()
+
+        lines = pcm_text.strip().split('\n')
+
+        # Helper functions to parse values with K/M/G suffixes
+        def parse_count(s):
+            s = s.strip()
+            if 'K' in s:
+                return float(s.replace('K', '').strip()) * 1000
+            elif 'M' in s:
+                return float(s.replace('M', '').strip()) * 1000000
+            elif 'G' in s:
+                return float(s.replace('G', '').strip()) * 1000000000
+            else:
+                try:
+                    return float(s)
+                except:
+                    return 0
+
+        def parse_bytes(s):
+            s = s.strip()
+            if 'K' in s:
+                return float(s.replace('K', '').strip()) * 1024
+            elif 'M' in s:
+                return float(s.replace('M', '').strip()) * 1024 * 1024
+            elif 'G' in s:
+                return float(s.replace('G', '').strip()) * 1024 * 1024 * 1024
+            else:
+                try:
+                    return float(s)
+                except:
+                    return 0
+
+        # Find header line to determine column indices
+        header_cols = None
+        rdcur_idx = None
+        pcie_rd_idx = None
+        pcie_wr_idx = None
+
+        for line in lines:
+            if 'Skt' in line and 'PCIRdCur' in line and 'PCIe Rd (B)' in line:
+                header_cols = [col.strip() for col in line.split('|')]
+                for i, col in enumerate(header_cols):
+                    if col == 'PCIRdCur':
+                        rdcur_idx = i
+                    elif col == 'PCIe Rd (B)':
+                        pcie_rd_idx = i
+                    elif col == 'PCIe Wr (B)':
+                        pcie_wr_idx = i
+                break
+
+        if rdcur_idx is None or pcie_rd_idx is None or pcie_wr_idx is None:
+            return result
+
+        # With -e option, output has (Total), (Miss), (Hit) rows
+        rdcur_total_values = []
+        rdcur_miss_values = []
+        rd_bytes_values = []
+        wr_bytes_values = []
+
+        for line in lines:
+            if 'Skt' in line or '---' in line or not line.strip():
+                continue
+
+            socket_match = re.match(r'^\s*(\d+)\s+', line)
+            if socket_match:
+                socket_num = int(socket_match.group(1))
+                if socket_num != 0:
+                    continue  # Skip non-Socket 0 data
+
+                is_total = '(Total)' in line or '(Aggregate)' in line
+                is_miss = '(Miss)' in line
+
+                value_pattern = r'(\d+(?:\.\d+)?)\s*([KMG]?)'
+                matches = re.findall(value_pattern, line)
+
+                values = []
+                for num, unit in matches:
+                    values.append(num + unit if unit else num)
+
+                if len(values) >= max(rdcur_idx, pcie_rd_idx, pcie_wr_idx) + 1:
+                    try:
+                        rdcur = parse_count(values[rdcur_idx])
+                        rd_bytes = parse_bytes(values[pcie_rd_idx])
+                        wr_bytes = parse_bytes(values[pcie_wr_idx])
+
+                        if is_total:
+                            rdcur_total_values.append(rdcur)
+                            rd_bytes_values.append(rd_bytes)
+                            wr_bytes_values.append(wr_bytes)
+                        elif is_miss:
+                            rdcur_miss_values.append(rdcur)
+                    except Exception:
+                        pass
+
+        if rdcur_total_values:
+            # Skip first 2 samples for warm-up
+            total_filtered = rdcur_total_values[2:] if len(rdcur_total_values) > 2 else rdcur_total_values
+            miss_filtered = rdcur_miss_values[2:] if len(rdcur_miss_values) > 2 else rdcur_miss_values
+            rd_bytes_filtered = rd_bytes_values[2:] if len(rd_bytes_values) > 2 else rd_bytes_values
+            wr_bytes_filtered = wr_bytes_values[2:] if len(wr_bytes_values) > 2 else wr_bytes_values
+
+            result['rdcur_total'] = round(sum(total_filtered) / len(total_filtered) / 1000000, 3) if total_filtered else 0
+            result['rdcur_miss'] = round(sum(miss_filtered) / len(miss_filtered) / 1000000, 3) if miss_filtered else 0
+            result['rd_mb'] = round(sum(rd_bytes_filtered) / len(rd_bytes_filtered) / (1024 * 1024), 3) if rd_bytes_filtered else 0
+            result['wr_mb'] = round(sum(wr_bytes_filtered) / len(wr_bytes_filtered) / (1024 * 1024), 3) if wr_bytes_filtered else 0
+
+            if result['rdcur_total'] > 0:
+                result['ddio_miss_rate'] = round((result['rdcur_miss'] / result['rdcur_total']) * 100, 2)
+
+    except Exception as e:
+        print(f"ERROR parsing PCM file {pcm_file}: {e}")
+
+    return result
+
+
 def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_value=None, pktgen_tx_desc_value=None, l3fwd_lcore_count=None, pktgen_lcore_count=None):
-    """Parse DPDK test results from l3fwd and pktgen"""
-    result_str = ''
-    
+    """Parse DPDK test results from l3fwd and pktgen
+    Returns dict with header, pktgen_row, l3fwd_row for structured output
+    """
+    result = {
+        'header': [],
+        'pktgen_row': [],
+        'l3fwd_row': [],
+    }
+
     # Parse L3FWD results
     l3fwd_file = f'{DATA_PATH}/{experiment_id}.l3fwd'
     l3fwd_rx_pkts = 0
@@ -892,20 +1052,53 @@ def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_va
     
     print(f"L3FWD: RX={l3fwd_rx_pkts:,} TX={l3fwd_tx_pkts:,} ({l3fwd_status})")
     print(f"Pktgen: RX={pktgen_rx_pkts:,} TX={pktgen_tx_pkts:,} ({pktgen_status})")
-    
+
     # Convert packet counts to Mpps (Million packets per second)
     duration_sec = PKTGEN_DURATION
     pktgen_rx_rate = round(pktgen_rx_pkts / (duration_sec * 1_000_000), 3)
     pktgen_tx_rate = round(pktgen_tx_pkts / (duration_sec * 1_000_000), 3)
     l3fwd_rx_rate = round(l3fwd_rx_pkts / (duration_sec * 1_000_000), 3)
     l3fwd_tx_rate = round(l3fwd_tx_pkts / (duration_sec * 1_000_000), 3)
-    
-    # Calculate failure metrics in M pkts (Million packets)
-    l3fwd_tx_fails = round((l3fwd_rx_pkts - l3fwd_tx_pkts) / 1_000_000, 3)
-    pktgen_rx_fails = round((l3fwd_tx_pkts - pktgen_rx_pkts) / 1_000_000, 3)
-    
-    result_str += f'{experiment_id}, {PKTGEN_PACKET_SIZE}, {l3fwd_tx_desc_value}, {l3fwd_rx_desc_value}, {pktgen_tx_desc_value}, {l3fwd_lcore_count}, {pktgen_lcore_count}, {pktgen_rx_rate}, {pktgen_tx_rate}, {pktgen_rx_fails}, {l3fwd_rx_rate}, {l3fwd_tx_rate}, {l3fwd_tx_fails}, {pktgen_hw_rx_missed}, {l3fwd_hw_rx_missed}, {pktgen_rx_l3_misses}, {pktgen_rx_l2_hit}, {pktgen_rx_l3_hit}, {pktgen_tx_l3_misses}, {pktgen_tx_l2_hit}, {pktgen_tx_l3_hit}, {l3fwd_l3_misses}, {l3fwd_l2_hit}, {l3fwd_l3_hit}, {pktgen_dram_read}, {pktgen_dram_write}, {pktgen_dram_read_bw}, {pktgen_dram_write_bw}, {l3fwd_dram_read}, {l3fwd_dram_write}, {l3fwd_dram_read_bw}, {l3fwd_dram_write_bw}, {pktgen_pcie_read}, {pktgen_pcie_write}, {pktgen_pcie_read_bw}, {pktgen_pcie_write_bw}, {l3fwd_pcie_read}, {l3fwd_pcie_write}, {l3fwd_pcie_read_bw}, {l3fwd_pcie_write_bw}\n'
-    return result_str
+
+    # Parse pcm-pcie results for PKTGEN and L3FWD
+    pktgen_pcm = parse_pcm_pcie_file(f'{DATA_PATH}/{experiment_id}.pcm-pcie')
+    l3fwd_pcm = parse_pcm_pcie_file(f'{DATA_PATH}/{experiment_id}.l3fwd-pcm-pcie')
+
+    print(f"PKTGEN PCM: RdCur Total={pktgen_pcm['rdcur_total']}M, Miss={pktgen_pcm['rdcur_miss']}M, DDIO Miss={pktgen_pcm['ddio_miss_rate']}%, Rd={pktgen_pcm['rd_mb']}MB/s, Wr={pktgen_pcm['wr_mb']}MB/s")
+    print(f"L3FWD PCM: RdCur Total={l3fwd_pcm['rdcur_total']}M, Miss={l3fwd_pcm['rdcur_miss']}M, DDIO Miss={l3fwd_pcm['ddio_miss_rate']}%, Rd={l3fwd_pcm['rd_mb']}MB/s, Wr={l3fwd_pcm['wr_mb']}MB/s")
+
+    # Build structured result with pktgen row and l3fwd row
+    # Each row contains: Expt ID, Node, TX_DESC, RX_DESC, #Cores, TX Rate, RX Rate, DDIO Miss%, PCIe Rd, PCIe Wr
+
+    # PKTGEN row
+    result['pktgen_row'] = [
+        experiment_id,
+        'PKTGEN',
+        str(pktgen_tx_desc_value),
+        '-',  # PKTGEN doesn't have separate RX desc
+        str(pktgen_lcore_count),
+        f'{pktgen_tx_rate}',
+        f'{pktgen_rx_rate}',
+        f'{pktgen_pcm["ddio_miss_rate"]}',
+        f'{pktgen_pcm["rd_mb"]:.2f}',
+        f'{pktgen_pcm["wr_mb"]:.2f}',
+    ]
+
+    # L3FWD row
+    result['l3fwd_row'] = [
+        experiment_id,
+        'L3FWD',
+        str(l3fwd_tx_desc_value),
+        str(l3fwd_rx_desc_value),
+        str(l3fwd_lcore_count),
+        f'{l3fwd_tx_rate}',
+        f'{l3fwd_rx_rate}',
+        f'{l3fwd_pcm["ddio_miss_rate"]}',
+        f'{l3fwd_pcm["rd_mb"]:.2f}',
+        f'{l3fwd_pcm["wr_mb"]:.2f}',
+    ]
+
+    return result
 
 def run_eval():
     """Main DPDK evaluation function - L3FWD + Pktgen with profiling"""
@@ -973,7 +1166,9 @@ def run_eval():
                         # Parse results from both L3FWD and Pktgen
                         print(f'================ {experiment_id} TEST COMPLETE =================')
                         res = parse_dpdk_results(experiment_id, l3fwd_tx_desc_value, l3fwd_rx_desc_value, pktgen_tx_desc_value, l3fwd_lcore_count, pktgen_lcore_count)
-                        final_result = final_result + f'{res}'
+
+                        # Append structured result to final_result list
+                        final_result.append(res)
 
                         # Wait between tests
                         time.sleep(5)
@@ -987,30 +1182,49 @@ def exiting():
     global final_result
     print('EXITING')
 
-    # Build CSV header for L3FWD + PKTGEN results (matching parse_dpdk_results output)
-    header_parts = [
-        "EXPTID", "pkt_size",
-        "l3fwd_tx_desc", "l3fwd_rx_desc", "pktgen_tx_desc",
-        "l3fwd_lcores", "pktgen_lcores",
-        "pktgen_rx_rate", "pktgen_tx_rate", "pktgen_rx_fails",
-        "l3fwd_rx_rate", "l3fwd_tx_rate", "l3fwd_tx_fails",
-        "pktgen_hw_rx_missed", "l3fwd_hw_rx_missed",
-        "pktgen_rx_l3_misses", "pktgen_rx_l2_hit", "pktgen_rx_l3_hit",
-        "pktgen_tx_l3_misses", "pktgen_tx_l2_hit", "pktgen_tx_l3_hit",
-        "l3fwd_l3_misses", "l3fwd_l2_hit", "l3fwd_l3_hit",
-        "pktgen_dram_read", "pktgen_dram_write", "pktgen_dram_read_bw", "pktgen_dram_write_bw",
-        "l3fwd_dram_read", "l3fwd_dram_write", "l3fwd_dram_read_bw", "l3fwd_dram_write_bw",
-        "pktgen_pcie_read", "pktgen_pcie_write", "pktgen_pcie_read_bw", "pktgen_pcie_write_bw",
-        "l3fwd_pcie_read", "l3fwd_pcie_write", "l3fwd_pcie_read_bw", "l3fwd_pcie_write_bw"
+    if not final_result:
+        print("No results to display")
+        return
+
+    # Header row (one line at the top)
+    header = [
+        'Expt ID',
+        'Node',
+        'TX_DESC',
+        'RX_DESC',
+        '# Cores',
+        'TX Rate (Mpps)',
+        'RX Rate (Mpps)',
+        'DDIO Miss (%)',
+        'PCIe Rd (MB/s)',
+        'PCIe Wr (MB/s)',
     ]
 
-    result_header = ", ".join(header_parts) + "\n"
+    output_lines = []
+    output_lines.append(', '.join(header))
 
-    print(f'\n\n\n\n\n{result_header}')
-    print(final_result)
+    # Add data rows: PKTGEN row then L3FWD row for each experiment
+    for res in final_result:
+        if not isinstance(res, dict):
+            continue
+
+        # PKTGEN data row
+        pktgen_row = ', '.join(res.get('pktgen_row', []))
+        output_lines.append(pktgen_row)
+
+        # L3FWD data row
+        l3fwd_row = ', '.join(res.get('l3fwd_row', []))
+        output_lines.append(l3fwd_row)
+
+    output_text = '\n'.join(output_lines)
+
+    print(f'\n\n{"="*80}')
+    print("DPDK BENCHMARK RESULTS")
+    print("="*80)
+    print(output_text)
+
     with open(f'{DATA_PATH}/dpdk_benchmark_results.txt', "w") as file:
-        file.write(f'{result_header}')
-        file.write(final_result)
+        file.write(output_text)
 
 
 def run_compile():
