@@ -62,7 +62,7 @@ print_menu() {
     echo -e "     ${CYAN}→${NC} scripts/benchmark/test_config.py"
     echo ""
     echo -e "  ${YELLOW}6)${NC} DDIO Control"
-    echo -e "     ${CYAN}→${NC} Enable/Disable DDIO, adjust LLC ways"
+    echo -e "     ${CYAN}→${NC} Enable/Disable DDIO, adjust LLC ways (PKTGEN or L3FWD node)"
     echo ""
     echo -e "  ${YELLOW}0)${NC} Exit"
     echo ""
@@ -909,10 +909,11 @@ option_full_benchmark() {
     echo -e "${BLUE}════════════════════════════════════════════════════════════════════════════════════════════════${NC}"
 }
 
-# Option 5: DDIO Control
+# Option 6: DDIO Control (supports both PKTGEN and L3FWD nodes)
 option_ddio_control() {
     DDIO_BIN="$SCRIPT_DIR/ddio-modify/build/ddio_modify"
     SYSTEM_CONFIG="$SCRIPT_DIR/config/system.config"
+    CLUSTER_CONFIG="$SCRIPT_DIR/cluster.config"
 
     if [ ! -x "$DDIO_BIN" ]; then
         echo -e "${RED}✗ Error: ddio_modify not found or not built${NC}"
@@ -927,32 +928,92 @@ option_ddio_control() {
         return 1
     fi
 
-    # Read NIC info from system.config
-    NIC_PCI=$(grep "^PKTGEN_NIC_PCI=" "$SYSTEM_CONFIG" | cut -d'=' -f2)
-    NIC_MAC=$(grep "^PKTGEN_NIC_MAC=" "$SYSTEM_CONFIG" | cut -d'=' -f2)
-    NIC_IP=$(grep "^PKTGEN_NIC_IP=" "$SYSTEM_CONFIG" | cut -d'=' -f2)
-
-    if [ -z "$NIC_PCI" ]; then
-        echo -e "${RED}✗ Error: PKTGEN_NIC_PCI not configured in system.config${NC}"
-        echo -e "  ${CYAN}→${NC} Run option 1 (Show and Update System Configuration) first"
+    # Check cluster.config exists
+    if [ ! -f "$CLUSTER_CONFIG" ]; then
+        echo -e "${RED}✗ Error: cluster.config not found${NC}"
         return 1
     fi
 
-    # Extract bus from PCI address (format: 0000:XX:00.0)
-    NIC_BUS=$(echo "$NIC_PCI" | cut -d':' -f2)
+    # Read cluster config
+    PKTGEN_NODE=$(grep "^PKTGEN_NODE=" "$CLUSTER_CONFIG" | cut -d'=' -f2)
+    L3FWD_NODE=$(grep "^L3FWD_NODE=" "$CLUSTER_CONFIG" | cut -d'=' -f2)
 
-    # Display NIC info
-    echo ""
-    echo -e "${BLUE}───────────────────────────────────────────────────────────${NC}"
-    echo -e "${BLUE}  Target NIC Configuration${NC}"
-    echo -e "${BLUE}───────────────────────────────────────────────────────────${NC}"
-    echo -e "  PCI Address: ${GREEN}$NIC_PCI${NC}"
-    echo -e "  MAC Address: ${GREEN}${NIC_MAC:-N/A}${NC}"
-    echo -e "  IP Address:  ${GREEN}${NIC_IP:-N/A}${NC}"
-    echo -e "${BLUE}───────────────────────────────────────────────────────────${NC}"
-    echo ""
+    # Read NIC info from system.config
+    PKTGEN_NIC_PCI=$(grep "^PKTGEN_NIC_PCI=" "$SYSTEM_CONFIG" | cut -d'=' -f2)
+    PKTGEN_NIC_MAC=$(grep "^PKTGEN_NIC_MAC=" "$SYSTEM_CONFIG" | cut -d'=' -f2)
+    L3FWD_NIC_PCI=$(grep "^L3FWD_NIC_PCI=" "$SYSTEM_CONFIG" | cut -d'=' -f2)
+    L3FWD_NIC_MAC=$(grep "^L3FWD_NIC_MAC=" "$SYSTEM_CONFIG" | cut -d'=' -f2)
 
-    sudo "$DDIO_BIN" "0x$NIC_BUS"
+    echo ""
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  DDIO Control - Select Target Node${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "  ${YELLOW}1)${NC} PKTGEN (${GREEN}$PKTGEN_NODE${NC} - local)"
+    echo -e "     PCI: ${CYAN}${PKTGEN_NIC_PCI:-not configured}${NC}"
+    echo ""
+    echo -e "  ${YELLOW}2)${NC} L3FWD (${GREEN}$L3FWD_NODE${NC} - remote)"
+    echo -e "     PCI: ${CYAN}${L3FWD_NIC_PCI:-not configured}${NC}"
+    echo ""
+    echo -e "  ${YELLOW}0)${NC} Back to Main Menu"
+    echo ""
+    echo -e "${GREEN}────────────────────────────────────────────────────────────${NC}"
+
+    read -p "$(echo -e ${CYAN}Select node:${NC} )" node_choice
+
+    case $node_choice in
+        1)
+            # PKTGEN node (local)
+            if [ -z "$PKTGEN_NIC_PCI" ]; then
+                echo -e "${RED}✗ Error: PKTGEN_NIC_PCI not configured in system.config${NC}"
+                echo -e "  ${CYAN}→${NC} Run option 1 (Show and Update System Configuration) first"
+                return 1
+            fi
+
+            NIC_BUS=$(echo "$PKTGEN_NIC_PCI" | cut -d':' -f2)
+
+            echo ""
+            echo -e "${BLUE}───────────────────────────────────────────────────────────${NC}"
+            echo -e "${BLUE}  PKTGEN Node ($PKTGEN_NODE) - Local${NC}"
+            echo -e "${BLUE}───────────────────────────────────────────────────────────${NC}"
+            echo -e "  PCI Address: ${GREEN}$PKTGEN_NIC_PCI${NC}"
+            echo -e "  MAC Address: ${GREEN}${PKTGEN_NIC_MAC:-N/A}${NC}"
+            echo -e "${BLUE}───────────────────────────────────────────────────────────${NC}"
+            echo ""
+
+            sudo "$DDIO_BIN" "0x$NIC_BUS"
+            ;;
+        2)
+            # L3FWD node (remote)
+            if [ -z "$L3FWD_NIC_PCI" ]; then
+                echo -e "${RED}✗ Error: L3FWD_NIC_PCI not configured in system.config${NC}"
+                echo -e "  ${CYAN}→${NC} Run option 1 (Show and Update System Configuration) first"
+                return 1
+            fi
+
+            NIC_BUS=$(echo "$L3FWD_NIC_PCI" | cut -d':' -f2)
+
+            echo ""
+            echo -e "${BLUE}───────────────────────────────────────────────────────────${NC}"
+            echo -e "${BLUE}  L3FWD Node ($L3FWD_NODE) - Remote${NC}"
+            echo -e "${BLUE}───────────────────────────────────────────────────────────${NC}"
+            echo -e "  PCI Address: ${GREEN}$L3FWD_NIC_PCI${NC}"
+            echo -e "  MAC Address: ${GREEN}${L3FWD_NIC_MAC:-N/A}${NC}"
+            echo -e "${BLUE}───────────────────────────────────────────────────────────${NC}"
+            echo ""
+
+            # Run ddio_modify on remote node via SSH
+            echo -e "${CYAN}Connecting to $L3FWD_NODE...${NC}"
+            ssh -t -o ConnectTimeout=10 -o StrictHostKeyChecking=no "$L3FWD_NODE" \
+                "sudo $DDIO_BIN 0x$NIC_BUS"
+            ;;
+        0)
+            return
+            ;;
+        *)
+            echo -e "${RED}Invalid option.${NC}"
+            ;;
+    esac
 }
 
 # Wait for user to press Enter
