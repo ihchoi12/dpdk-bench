@@ -147,6 +147,10 @@ def run_l3fwd(tx_desc_value=None, rx_desc_value=None, l3fwd_config=None, duratio
         l3fwd_cmd += f'sleep {TOOL_INTERVAL}; '
         l3fwd_cmd += (f'sudo timeout {PCM_DURATION} {DPDK_BENCH_HOME}/pcm/build/bin/pcm-pcie -B -e '
                       f'> {DATA_PATH}/{experiment_id}.l3fwd-pcm-pcie 2>&1; ')
+        # Add pcm-memory monitoring for DDIO verification (DRAM bandwidth)
+        l3fwd_cmd += f'sleep {TOOL_INTERVAL}; '
+        l3fwd_cmd += (f'sudo timeout {PCM_DURATION} {DPDK_BENCH_HOME}/pcm/build/bin/pcm-memory 1 '
+                      f'> {DATA_PATH}/{experiment_id}.l3fwd-pcm-memory 2>&1; ')
 
     # Wait for L3FWD to finish
     l3fwd_cmd += f'wait $L3FWD_PID 2>/dev/null'
@@ -228,6 +232,10 @@ def run_pktgen(tx_desc_value=None, pktgen_config=None):
         pktgen_cmd += f'sleep {TOOL_INTERVAL}; '
         pktgen_cmd += (f'sudo timeout {PCM_DURATION} {DPDK_BENCH_HOME}/pcm/build/bin/pcm-pcie -B -e '
                        f'> {DATA_PATH}/{experiment_id}.pcm-pcie 2>&1; ')
+        # Add pcm-memory monitoring for DDIO verification (DRAM bandwidth)
+        pktgen_cmd += f'sleep {TOOL_INTERVAL}; '
+        pktgen_cmd += (f'sudo timeout {PCM_DURATION} {DPDK_BENCH_HOME}/pcm/build/bin/pcm-memory 1 '
+                       f'> {DATA_PATH}/{experiment_id}.pcm-memory 2>&1; ')
 
     # Add NeoHost monitoring if enabled
     if ENABLE_NEOHOST:
@@ -754,6 +762,102 @@ def parse_pcm_pcie_file(pcm_file):
     return result
 
 
+def parse_pcm_memory_file(pcm_memory_file, target_socket=0):
+    """Parse pcm-memory output file for DRAM bandwidth
+    Returns dict with:
+    - dram_read_bw: DRAM Read bandwidth (MB/s)
+    - dram_write_bw: DRAM Write bandwidth (MB/s)
+
+    Args:
+        pcm_memory_file: Path to pcm-memory output file
+        target_socket: Socket number to extract data from (default: 0)
+    """
+    result = {
+        'dram_read_bw': 0,
+        'dram_write_bw': 0,
+    }
+
+    if not os.path.exists(pcm_memory_file):
+        return result
+
+    try:
+        with open(pcm_memory_file, "r", encoding='utf-8', errors='ignore') as file:
+            pcm_text = file.read()
+
+        lines = pcm_text.strip().split('\n')
+
+        # pcm-memory output format (per-socket, repeated every second):
+        # |---------------------------------------||---------------------------------------|
+        # |--             Socket  0             --||--             Socket  1             --|
+        # |---------------------------------------||---------------------------------------|
+        # |--     Memory Channel Monitoring     --||--     Memory Channel Monitoring     --|
+        # |---------------------------------------||---------------------------------------|
+        # |-- Mem Ch  0: Reads (MB/s):   123.45 --||-- Mem Ch  0: Reads (MB/s):   123.45 --|
+        # ...
+        # |-- NODE 0 Mem Read (MB/s):   1234.5 --||-- NODE 1 Mem Read (MB/s):   1234.5 --|
+        # |-- NODE 0 Mem Write (MB/s):  1234.5 --||-- NODE 1 Mem Write (MB/s):  1234.5 --|
+        # |-- NODE 0 P. Write (T/s):       0.0 --||-- NODE 1 P. Write (T/s):       0.0 --|
+        # |-- NODE 0 Memory (MB/s):     2468.0 --||-- NODE 1 Memory (MB/s):     2468.0 --|
+        # ...
+        # Or newer format:
+        # Skt | Read  | Write | Read  | Write |   Read |  Write |  Miss  | Hit   |
+        #     |       |       | (MB/s)| (MB/s)|   DIMM |  DIMM  |   %    |   %   |
+        # -----|-------|-------|-------|-------|--------|--------|--------|-------|
+        #   0 | 12345 | 12345 | 123.4 | 123.4 |   12.3 |   12.3 |   0.1  |  99.9 |
+
+        read_bw_values = []
+        write_bw_values = []
+
+        for line in lines:
+            # Try newer tabular format first: "0 | 12345 | 12345 | 123.4 | 123.4 | ..."
+            socket_match = re.match(rf'^\s*{target_socket}\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*([\d\.]+)\s*\|\s*([\d\.]+)', line)
+            if socket_match:
+                read_bw = float(socket_match.group(1))
+                write_bw = float(socket_match.group(2))
+                read_bw_values.append(read_bw)
+                write_bw_values.append(write_bw)
+                continue
+
+            # Try SKT format: "|-- SKT  0 Mem Read (MB/s) :  1197.75 --|"
+            read_match = re.search(rf'SKT\s*{target_socket}\s*Mem Read \(MB/s\)\s*:\s*([\d\.]+)', line)
+            if read_match:
+                read_bw_values.append(float(read_match.group(1)))
+                continue
+
+            write_match = re.search(rf'SKT\s*{target_socket}\s*Mem Write\(MB/s\)\s*:\s*([\d\.]+)', line)
+            if write_match:
+                write_bw_values.append(float(write_match.group(1)))
+                continue
+
+            # Try older NODE format: "NODE 0 Mem Read (MB/s):   1234.5"
+            read_match = re.search(rf'NODE\s*{target_socket}\s*Mem Read \(MB/s\):\s*([\d\.]+)', line)
+            if read_match:
+                read_bw_values.append(float(read_match.group(1)))
+                continue
+
+            write_match = re.search(rf'NODE\s*{target_socket}\s*Mem Write \(MB/s\):\s*([\d\.]+)', line)
+            if write_match:
+                write_bw_values.append(float(write_match.group(1)))
+                continue
+
+        if read_bw_values or write_bw_values:
+            # Skip first 2 samples for warm-up
+            read_filtered = read_bw_values[2:] if len(read_bw_values) > 2 else read_bw_values
+            write_filtered = write_bw_values[2:] if len(write_bw_values) > 2 else write_bw_values
+
+            result['dram_read_bw'] = round(sum(read_filtered) / len(read_filtered), 1) if read_filtered else 0
+            result['dram_write_bw'] = round(sum(write_filtered) / len(write_filtered), 1) if write_filtered else 0
+
+            print(f"DEBUG PCM-Memory: Found {len(read_bw_values)} samples, Socket {target_socket} DRAM Read: {result['dram_read_bw']} MB/s, Write: {result['dram_write_bw']} MB/s")
+        else:
+            print(f"DEBUG PCM-Memory: No data found for Socket {target_socket}")
+
+    except Exception as e:
+        print(f"ERROR parsing PCM-Memory file {pcm_memory_file}: {e}")
+
+    return result
+
+
 def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_value=None, pktgen_tx_desc_value=None, l3fwd_lcore_count=None, pktgen_lcore_count=None):
     """Parse DPDK test results from l3fwd and pktgen
     Returns dict with header, pktgen_row, l3fwd_row for structured output
@@ -1078,12 +1182,19 @@ def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_va
     pktgen_pcm = parse_pcm_pcie_file(f'{DATA_PATH}/{experiment_id}.pcm-pcie')
     l3fwd_pcm = parse_pcm_pcie_file(f'{DATA_PATH}/{experiment_id}.l3fwd-pcm-pcie')
 
+    # Parse pcm-memory results for DDIO verification (DRAM bandwidth)
+    pktgen_mem = parse_pcm_memory_file(f'{DATA_PATH}/{experiment_id}.pcm-memory', target_socket=0)
+    l3fwd_mem = parse_pcm_memory_file(f'{DATA_PATH}/{experiment_id}.l3fwd-pcm-memory', target_socket=0)
+
     print(f"PKTGEN PCM: Rd Total={pktgen_pcm['rd_total_bytes']/1e6:.1f}MB, Rd Miss={pktgen_pcm['rd_miss_bytes']/1e6:.1f}MB ({pktgen_pcm['rd_miss_rate']}%), Wr Total={pktgen_pcm['wr_total_bytes']/1e6:.1f}MB, Wr Miss={pktgen_pcm['wr_miss_bytes']/1e6:.1f}MB ({pktgen_pcm['wr_miss_rate']}%)")
+    print(f"PKTGEN DRAM: Read={pktgen_mem['dram_read_bw']} MB/s, Write={pktgen_mem['dram_write_bw']} MB/s")
     print(f"L3FWD PCM: Rd Total={l3fwd_pcm['rd_total_bytes']/1e6:.1f}MB, Rd Miss={l3fwd_pcm['rd_miss_bytes']/1e6:.1f}MB ({l3fwd_pcm['rd_miss_rate']}%), Wr Total={l3fwd_pcm['wr_total_bytes']/1e6:.1f}MB, Wr Miss={l3fwd_pcm['wr_miss_bytes']/1e6:.1f}MB ({l3fwd_pcm['wr_miss_rate']}%)")
+    print(f"L3FWD DRAM: Read={l3fwd_mem['dram_read_bw']} MB/s, Write={l3fwd_mem['dram_write_bw']} MB/s (DDIO verification: high Write = DDIO OFF)")
 
     # Build structured result with pktgen row and l3fwd row
     # Each row contains: Expt ID, Node, TX_DESC, RX_DESC, #Cores, TX Rate, RX Rate,
-    #                    DDIO Rd Miss%, PCIe Rd Total, PCIe Rd Miss, DDIO Wr Miss%, PCIe Wr Total, PCIe Wr Miss
+    #                    DDIO Rd Miss%, PCIe Rd Total, PCIe Rd Miss, DDIO Wr Miss%, PCIe Wr Total, PCIe Wr Miss,
+    #                    DRAM Rd BW (MB/s), DRAM Wr BW (MB/s)
 
     # PKTGEN row
     result['pktgen_row'] = [
@@ -1100,6 +1211,8 @@ def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_va
         f'{pktgen_pcm["wr_miss_rate"]}',
         fmt_bytes(pktgen_pcm["wr_total_bytes"]),
         fmt_bytes(pktgen_pcm["wr_miss_bytes"]),
+        f'{pktgen_mem["dram_read_bw"]}',
+        f'{pktgen_mem["dram_write_bw"]}',
     ]
 
     # L3FWD row
@@ -1117,6 +1230,8 @@ def parse_dpdk_results(experiment_id, l3fwd_tx_desc_value=None, l3fwd_rx_desc_va
         f'{l3fwd_pcm["wr_miss_rate"]}',
         fmt_bytes(l3fwd_pcm["wr_total_bytes"]),
         fmt_bytes(l3fwd_pcm["wr_miss_bytes"]),
+        f'{l3fwd_mem["dram_read_bw"]}',
+        f'{l3fwd_mem["dram_write_bw"]}',
     ]
 
     return result
@@ -1222,6 +1337,8 @@ def exiting():
         'DDIO Wr Miss (%)',
         'PCIe Wr (B) Total',
         'PCIe Wr (B) Miss',
+        'DRAM Rd (MB/s)',
+        'DRAM Wr (MB/s)',
     ]
 
     output_lines = []

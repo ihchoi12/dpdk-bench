@@ -39,7 +39,8 @@ def _calculate_profiling_time(warmup, perf_dur, pcm_dur, neohost_dur, interval, 
     if enable_perf:
         total += perf_dur
     if enable_pcm:
-        total += interval + pcm_dur
+        total += interval + pcm_dur  # pcm-pcie
+        total += interval + pcm_dur  # pcm-memory (for DDIO verification)
     if enable_neohost:
         neohost_python = f'{DPDK_BENCH_HOME}/neohost/miniconda3/envs/py27/bin/python'
         neohost_sdk = f'{DPDK_BENCH_HOME}/neohost/sdk/opt/neohost/sdk/get_device_performance_counters.py'
@@ -107,17 +108,12 @@ SYSTEM_CONFIG = _load_bash_config(f'{DPDK_BENCH_HOME}/config/system.config')
 PKTGEN_NODE = CLUSTER_CONFIG.get('PKTGEN_NODE', 'node7')
 L3FWD_NODE = CLUSTER_CONFIG.get('L3FWD_NODE', 'node8')
 
-################## LOAD TEST CONFIG #####################
-TEST_CONFIG = _load_bash_config(f'{DPDK_BENCH_HOME}/config/simple-test/simple-test.config')
-
 ################## NIC CONFIG #####################
 PKTGEN_MAC = SYSTEM_CONFIG.get('PKTGEN_NIC_MAC', '')
 PKTGEN_PCI_ADDRESS = SYSTEM_CONFIG.get('PKTGEN_NIC_PCI', '')
-PKTGEN_NIC_DEVARGS = TEST_CONFIG.get('PKTGEN_NIC_DEVARGS', '')
 
 L3FWD_MAC = SYSTEM_CONFIG.get('L3FWD_NIC_MAC', '')
 L3FWD_PCI_ADDRESS = SYSTEM_CONFIG.get('L3FWD_NIC_PCI', '')
-L3FWD_NIC_DEVARGS = TEST_CONFIG.get('L3FWD_NIC_DEVARGS', '')
 L3FWD_ETH_DEST = PKTGEN_MAC
 
 def validate_config():
@@ -169,5 +165,10 @@ L3FWD_TX_DESC_VALUES = [1024]
 L3FWD_RX_DESC_VALUES = [1024]
 PKTGEN_TX_DESC_VALUES = [1024]
 
-L3FWD_LCORE_VALUES = [2]
+L3FWD_LCORE_VALUES = [1]
 PKTGEN_TX_CORE_VALUES = [1]
+
+# NIC device arguments (devargs) for full benchmark tests
+# Example: 'txqs_min_inline=0,txq_mpw_en=1,txq_inline_mpw=256'
+PKTGEN_NIC_DEVARGS = ''
+L3FWD_NIC_DEVARGS = ''

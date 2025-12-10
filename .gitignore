@@ -20,4 +20,10 @@ config/system.config
 *.orig
 
 .vscode/*
-*.pycddio-bench/
+
+# Python cache
+*.pyc
+__pycache__/
+
+# NFS temporary files
+.nfs*

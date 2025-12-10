@@ -867,15 +867,7 @@ option_full_benchmark() {
         echo ""
     fi
 
-    echo -e "${CYAN}The Python test script will manage L3FWD on $L3FWD_NODE automatically.${NC}"
-    echo -e "${CYAN}Make sure test_config.py has correct cluster settings.${NC}"
-    echo ""
-
-    read -p "$(echo -e ${CYAN}Continue with benchmark? [y/N]:${NC} )" confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo -e "${YELLOW}Benchmark cancelled.${NC}"
-        return 0
-    fi
+    echo -e "${CYAN}Starting benchmark...${NC}"
     echo ""
 
     # Kill any existing DPDK processes on both nodes
